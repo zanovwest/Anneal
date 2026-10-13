@@ -110,8 +110,13 @@ A scheduled Claude task ("Anneal daily update" in the Claude desktop app's sched
 Anneal every day at 7:00 (Hawaii time). Each run fixes the bugs it finds and adds one new feature or
 mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not
 wanted*). It bumps the version and runs `.\build.ps1 -Test -Snapshot -Setup`. Only when everything
-passes does it install the new build just for you (no approval needed), add a
-[CHANGELOG.md](CHANGELOG.md) entry, commit, push and publish the setup as a GitHub release.
+passes does it add a [CHANGELOG.md](CHANGELOG.md) entry, commit, push, publish the setup as a GitHub
+release and install it:
+
+- **all-users install:** it starts the setup, and Windows' administrator prompt waits until you
+  click Yes. The task never approves it for you.
+- **just-for-me install:** it installs straight away, with no approval needed.
+
 Parameter IDs, plugin codes and saved-state compatibility never change, so existing FL Studio
 projects keep their settings.
 
