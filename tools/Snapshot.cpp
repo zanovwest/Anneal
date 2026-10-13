@@ -5,6 +5,7 @@
 #include "PluginProcessor.h"
 #include "Params.h"
 #include "TestSignals.h"
+#include "ui/Icon.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -79,6 +80,24 @@ struct Scenario
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    // AnnealSnapshot --icons <dir>: render the app icon at every Windows icon size (PNG, alpha).
+    if (argc > 2 && juce::String (argv[1]) == "--icons")
+    {
+        const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]);
+        dir.createDirectory();
+        int fails = 0;
+        for (int size : { 16, 20, 24, 32, 40, 48, 64, 128, 256, 512 })
+        {
+            juce::Image img (juce::Image::ARGB, size, size, true);
+            {
+                juce::Graphics g (img);
+                anneal::drawAppIcon (g, juce::Rectangle<float> ((float) size, (float) size));
+            }
+            fails += writePng (img, dir.getChildFile ("icon_" + juce::String (size) + ".png")) ? 0 : 1;
+        }
+        return fails;
+    }
 
     const juce::File outDir = argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1])
                                        : juce::File::getCurrentWorkingDirectory().getChildFile ("snapshots");

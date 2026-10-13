@@ -42,6 +42,7 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 0.2.1 (2026-10-13): icon for the setup, the standalone app and the VST3 bundle (done by hand).
 - 0.2.0 (2026-10-13): new interface (cool graphite, ring knobs with live activity, one large
   display with a smooth spectrum and glowing EQ curve, harmonic bars, pill buttons); latency
   modes Low 21 ms (new default) / Normal 43 ms / Precise 85 ms. Fixed: Smooth stopped cutting

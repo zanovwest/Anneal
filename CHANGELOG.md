@@ -4,6 +4,17 @@ Newest first. One entry per version; the hourly update adds one (see README → 
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 0.2.1 — 2026-10-13
+
+New
+- **Icon.** Anneal's own ring knob as its mark: the arc runs through the temper colours of heated
+  steel (blue, purple, bronze, straw) to a white thumb, on a dark tile. It's on the setup, the
+  standalone app, the Start menu and Apps entries, and the plug-in's folder in Explorer. Drawn as
+  vectors and rendered separately at each Windows size (16 to 256 px), with a bolder version for
+  the smallest ones.
+
+Tests: unchanged DSP (34/34), host (12/12) and setup (16/16) checks.
+
 ## 0.2.0 — 2026-10-13
 
 New

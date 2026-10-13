@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Anneal VERSION 0.2.0 LANGUAGES C CXX)
+project(Anneal VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,6 +61,10 @@ juce_add_plugin(Anneal
     FORMATS VST3 Standalone
     PRODUCT_NAME "Anneal"
     BUNDLE_ID "com.qulic.anneal"
+    # App icon (standalone .exe) and the VST3 bundle's folder icon (Plugin.ico + desktop.ini).
+    # Rendered from Source/ui/Icon.h: AnnealSnapshot --icons resources/icon
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon/icon_512.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon/icon_32.png"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
