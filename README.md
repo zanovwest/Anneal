@@ -111,11 +111,8 @@ Anneal every day at 7:00 (Hawaii time). Each run fixes the bugs it finds and add
 mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not
 wanted*). It bumps the version and runs `.\build.ps1 -Test -Snapshot -Setup`. Only when everything
 passes does it add a [CHANGELOG.md](CHANGELOG.md) entry, commit, push, publish the setup as a GitHub
-release and install it:
-
-- **all-users install:** it starts the setup, and Windows' administrator prompt waits until you
-  click Yes. The task never approves it for you.
-- **just-for-me install:** it installs straight away, with no approval needed.
+release, and install it **just for you**. That needs no administrator approval, so the update is in
+place when you wake up. The task never asks for, approves or works around administrator rights.
 
 Parameter IDs, plugin codes and saved-state compatibility never change, so existing FL Studio
 projects keep their settings.
@@ -126,7 +123,7 @@ projects keep their settings.
 - **Tested headless (`AnnealTests`, 31/31 pass):** STFT identity (44.1/48/96 kHz, blocks 1–4096 and random), latency = 4096 @48k, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects).
 - **CPU (this machine):** ≈ 3.4 % of one core at 48 kHz stereo (budget 3 %; the gated harmonic stream costs one extra iFFT). Measured at high priority like a DAW audio thread: the slowest 0.1 % of blocks take 0.37 ms of 1.33 ms at 64 samples (28 %), 0.38 ms of 2.67 ms at 128.
 - **UI:** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size.
-- **Host-checked (`AnnealHostCheck`, 11/11 pass)** including factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy in `C:\Program Files\Common Files\VST3`.
+- **Host-checked (`AnnealHostCheck`, 11/11 pass)** including factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
 - **Setup-tested (`TestSetup.ps1`, 16/16 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
-- **Installed** with `Anneal-0.1.0-Setup.exe` on 2026-10-13: VST3 in `C:\Program Files\Common Files\VST3` and the per-user VST3 folder (identical), standalone in `C:\Program Files\Anneal`, listed under Settings → Apps.
+- **Installed** just for the user (no admin) with `Anneal-0.1.1-Setup.exe` on 2026-10-13: VST3 in `%LOCALAPPDATA%\Programs\Common\VST3`, standalone in `%LOCALAPPDATA%\Programs\Anneal`, listed under Settings → Apps. The earlier all-users copy was removed.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Latency is 85 ms at 48 kHz, so it suits mixing/mastering, not tracking.
