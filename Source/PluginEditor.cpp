@@ -38,9 +38,20 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       bypass   (p.apvts, ids::bypass, "BYPASS", colour::text,   "Bypass (latency-compensated, click-free)")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
-             &screen, &reveal, &smooth, &tilt, &response, &heat, &color, &focus, &mix, &output,
+             &screen, &presets, &reveal, &smooth, &tilt, &response, &heat, &color, &focus, &mix, &output,
              &match, &delta, &bypass, &meter })
         addAndMakeVisible (c);
+
+    presets.getCount = [&p] { return p.getNumPrograms(); };
+    presets.getName = [&p] (int i) { return p.getProgramName (i); };
+    presets.getChosen = [&p] { return p.getCurrentProgram(); };
+    presets.getDisplayText = [&p] { return p.getPresetDisplayName(); };
+    presets.onChoose = [&p] (int i)
+    {
+        p.setCurrentProgram (i);
+        p.updateHostDisplay (juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
+    };
+    presets.refresh();
 }
 
 void AnnealEditorContent::resized()
@@ -65,6 +76,7 @@ void AnnealEditorContent::resized()
     delta.setBounds (780, 464, 112, 28);
     meter.setBounds (912, 412, 64, 190);
 
+    presets.setBounds (452, 13, 236, 26);
     bypass.setBounds (892, 13, 92, 26);
 }
 
@@ -82,6 +94,7 @@ void AnnealEditorContent::paint (juce::Graphics& g)
     g.drawText ("perceptual spectral saturator", juce::Rectangle<int> (172, 14, 260, 28), juce::Justification::centredLeft, false);
 
     g.setFont (caps (11.5f));
+    g.drawText ("PRESET", juce::Rectangle<int> (380, 13, 64, 26), juce::Justification::centredRight, false);
     g.drawText ("LATENCY", juce::Rectangle<int> (700, 13, 110, 26), juce::Justification::centredRight, false);
     g.setColour (colour::text);
     g.setFont (font (14.0f));
@@ -135,6 +148,7 @@ void AnnealEditorContent::tick (float dt)
 {
     const float peaks[2] = { processor.takeOutputPeak (0), processor.takeOutputPeak (1) };
     meter.push (peaks, processor.getTotalNumOutputChannels(), dt);
+    presets.refresh();
 
     const bool on = processor.apvts.getRawParameterValue (ids::match)->load() > 0.5f;
     const float db = processor.getMatchGainDb();

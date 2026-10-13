@@ -26,6 +26,16 @@ AnnealLookAndFeel::AnnealLookAndFeel()
     setColour (juce::TooltipWindow::textColourId, colour::text);
     setColour (juce::TextButton::textColourOffId, colour::muted);
     setColour (juce::TextButton::textColourOnId, colour::text);
+    setColour (juce::PopupMenu::backgroundColourId, colour::body);
+    setColour (juce::PopupMenu::textColourId, colour::text);
+    setColour (juce::PopupMenu::headerTextColourId, colour::muted);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, colour::divider);
+    setColour (juce::PopupMenu::highlightedTextColourId, colour::text);
+}
+
+juce::Font AnnealLookAndFeel::getPopupMenuFont()
+{
+    return font (14.0f);
 }
 
 void AnnealLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float pos,

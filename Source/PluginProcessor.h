@@ -16,6 +16,7 @@ public:
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
+    void reset() override;   // host stopped processing: forget all buffered audio
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
 
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -30,11 +31,16 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override;
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    // Factory presets (Presets.h), exposed to the host as programs. Message thread.
+    int getNumPrograms() override;
+    int getCurrentProgram() override { return currentPreset.load(); }
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
+
+    // What the preset bar shows: the preset the settings equal, "<last chosen> *" once edited,
+    // or "Custom" for settings that never came from a preset (e.g. projects from before 0.1.1).
+    juce::String getPresetDisplayName();
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
@@ -59,6 +65,11 @@ private:
 
     juce::SmoothedValue<float> mixSmoothed, outputSmoothed, deltaSmoothed, bypassSmoothed;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> matchSmoothed;
+
+    // Last preset chosen (saved in the state, so a host restoring its program number after the
+    // state finds it unchanged and does not re-apply the preset over the saved knobs).
+    std::atomic<int> currentPreset { 0 };
+    std::atomic<bool> presetChosen { false };
 
     std::atomic<float> matchGainDb { 0.0f };
     std::atomic<float> outputPeak[2] { 0.0f, 0.0f };

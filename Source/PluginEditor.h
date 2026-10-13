@@ -5,6 +5,7 @@
 #include "ui/Knob.h"
 #include "ui/OutputMeter.h"
 #include "ui/PerceptionScreen.h"
+#include "ui/PresetBar.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -21,6 +22,7 @@ public:
     void tick (float dtSeconds);   // meters + read-outs, called from the editor's timer
 
     anneal::PerceptionScreen screen;
+    anneal::PresetBar presets;
 
 private:
     AnnealAudioProcessor& processor;

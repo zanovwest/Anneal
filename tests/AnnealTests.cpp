@@ -3,6 +3,7 @@
 
 #include "PluginProcessor.h"
 #include "Params.h"
+#include "Presets.h"
 #include "dsp/SpectralEngine.h"
 #include "TestSignals.h"
 
@@ -581,6 +582,18 @@ void testBypassAndMono()
     const double err = delayedError (out, in, r.proc->getLatencySamples());
     check (err < 1.0e-6, "bypass = latency-aligned dry", "max err " + juce::String (err, 9));
 
+    // Hosts call reset() when they stop processing (JUCE's VST3 wrapper: setProcessing (false)).
+    // Afterwards nothing from before may come out: silence in, silence out.
+    {
+        Rig z;
+        z.prepare (48000.0, 512);
+        z.run (in, fixedBlocks (512));
+        z.proc->reset();
+        const auto after = z.run (testsig::silence (2, 16384), fixedBlocks (512));
+        const double leak = maxAbs (after);
+        check (leak < 1.0e-6, "reset(): no old audio after the host restarts", "peak after reset " + db (toDb (leak)));
+    }
+
     Rig m (1);
     m.prepare (48000.0, 512);
     Channels mono { in[0] };
@@ -624,9 +637,89 @@ void testPreEcho()
     check (ratio < -30.0, "harmonic pre-echo >= 30 dB below post-onset", "40 ms before vs 40 ms after onset: " + db (ratio));
 }
 
+void testPresets()
+{
+    section ("14. Factory presets");
+    namespace presets = anneal::presets;
+    auto plain = [] (Rig& r, const char* id) { auto* p = r.proc->apvts.getParameter (id); return p->convertFrom0to1 (p->getValue()); };
+
+    {
+        Rig r;
+        juce::StringArray names;
+        for (int i = 0; i < r.proc->getNumPrograms(); ++i)
+            names.addIfNotAlreadyThere (r.proc->getProgramName (i));
+        check (r.proc->getNumPrograms() == presets::count() && presets::count() == 8 && names.size() == 8
+                   && r.proc->getPresetDisplayName() == "Default" && r.proc->getCurrentProgram() == 0,
+               "8 named presets, a fresh instance shows Default", names.joinIntoString (", "));
+    }
+
+    {
+        // Every preset lands exactly, keeps Match/Delta/Bypass, and processes music sensibly.
+        bool ok = true;
+        juce::String log;
+        const auto in = testsig::musicLike (48000.0, 3.0);
+        for (int i = 0; i < presets::count(); ++i)
+        {
+            Rig r;
+            r.set (ids::match, 1);
+            r.proc->setCurrentProgram (i);
+            const auto& pr = presets::get (i);
+            float worst = 0.0f;
+            for (int k = 0; k < presets::numValues; ++k)
+                worst = std::max (worst, std::abs (plain (r, presets::paramIds[(size_t) k]) - pr.values[(size_t) k]));
+            r.prepare (48000.0, 512);
+            const auto out = r.run (in, fixedBlocks (512));
+            const double peak = toDb (maxAbs (out, 4096));
+            const bool fine = worst < 0.06f && plain (r, ids::match) > 0.5f && r.proc->getPresetDisplayName() == pr.name
+                              && allFinite (out) && peak < toDb (maxAbs (in)) + 9.0 && peak > -40.0;
+            ok = ok && fine;
+            log << pr.name << (fine ? "" : " FAILED") << " " << juce::String (peak, 1) << " dB;  ";
+        }
+        check (ok, "each preset sets its values and plays", log);
+    }
+
+    {
+        // Edit after choosing -> "Name *"; save and load: same knobs, same preset number, so a host
+        // restoring the program after the state changes nothing.
+        Rig a;
+        a.proc->setCurrentProgram (4);
+        a.set (ids::reveal, 22.0f);
+        const auto edited = a.proc->getPresetDisplayName();
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+
+        Rig b;
+        b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        if (b.proc->getCurrentProgram() != 4)          // what JUCE's VST3 wrapper does on a program change
+            b.proc->setCurrentProgram (4);
+        check (edited == juce::String (presets::get (4).name) + " *" && b.proc->getCurrentProgram() == 4
+                   && std::abs (plain (b, ids::reveal) - 22.0f) < 0.05f && b.proc->getPresetDisplayName() == edited,
+               "edited preset: shown with *, survives save/load", edited + " -> reveal " + juce::String (plain (b, ids::reveal), 1) + " %");
+    }
+
+    {
+        // A project saved before presets existed: no "preset" in the state, knobs untouched.
+        Rig a;
+        a.set (ids::heat, 77.0f);
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        const bool noPresetSaved = xml != nullptr && ! xml->hasAttribute ("preset");
+        Rig b;
+        b.proc->setCurrentProgram (5);
+        b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        check (noPresetSaved && b.proc->getPresetDisplayName() == "Custom" && b.proc->getCurrentProgram() == 0
+                   && std::abs (plain (b, ids::heat) - 77.0f) < 0.05f,
+               "older projects load as Custom, knobs kept", "shows " + b.proc->getPresetDisplayName());
+    }
+}
+
 void benchmark()
 {
-    section ("14. Benchmark (Release build, this machine)");
+    section ("15. Benchmark (Release build, this machine)");
+    // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
+    // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
+    juce::Process::setPriority (juce::Process::HighPriority);
     for (auto [fs, block] : { std::pair<double, int> { 48000.0, 64 }, { 48000.0, 128 }, { 48000.0, 512 }, { 96000.0, 512 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
@@ -635,7 +728,9 @@ void benchmark()
         const int n = (int) in[0].size();
         juce::AudioBuffer<float> buf (2, block);
         juce::MidiBuffer midi;
-        double total = 0.0, worst = 0.0;
+        std::vector<double> times;
+        times.reserve ((size_t) (n / block + 1));
+        double total = 0.0;
         for (int pos = 0; pos + block <= n; pos += block)
         {
             for (int c = 0; c < 2; ++c)
@@ -644,13 +739,23 @@ void benchmark()
             r.proc->processBlock (buf, midi);
             const double dt = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
             total += dt;
-            worst = std::max (worst, dt);
+            times.push_back (dt);
         }
+        const auto slowest = std::max_element (times.begin(), times.end());
+        const int slowestBlock = (int) (slowest - times.begin());
+        std::vector<double> first8 (times.begin(), times.begin() + std::min<size_t> (8, times.size()));
+        std::sort (times.begin(), times.end());
+        auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
+        auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
         info (juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
-              + " % of one core, worst block " + juce::String (worst * 1000.0, 3) + " ms of " + juce::String (deadline * 1000.0, 3)
-              + " ms (" + juce::String (100.0 * worst / deadline, 1) + " %)");
+              + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
+              + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
+        juce::String f8;
+        for (double t : first8) f8 << juce::String (t * 1000.0, 3) << " ";
+        info ("first blocks (ms): " + f8);
     }
+    juce::Process::setPriority (juce::Process::NormalPriority);
 }
 }
 
@@ -671,6 +776,7 @@ int main()
     testState();
     testBypassAndMono();
     testPreEcho();
+    testPresets();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

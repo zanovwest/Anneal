@@ -102,6 +102,7 @@ int main (int argc, char* argv[])
               set (p, ids::heat, 60); set (p, ids::delta, 1); set (p, ids::output, -4.5f);
           }, -1.0f, true },
         { "empty", [] (AnnealAudioProcessor&) {}, -1.0f, false },
+        { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
     };
 
     int failures = 0;

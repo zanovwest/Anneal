@@ -26,5 +26,6 @@ namespace anneal
         void drawTooltip (juce::Graphics&, const juce::String& text, int width, int height) override;
 
         juce::Font getTextButtonFont (juce::TextButton&, int) override;
+        juce::Font getPopupMenuFont() override;
     };
 }

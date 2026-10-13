@@ -165,6 +165,34 @@ int main (int argc, char* argv[])
         findParam (*plugin, "Delta")->setValueNotifyingHost (0.0f);
     }
 
+    // 6b. Factory presets as host programs: listed, selectable, and a saved project keeps both its
+    //     preset number and its edited knobs (so a host restoring the program re-applies nothing).
+    {
+        juce::StringArray programs;
+        for (int i = 0; i < plugin->getNumPrograms(); ++i)
+            programs.add (plugin->getProgramName (i));
+        plugin->setCurrentProgram (4);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        const float reveal = findParam (*plugin, "Reveal")->getValue();
+        check (programs.size() == 8 && programs[4] == "Vocal air" && plugin->getCurrentProgram() == 4
+                   && std::abs (reveal - 0.5f) < 1.0e-3f,
+               "factory presets listed and selectable", juce::String (programs.size()) + ": " + programs.joinIntoString (", ")
+                   + "; program 4 sets Reveal " + juce::String (reveal * 100.0f, 1) + " %");
+
+        findParam (*plugin, "Reveal")->setValueNotifyingHost (0.2f);
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        auto third = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        third->setStateInformation (state.getData(), (int) state.getSize());
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+        const float kept = findParam (*third, "Reveal")->getValue();
+        check (third->getCurrentProgram() == 4 && std::abs (kept - 0.2f) < 1.0e-4f,
+               "edited preset survives save/load", "program " + juce::String (third->getCurrentProgram())
+                   + ", Reveal " + juce::String (kept * 100.0f, 1) + " % (saved 20 %)");
+        plugin->setCurrentProgram (0);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (50);
+    }
+
     // 7. Editor: attach the plugin's real view in an off-screen, borderless window (no taskbar
     //    entry), let its timers run, process audio meanwhile, detach; three times.
     {

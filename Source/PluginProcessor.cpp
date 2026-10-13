@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "Params.h"
+#include "Presets.h"
 
 AnnealAudioProcessor::AnnealAudioProcessor()
     : AudioProcessor (BusesProperties()
@@ -65,6 +66,21 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     matchSmoothed.setCurrentAndTargetValue (1.0f);
 
     pushParametersToEngine();
+}
+
+void AnnealAudioProcessor::reset()
+{
+    // Called by hosts when processing stops (JUCE's VST3 wrapper: setProcessing (false)), without
+    // a new prepareToPlay. Clears every buffer that holds audio, so playback that starts again
+    // doesn't replay the last ~85 ms from before. No allocation. The loudness-match gain is a slow
+    // measurement, not audio, so it is kept (otherwise every restart would re-converge for ~3 s).
+    engine->reset();
+    dryRing.clear();
+    dryBlock.clear();
+    dryPos = 0;
+    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed })
+        s->setCurrentAndTargetValue (s->getTargetValue());
+    outputPeak[0] = outputPeak[1] = 0.0f;
 }
 
 double AnnealAudioProcessor::getTailLengthSeconds() const
@@ -185,10 +201,45 @@ juce::AudioProcessorParameter* AnnealAudioProcessor::getBypassParameter() const
     return apvts.getParameter (anneal::ids::bypass);
 }
 
+int AnnealAudioProcessor::getNumPrograms()
+{
+    return anneal::presets::count();
+}
+
+void AnnealAudioProcessor::setCurrentProgram (int index)
+{
+    if (! juce::isPositiveAndBelow (index, anneal::presets::count()))
+        return;
+    currentPreset = index;
+    presetChosen = true;
+    anneal::presets::apply (apvts, index);
+}
+
+const juce::String AnnealAudioProcessor::getProgramName (int index)
+{
+    return juce::isPositiveAndBelow (index, anneal::presets::count()) ? juce::String (anneal::presets::get (index).name)
+                                                                      : juce::String();
+}
+
+juce::String AnnealAudioProcessor::getPresetDisplayName()
+{
+    const int chosen = currentPreset.load();
+    const int matching = anneal::presets::findMatching (apvts, presetChosen ? chosen : -1);
+    if (matching >= 0)
+        return anneal::presets::get (matching).name;
+    if (presetChosen)
+        return juce::String (anneal::presets::get (chosen).name) + " *";
+    return "Custom";
+}
+
 void AnnealAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("stateVersion", anneal::ids::stateVersion, nullptr);
+    if (presetChosen)
+        state.setProperty ("preset", currentPreset.load(), nullptr);
+    else
+        state.removeProperty ("preset", nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -196,9 +247,16 @@ void AnnealAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     // Unknown or malformed data is ignored; missing parameters keep their current values.
+    // "preset" is optional (added in 0.1.1; older versions ignore it, older states lack it).
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+        {
+            const auto tree = juce::ValueTree::fromXml (*xml);
+            const int preset = tree.getProperty ("preset", -1);
+            presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
+            currentPreset = presetChosen ? preset : 0;
+            apvts.replaceState (tree);
+        }
 }
 
 juce::AudioProcessorEditor* AnnealAudioProcessor::createEditor()

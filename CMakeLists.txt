@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Anneal VERSION 0.1.0 LANGUAGES C CXX)
+project(Anneal VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,12 +29,14 @@ target_sources(AnnealCore INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/SpectralEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/LoudnessMatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Params.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Presets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/AnnealLookAndFeel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/Knob.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/PerceptionScreen.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/OutputMeter.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/OutputMeter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/PresetBar.cpp)
 target_include_directories(AnnealCore INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 target_compile_definitions(AnnealCore INTERFACE
     JUCE_WEB_BROWSER=0

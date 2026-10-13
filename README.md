@@ -50,6 +50,7 @@ Unattended update: `Anneal-<version>-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRES
 | | Match | Slow (~3 s) K-weighted loudness match, so you compare tone rather than level. The measured gain is shown. |
 | | Delta | Listen to only what Anneal adds or removes. |
 | Display | Range handles | Drag the dashed handles to limit where Anneal acts (both EQ and heat). Double-click resets. |
+| Header | Preset | Factory presets: click the name for the list, or step with the arrows. `*` = changed since loading it. Also in the DAW's preset menu. Match, Delta and Bypass are left alone. |
 | Header | Bypass | Latency-compensated, click-free. |
 
 Every knob: drag, **Ctrl-drag** for fine adjustment, **double-click** to reset, **click
@@ -117,10 +118,10 @@ projects keep their settings.
 ## Status
 
 - **Built:** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
-- **Tested headless (`AnnealTests`, 26/26 pass):** STFT identity (44.1/48/96 kHz, blocks 1–4096 and random), latency = 4096 @48k, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, mono, harmonic pre-echo −122 dB.
-- **CPU (this machine):** ≈ 3.3 % of one core at 48 kHz stereo (budget was 3 %; the gated harmonic stream costs one extra iFFT); worst block 1.4 ms of a 2.7 ms deadline at 128 samples, but 2.2 ms of 1.3 ms at 64 samples (overrun; first item in the roadmap).
+- **Tested headless (`AnnealTests`, 31/31 pass):** STFT identity (44.1/48/96 kHz, blocks 1–4096 and random), latency = 4096 @48k, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects).
+- **CPU (this machine):** ≈ 3.4 % of one core at 48 kHz stereo (budget 3 %; the gated harmonic stream costs one extra iFFT). Measured at high priority like a DAW audio thread: the slowest 0.1 % of blocks take 0.37 ms of 1.33 ms at 64 samples (28 %), 0.38 ms of 2.67 ms at 128.
 - **UI:** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size.
-- **Host-checked (`AnnealHostCheck`, 9/9 pass)** on the built bundle and on the installed copy in `C:\Program Files\Common Files\VST3`.
+- **Host-checked (`AnnealHostCheck`, 11/11 pass)** including factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy in `C:\Program Files\Common Files\VST3`.
 - **Setup-tested (`TestSetup.ps1`, 16/16 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
 - **Installed** with `Anneal-0.1.0-Setup.exe` on 2026-10-13: VST3 in `C:\Program Files\Common Files\VST3` and the per-user VST3 folder (identical), standalone in `C:\Program Files\Anneal`, listed under Settings → Apps.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Latency is 85 ms at 48 kHz, so it suits mixing/mastering, not tracking.
