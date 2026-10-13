@@ -21,7 +21,7 @@ install:
 
 - **Just for me** (recommended, no administrator rights): the VST3 goes into
   `%LOCALAPPDATA%\Programs\Common\VST3`, the standalone app into `%LOCALAPPDATA%\Programs\Anneal`.
-  Updates never need approval, so the hourly update installs them by itself, even at night.
+  Updates never need approval.
   FL Studio doesn't look in that folder by default: once, open *Options → Manage plugins*, add
   `C:\Users\<you>\AppData\Local\Programs\Common\VST3` under *Plugin search paths*, then click
   *Find installed plugins*. Cubase scans it already.
@@ -100,8 +100,9 @@ Outputs (under the build folder): `Anneal_artefacts\Release\VST3\Anneal.vst3`,
 `Anneal_artefacts\Release\Standalone\Anneal.exe`.
 
 Nothing is installed unless you pass `-Install` / `-InstallSystem`; both go through the setup
-(`tools\Install.ps1`). The all-users install waits at most 5 minutes for the administrator approval,
-then reports instead of hanging. `-Setup -Test` also runs `tools\TestSetup.ps1` on a copy of the
+(`tools\Install.ps1`). The all-users install asks for administrator approval; the approved step
+installs the newest setup in `dist\`, only one approval is ever waiting, and the script returns
+after 5 minutes ("waiting for approval") instead of hanging. `-Setup -Test` also runs `tools\TestSetup.ps1` on a copy of the
 setup with its own AppId: it installs into a sandbox without admin rights, updates while another
 process has the plugin DLL loaded (as a DAW would), and uninstalls, without touching a real install.
 
@@ -112,8 +113,10 @@ Anneal every hour, day and night. Each run fixes the bugs it finds and adds one 
 mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not
 wanted*). It bumps the version and runs `.\build.ps1 -Test -Snapshot -Setup`. Only when everything
 passes does it add a [CHANGELOG.md](CHANGELOG.md) entry, commit, push, publish the setup as a GitHub
-release, and install it **just for you**. That needs no administrator approval, so the update is in
-place when you wake up. The task never asks for, approves or works around administrator rights.
+release, and install it into **Program Files**. That needs your approval: Windows' administrator
+prompt waits on screen until you click Yes. If you're away, the prompt keeps waiting, later updates
+don't add more prompts, and the one Yes installs the newest build. The task never approves or works
+around the prompt itself.
 
 Parameter IDs, plugin codes and saved-state compatibility never change, so existing FL Studio
 projects keep their settings.
@@ -126,5 +129,5 @@ projects keep their settings.
 - **UI (v3, 0.2.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio.
 - **Host-checked (`AnnealHostCheck`, 12/12 pass)** including latency switching through the host, factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
 - **Setup-tested (`TestSetup.ps1`, 16/16 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
-- **Installed** just for the user (no admin) with `Anneal-0.1.1-Setup.exe` on 2026-10-13: VST3 in `%LOCALAPPDATA%\Programs\Common\VST3`, standalone in `%LOCALAPPDATA%\Programs\Anneal`, listed under Settings → Apps. The earlier all-users copy was removed.
+- **Installed** for all users with `Anneal-0.2.0-Setup.exe` on 2026-10-13: VST3 in `C:\Program Files\Common Files\VST3` (FL Studio's default folder), standalone in `C:\Program Files\Anneal`, listed under Settings → Apps. Host-checked 12/12 there.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Low latency (21 ms) suits tracking; Precise (85 ms) is for mixing/mastering.
