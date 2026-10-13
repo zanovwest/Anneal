@@ -27,6 +27,9 @@ $c = Run-Setup "$sb\install1.log"
 Check ($c -eq 0) "fresh install exit 0 (got $c)"
 Check ((Test-Path $bin) -and (Get-FileHash $bin).Hash -eq $builtHash) "VST3 binary installed and matches build"
 Check (Test-Path "$vst\Anneal.vst3\Contents\Resources\moduleinfo.json") "moduleinfo.json installed"
+$folderAttr = (Get-Item -Force "$vst\Anneal.vst3").Attributes
+$iniAttr = if (Test-Path "$vst\Anneal.vst3\desktop.ini") { (Get-Item -Force "$vst\Anneal.vst3\desktop.ini").Attributes } else { 0 }
+Check ((Test-Path "$vst\Anneal.vst3\Plugin.ico") -and ($folderAttr -band [IO.FileAttributes]::System) -and ($iniAttr -band [IO.FileAttributes]::System) -and ($iniAttr -band [IO.FileAttributes]::Hidden)) "bundle icon shows in Explorer (Plugin.ico, system folder, hidden desktop.ini)"
 Check (Test-Path "$app\unins000.exe") "uninstaller in app folder, not in VST3 folder"
 Check (-not (Test-Path "$vst\unins000.exe")) "nothing else dropped into VST3 folder"
 Check (Test-Path $key) "registered under Apps (per-user test mode)"

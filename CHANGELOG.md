@@ -13,7 +13,7 @@ New
   vectors and rendered separately at each Windows size (16 to 256 px), with a bolder version for
   the smallest ones.
 
-Tests: unchanged DSP (34/34), host (12/12) and setup (16/16) checks.
+Tests: DSP 34/34, host 12/12, setup 17/17 (new: the installed plug-in folder shows its icon in Explorer).
 
 ## 0.2.0 — 2026-10-13
 

@@ -129,6 +129,6 @@ projects keep their settings.
 - **Icon (0.2.1):** `Source/ui/Icon.h`, rendered with `AnnealSnapshot --icons resources/icon`, packed by `tools/make_ico.py` into `resources/icon/anneal.ico` (setup, Apps entry); JUCE builds the app and VST3-folder icons from `icon_512.png` / `icon_32.png`.
 - **UI (v3, 0.2.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio.
 - **Host-checked (`AnnealHostCheck`, 12/12 pass)** including latency switching through the host, factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
-- **Setup-tested (`TestSetup.ps1`, 16/16 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
+- **Setup-tested (`TestSetup.ps1`, 17/17 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
 - **Installed** for all users with `Anneal-0.2.0-Setup.exe` on 2026-10-13: VST3 in `C:\Program Files\Common Files\VST3` (FL Studio's default folder), standalone in `C:\Program Files\Anneal`, listed under Settings → Apps. Host-checked 12/12 there.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Low latency (21 ms) suits tracking; Precise (85 ms) is for mixing/mastering.
