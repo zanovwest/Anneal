@@ -1,0 +1,678 @@
+// Headless acceptance tests and benchmark for Anneal.
+// Exit code = number of failed checks.
+
+#include "PluginProcessor.h"
+#include "Params.h"
+#include "dsp/SpectralEngine.h"
+#include "TestSignals.h"
+
+#include <juce_audio_processors/juce_audio_processors.h>
+
+#include <chrono>
+#include <cstdio>
+#include <functional>
+#include <random>
+
+namespace
+{
+using testsig::Channels;
+using testsig::toDb;
+namespace ids = anneal::ids;
+
+int failures = 0, checks = 0;
+
+void check (bool ok, const char* name, const juce::String& detail)
+{
+    ++checks;
+    if (! ok)
+        ++failures;
+    std::printf ("[%s] %-46s %s\n", ok ? "PASS" : "FAIL", name, detail.toRawUTF8());
+    std::fflush (stdout);
+}
+
+void info (const juce::String& s)
+{
+    std::printf ("       %s\n", s.toRawUTF8());
+    std::fflush (stdout);
+}
+
+void section (const char* s)
+{
+    std::printf ("\n== %s\n", s);
+}
+
+juce::String db (double v, int dec = 1) { return juce::String (v, dec) + " dB"; }
+
+std::function<int()> fixedBlocks (int n) { return [n] { return n; }; }
+
+std::function<int()> randomBlocks (int lo, int hi, unsigned seed)
+{
+    auto rng = std::make_shared<std::mt19937> (seed);
+    return [rng, lo, hi] { return std::uniform_int_distribution<int> (lo, hi) (*rng); };
+}
+
+anneal::EngineParams neutral()
+{
+    anneal::EngineParams p;
+    p.reveal = 0.0f; p.smooth = 0.0f; p.tiltDbPerOct = 0.0f; p.heat = 0.0f;
+    p.rangeLoHz = 20.0f; p.rangeHiHz = 20000.0f; p.focus = 0.0f;
+    return p;
+}
+
+Channels runEngine (anneal::SpectralEngine& e, const Channels& in, const std::function<int()>& nextBlock)
+{
+    Channels out = in;
+    const int n = (int) in[0].size();
+    for (int pos = 0; pos < n;)
+    {
+        const int b = std::min (nextBlock(), n - pos);
+        float* ptrs[2] = { out[0].data() + pos, out.size() > 1 ? out[1].data() + pos : nullptr };
+        e.process (ptrs, (int) out.size(), b);
+        pos += b;
+    }
+    return out;
+}
+
+struct Rig
+{
+    std::unique_ptr<AnnealAudioProcessor> proc = std::make_unique<AnnealAudioProcessor>();
+    double fs = 48000.0;
+    int block = 512;
+
+    explicit Rig (int channels = 2)
+    {
+        if (channels == 1)
+        {
+            juce::AudioProcessor::BusesLayout l;
+            l.inputBuses.add (juce::AudioChannelSet::mono());
+            l.outputBuses.add (juce::AudioChannelSet::mono());
+            proc->setBusesLayout (l);
+        }
+    }
+
+    void set (const char* id, float plain)
+    {
+        auto* p = proc->apvts.getParameter (id);
+        p->setValueNotifyingHost (p->convertTo0to1 (plain));
+    }
+
+    void setNeutral()
+    {
+        set (ids::reveal, 0); set (ids::smooth, 0); set (ids::heat, 0); set (ids::tilt, 0);
+        set (ids::rangeLo, 20); set (ids::rangeHi, 20000); set (ids::mix, 100); set (ids::output, 0);
+        set (ids::match, 0); set (ids::delta, 0); set (ids::bypass, 0);
+    }
+
+    void prepare (double sampleRate, int blockSize)
+    {
+        fs = sampleRate;
+        block = blockSize;
+        proc->setRateAndBufferSizeDetails (fs, block);
+        proc->prepareToPlay (fs, block);
+    }
+
+    Channels run (const Channels& in, const std::function<int()>& nextBlock)
+    {
+        const int nch = (int) in.size(), n = (int) in[0].size();
+        Channels out = in;
+        juce::AudioBuffer<float> buf (nch, 8192);
+        juce::MidiBuffer midi;
+        for (int pos = 0; pos < n;)
+        {
+            const int b = std::min ({ nextBlock(), n - pos, 8192 });
+            buf.setSize (nch, b, false, false, true);
+            for (int c = 0; c < nch; ++c)
+                buf.copyFrom (c, 0, in[(size_t) c].data() + pos, b);
+            proc->processBlock (buf, midi);
+            for (int c = 0; c < nch; ++c)
+                std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + b, out[(size_t) c].data() + pos);
+            pos += b;
+        }
+        return out;
+    }
+};
+
+double maxAbs (const Channels& x, int from = 0)
+{
+    double m = 0.0;
+    for (auto& ch : x)
+        for (size_t i = (size_t) from; i < ch.size(); ++i)
+            m = std::max (m, (double) std::abs (ch[i]));
+    return m;
+}
+
+bool allFinite (const Channels& x)
+{
+    for (auto& ch : x)
+        for (float v : ch)
+            if (! std::isfinite (v))
+                return false;
+    return true;
+}
+
+double delayedError (const Channels& out, const Channels& in, int latency)
+{
+    double m = 0.0;
+    for (size_t c = 0; c < out.size(); ++c)
+        for (size_t i = (size_t) latency; i < out[c].size(); ++i)
+            m = std::max (m, (double) std::abs (out[c][i] - in[c][i - (size_t) latency]));
+    return m;
+}
+
+//==============================================================================
+void testIdentity()
+{
+    section ("1. STFT identity (neutral settings)");
+    for (double fs : { 44100.0, 48000.0, 96000.0 })
+    {
+        const std::pair<const char*, std::function<int()>> patterns[] = {
+            { "1", fixedBlocks (1) }, { "31", fixedBlocks (31) }, { "64", fixedBlocks (64) }, { "480", fixedBlocks (480) },
+            { "512", fixedBlocks (512) }, { "4096", fixedBlocks (4096) }, { "rand 1-2000", randomBlocks (1, 2000, 3) } };
+
+        double worst = 0.0, worstHead = 0.0;
+        int latency = 0;
+        for (auto& [name, gen] : patterns)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2);
+            e->setParameters (neutral());
+            latency = e->getLatencySamples();
+            const auto in = testsig::whiteNoise (2, (int) fs + latency, 0.5f, 11);
+            const auto out = runEngine (*e, in, gen);
+            worst = std::max (worst, delayedError (out, in, latency));
+            double head = 0.0;
+            for (auto& ch : out)
+                for (int i = 0; i < latency; ++i)
+                    head = std::max (head, (double) std::abs (ch[(size_t) i]));
+            worstHead = std::max (worstHead, head);
+        }
+        check (worst < 1.0e-4 && worstHead < 1.0e-4,
+               ("identity @" + juce::String (fs / 1000.0, 1) + " kHz, 7 block patterns").toRawUTF8(),
+               "N=" + juce::String (latency) + "  max err " + juce::String (worst, 9) + "  pre-latency " + juce::String (worstHead, 9));
+    }
+}
+
+void testLatency()
+{
+    section ("2. Latency");
+    auto e = std::make_unique<anneal::SpectralEngine>();
+    e->prepare (48000.0, 2);
+    e->setParameters (neutral());
+    auto in = testsig::silence (2, 20000);
+    in[0][1000] = in[1][1000] = 1.0f;
+    const auto out = runEngine (*e, in, fixedBlocks (256));
+    const int peakAt = (int) (std::max_element (out[0].begin(), out[0].end(), [] (float a, float b) { return std::abs (a) < std::abs (b); }) - out[0].begin());
+    check (peakAt == 1000 + e->getLatencySamples() && std::abs (out[0][(size_t) peakAt] - 1.0f) < 1.0e-4f,
+           "engine impulse arrives at reported latency",
+           "peak at " + juce::String (peakAt) + " (expected " + juce::String (1000 + e->getLatencySamples()) + "), value " + juce::String (out[0][(size_t) peakAt], 6));
+
+    Rig rig;
+    rig.setNeutral();
+    rig.prepare (48000.0, 512);
+    const auto pout = rig.run (in, fixedBlocks (512));
+    const int pPeak = (int) (std::max_element (pout[0].begin(), pout[0].end(), [] (float a, float b) { return std::abs (a) < std::abs (b); }) - pout[0].begin());
+    check (pPeak == 1000 + rig.proc->getLatencySamples() && rig.proc->getLatencySamples() == 4096,
+           "processor reports and applies 4096 @48k",
+           "reported " + juce::String (rig.proc->getLatencySamples()) + ", impulse at " + juce::String (pPeak));
+}
+
+void testNulls()
+{
+    section ("3. Dry path nulls");
+    const auto in = testsig::musicLike (48000.0, 3.0);
+
+    Rig a;
+    a.set (ids::mix, 0.0f);   // other settings at defaults (reveal/smooth/heat active)
+    a.prepare (48000.0, 512);
+    const auto outA = a.run (in, randomBlocks (1, 1500, 5));
+    const double errA = delayedError (outA, in, a.proc->getLatencySamples());
+    check (errA == 0.0, "Mix 0 % = bit-exact delayed dry", "max err " + juce::String (errA, 12));
+
+    Rig b;
+    b.setNeutral();
+    b.set (ids::delta, 1.0f);
+    b.prepare (48000.0, 512);
+    const auto outB = b.run (in, fixedBlocks (512));
+    const double peakB = maxAbs (outB, b.proc->getLatencySamples());
+    check (toDb (peakB) < -90.0, "Delta with neutral settings is silent", "peak " + db (toDb (peakB)));
+}
+
+double rel (const float* x, int n, double fs, double f, double ref)
+{
+    return toDb (testsig::toneAmplitude (x, n, f, fs) / ref);
+}
+
+void testHarmonics()
+{
+    section ("4. Spectral harmonics (1 kHz, -18 dBFS, Heat 100 %)");
+    const double fs = 48000.0;
+    for (float color : { 0.0f, 1.0f })
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2);
+        auto p = neutral();
+        p.heat = 1.0f;
+        p.color = color;
+        e->setParameters (p);
+        const auto in = testsig::sines (fs, (int) (3 * fs), { { 1000.0, 0.125893 } });
+        const auto out = runEngine (*e, in, fixedBlocks (512));
+        const float* seg = out[0].data() + (int) (1.5 * fs);
+        const int n = (int) fs;
+        const double ref = testsig::toneAmplitude (seg, n, 1000.0, fs);
+        double h[7] {};
+        for (int k = 2; k <= 6; ++k)
+            h[k] = rel (seg, n, fs, 1000.0 * k, ref);
+
+        info ("color " + juce::String (color, 0) + ": fundamental " + db (toDb (ref)) + "   2nd " + db (h[2]) + "  3rd " + db (h[3])
+              + "  4th " + db (h[4]) + "  5th " + db (h[5]) + "  6th " + db (h[6]));
+        if (color == 0.0f)
+            check (h[2] > -40.0 && h[3] < -60.0 && h[5] < -60.0, "even colour: 2nd present, odd absent", "2nd " + db (h[2]) + ", 3rd " + db (h[3]));
+        else
+            check (h[3] > -40.0 && h[2] < -60.0 && h[4] < -60.0, "odd colour: 3rd present, even absent", "3rd " + db (h[3]) + ", 2nd " + db (h[2]));
+    }
+}
+
+void testAliasing()
+{
+    section ("5. No aliasing (9 kHz, -18 dBFS @ 48 kHz)");
+    const double fs = 48000.0;
+    const auto in = testsig::sines (fs, (int) (3 * fs), { { 9000.0, 0.125893 } });
+    const int n = (int) fs;
+
+    for (float color : { 1.0f, 0.0f })
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2);
+        auto p = neutral();
+        p.heat = 1.0f;
+        p.color = color;
+        e->setParameters (p);
+        const auto out = runEngine (*e, in, fixedBlocks (512));
+        const float* seg = out[0].data() + (int) (1.5 * fs);
+        const double ref = testsig::toneAmplitude (seg, n, 9000.0, fs);
+        if (color == 1.0f)
+        {
+            const double a21 = rel (seg, n, fs, 21000.0, ref), a3 = rel (seg, n, fs, 3000.0, ref);
+            check (a21 < -90.0 && a3 < -90.0, "odd: no fold-back of 27k/45k", "21 kHz " + db (a21) + ", 3 kHz " + db (a3));
+        }
+        else
+        {
+            const double a18 = rel (seg, n, fs, 18000.0, ref), a12 = rel (seg, n, fs, 12000.0, ref);
+            check (a18 > -40.0 && a12 < -90.0, "even: 18k written, no 36k fold-back", "18 kHz " + db (a18) + ", 12 kHz " + db (a12));
+        }
+    }
+
+    // Context only: what a plain tanh waveshaper at 48 kHz would do with the same tone.
+    std::vector<float> naive (in[0].size());
+    for (size_t i = 0; i < naive.size(); ++i)
+        naive[i] = std::tanh (4.0f * in[0][i]) / 4.0f;
+    const float* seg = naive.data() + (int) (1.5 * fs);
+    const double ref = testsig::toneAmplitude (seg, n, 9000.0, fs);
+    info ("reference: naive tanh(4x)/4 @48k aliases 21 kHz " + db (rel (seg, n, fs, 21000.0, ref))
+          + ", 3 kHz " + db (rel (seg, n, fs, 3000.0, ref)));
+}
+
+void testImd()
+{
+    section ("6. No intermodulation (1000 + 1300 Hz, -24 dBFS each, Heat 100 %, Color 50 %)");
+    const double fs = 48000.0;
+    const auto in = testsig::sines (fs, (int) (3 * fs), { { 1000.0, 0.0631 }, { 1300.0, 0.0631 } });
+    const int n = (int) fs;
+
+    auto e = std::make_unique<anneal::SpectralEngine>();
+    e->prepare (fs, 2);
+    auto p = neutral();
+    p.heat = 1.0f;
+    p.color = 0.5f;
+    e->setParameters (p);
+    const auto out = runEngine (*e, in, fixedBlocks (512));
+    const float* seg = out[0].data() + (int) (1.5 * fs);
+    const double ref = testsig::toneAmplitude (seg, n, 1000.0, fs);
+    const double d300 = rel (seg, n, fs, 300.0, ref), s2300 = rel (seg, n, fs, 2300.0, ref);
+    const double h2000 = rel (seg, n, fs, 2000.0, ref), h2600 = rel (seg, n, fs, 2600.0, ref), h3000 = rel (seg, n, fs, 3000.0, ref);
+    info ("harmonics: 2000 " + db (h2000) + ", 2600 " + db (h2600) + ", 3000 " + db (h3000));
+    check (d300 < -80.0 && s2300 < -80.0 && h2000 > -45.0 && h2600 > -45.0, "difference/sum tones absent, harmonics present",
+           "300 Hz " + db (d300) + ", 2300 Hz " + db (s2300));
+
+    std::vector<float> naive (in[0].size());
+    for (size_t i = 0; i < naive.size(); ++i)
+        naive[i] = std::tanh (6.0f * in[0][i]) / 6.0f + 0.05f * in[0][i] * in[0][i] * 6.0f;
+    const float* ns = naive.data() + (int) (1.5 * fs);
+    const double nref = testsig::toneAmplitude (ns, n, 1000.0, fs);
+    info ("reference: asymmetric tanh waveshaper gives 300 Hz " + db (rel (ns, n, fs, 300.0, nref))
+          + ", 2300 Hz " + db (rel (ns, n, fs, 2300.0, nref)));
+}
+
+float bandGain (anneal::SpectralEngine& e, double hz)
+{
+    const auto& m = e.getModel();
+    return m.getBandGainDb()[m.bandForHz (hz)];
+}
+
+void testModel()
+{
+    section ("7. Perceptual model: Smooth / Reveal / Range / Tilt");
+    const double fs = 48000.0;
+    const int n = (int) (4 * fs);
+
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2);
+        e->setParameters (neutral());
+        runEngine (*e, testsig::musicLike (fs, 2.0), fixedBlocks (512));
+        float worst = 0.0f;
+        for (int b = 0; b < anneal::PerceptualModel::numBands; ++b)
+            worst = std::max (worst, std::abs (e->getModel().getBandGainDb()[b]));
+        check (worst < 1.0e-6f, "Reveal 0 / Smooth 0 / Tilt 0 => flat curve", "max |gain| " + juce::String (worst, 8) + " dB");
+    }
+
+    // Pink noise bed + a sustained ring at 3150 Hz.
+    Channels ringy = testsig::silence (2, n);
+    {
+        testsig::Pink pl (1), pr (2);
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+            ringy[0][(size_t) i] = 0.03f * pl.next() + ring;
+            ringy[1][(size_t) i] = 0.03f * pr.next() + ring;
+        }
+    }
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2);
+        auto p = neutral();
+        p.smooth = 1.0f;
+        e->setParameters (p);
+        runEngine (*e, ringy, fixedBlocks (512));
+        const float g3150 = bandGain (*e, 3150.0), g500 = bandGain (*e, 500.0);
+        check (g3150 <= -3.0f && std::abs (g500) < 1.0f, "Smooth 100 %: ring at 3150 Hz is cut", "3150 Hz " + db (g3150) + ", 500 Hz " + db (g500));
+
+        p.rangeLoHz = 5000.0f;
+        auto e2 = std::make_unique<anneal::SpectralEngine>();
+        e2->prepare (fs, 2);
+        e2->setParameters (p);
+        runEngine (*e2, ringy, fixedBlocks (512));
+        const float r3150 = bandGain (*e2, 3150.0);
+        check (std::abs (r3150) < 0.5f, "Range 5k-20k: 3150 Hz left alone", "3150 Hz " + db (r3150));
+    }
+
+    // Pink bed + a dense low-mid build-up (150-350 Hz): the region just above it is in its masking shadow.
+    Channels muddy = testsig::silence (2, n);
+    {
+        testsig::Pink pl (3), pr (4);
+        std::mt19937 rng (9);
+        std::uniform_real_distribution<double> ph (0.0, 2.0 * testsig::pi);
+        std::vector<std::pair<double, double>> partials;
+        for (double f = 150.0; f <= 350.0; f += 2.5)
+            partials.push_back ({ f, ph (rng) });
+        for (int i = 0; i < n; ++i)
+        {
+            double bump = 0.0;
+            for (auto [f, phase] : partials)
+                bump += std::sin (2.0 * testsig::pi * f * i / fs + phase);
+            muddy[0][(size_t) i] = 0.01f * pl.next() + (float) (0.004 * bump);
+            muddy[1][(size_t) i] = 0.01f * pr.next() + (float) (0.004 * bump);
+        }
+    }
+    {
+        float g[3] {};
+        const double probe = 470.0;
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2);
+            auto p = neutral();
+            p.reveal = i == 0 ? 0.0f : 1.0f;
+            e->setParameters (p);
+            runEngine (*e, muddy, fixedBlocks (512));
+            g[i] = bandGain (*e, probe);
+            if (i == 1)
+                info ("Reveal 100 %: prominence at 470 Hz " + db (e->getModel().getBandProminence()[e->getModel().bandForHz (probe)])
+                      + ", gain 250 Hz " + db (bandGain (*e, 250.0)) + ", 1 kHz " + db (bandGain (*e, 1000.0)));
+        }
+        check (g[1] >= 1.0f && std::abs (g[0]) < 1.0e-6f, "Reveal 100 %: shadowed band above build-up lifted", "470 Hz " + db (g[1]) + " (Reveal 0: " + db (g[0]) + ")");
+    }
+
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2);
+        auto p = neutral();
+        p.tiltDbPerOct = 1.0f;
+        e->setParameters (p);
+        runEngine (*e, testsig::musicLike (fs, 1.0), fixedBlocks (512));
+        const float g4k = bandGain (*e, 4000.0), g250 = bandGain (*e, 250.0);
+        check (std::abs (g4k - 2.0f) < 0.3f && std::abs (g250 + 2.0f) < 0.3f, "Tilt +1 dB/oct: +2 dB @4k, -2 dB @250", "4 kHz " + db (g4k, 2) + ", 250 Hz " + db (g250, 2));
+    }
+}
+
+void testBlockInvariance()
+{
+    section ("8. Block-size invariance (default settings, Match off)");
+    const auto in = testsig::musicLike (48000.0, 3.0);
+    Channels ref;
+    double worst = 0.0;
+    for (auto gen : { fixedBlocks (512), fixedBlocks (64), fixedBlocks (1000), randomBlocks (1, 3000, 21) })
+    {
+        Rig r;
+        r.prepare (48000.0, 512);
+        const auto out = r.run (in, gen);
+        if (ref.empty())
+            ref = out;
+        else
+            for (size_t c = 0; c < out.size(); ++c)
+                for (size_t i = 0; i < out[c].size(); ++i)
+                    worst = std::max (worst, (double) std::abs (out[c][i] - ref[c][i]));
+    }
+    check (worst < 1.0e-6, "same output for 512 / 64 / 1000 / random blocks", "max diff " + juce::String (worst, 10));
+}
+
+void testStress()
+{
+    section ("9. Automation stress");
+    const double fs = 48000.0;
+    const auto in = testsig::musicLike (fs, 30.0, 3);
+    Rig r;
+    r.prepare (fs, 2048);
+
+    std::mt19937 rng (77);
+    std::uniform_real_distribution<float> u (0.0f, 1.0f);
+    const char* all[] = { ids::reveal, ids::smooth, ids::tilt, ids::response, ids::rangeLo, ids::rangeHi, ids::heat,
+                          ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass };
+
+    const int n = (int) in[0].size();
+    Channels out = in;
+    juce::AudioBuffer<float> buf (2, 2048);
+    juce::MidiBuffer midi;
+    int blocks = 0;
+    for (int pos = 0; pos < n; ++blocks)
+    {
+        for (auto* id : all)
+            if (u (rng) < 0.3f)
+                r.proc->apvts.getParameter (id)->setValueNotifyingHost (u (rng));
+        const int b = std::min (std::uniform_int_distribution<int> (1, 2048) (rng), n - pos);
+        buf.setSize (2, b, false, false, true);
+        for (int c = 0; c < 2; ++c)
+            buf.copyFrom (c, 0, in[(size_t) c].data() + pos, b);
+        r.proc->processBlock (buf, midi);
+        for (int c = 0; c < 2; ++c)
+            std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + b, out[(size_t) c].data() + pos);
+        pos += b;
+    }
+    const double peak = maxAbs (out);
+    check (allFinite (out) && peak < 64.0, "30 s, random params every block, random sizes",
+           juce::String (blocks) + " blocks, output peak " + db (toDb (peak)) + " (input peak " + db (toDb (maxAbs (in))) + ")");
+
+    // Hot square wave, everything up.
+    Rig h;
+    h.set (ids::heat, 100); h.set (ids::reveal, 100); h.set (ids::smooth, 100); h.set (ids::output, 18);
+    h.prepare (fs, 512);
+    auto sq = testsig::silence (2, (int) (2 * fs));
+    for (size_t i = 0; i < sq[0].size(); ++i)
+        sq[0][i] = sq[1][i] = (std::fmod (i * 100.0 / fs, 1.0) < 0.5) ? 1.0f : -1.0f;
+    const auto hout = h.run (sq, fixedBlocks (512));
+    check (allFinite (hout), "full-scale square, Heat/Reveal/Smooth 100 %, +18 dB", "output peak " + db (toDb (maxAbs (hout))));
+}
+
+void testReprepare()
+{
+    section ("10. Re-prepare at other rates");
+    Rig r;
+    bool ok = true;
+    juce::String log;
+    for (double fs : { 44100.0, 96000.0, 48000.0, 192000.0, 88200.0 })
+    {
+        r.prepare (fs, 480);
+        const auto out = r.run (testsig::musicLike (fs, 1.0), fixedBlocks (480));
+        const int expected = anneal::SpectralEngine::fftSizeFor (fs);
+        ok = ok && allFinite (out) && r.proc->getLatencySamples() == expected;
+        log << juce::String (fs / 1000.0, 1) << "k:" << r.proc->getLatencySamples() << "  ";
+    }
+    check (ok, "latency follows FFT size, output finite", log);
+}
+
+void testState()
+{
+    section ("11. State");
+    Rig a;
+    const std::pair<const char*, float> values[] = { { ids::reveal, 73.0f }, { ids::smooth, 12.5f }, { ids::tilt, -0.8f },
+        { ids::response, 300.0f }, { ids::rangeLo, 85.0f }, { ids::rangeHi, 9000.0f }, { ids::heat, 66.0f }, { ids::color, 80.0f },
+        { ids::focus, -45.0f }, { ids::mix, 70.0f }, { ids::output, -3.5f }, { ids::match, 1.0f }, { ids::delta, 1.0f } };
+    for (auto [id, v] : values)
+        a.set (id, v);
+    juce::MemoryBlock blob;
+    a.proc->getStateInformation (blob);
+
+    Rig b;
+    b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+    float worst = 0.0f;
+    for (auto [id, v] : values)
+    {
+        auto* p = b.proc->apvts.getParameter (id);
+        worst = std::max (worst, std::abs (p->convertFrom0to1 (p->getValue()) - v));
+    }
+    const auto savedXml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    const bool hasVersion = savedXml != nullptr && (int) savedXml->getIntAttribute ("stateVersion") == ids::stateVersion;
+    check (worst < 0.05f && hasVersion, "round trip restores all parameters", "max diff " + juce::String (worst, 5) + (hasVersion ? ", stateVersion present" : ", NO version"));
+
+    Rig c;
+    c.set (ids::heat, 42.0f);
+    std::vector<char> junk (300);
+    std::mt19937 rng (5);
+    for (auto& j : junk)
+        j = (char) std::uniform_int_distribution<int> (0, 255) (rng);
+    c.proc->setStateInformation (junk.data(), (int) junk.size());
+    const char wrongXml[] = "<SomethingElse heat=\"1\"/>";
+    juce::MemoryBlock wrong;
+    juce::AudioProcessor::copyXmlToBinary (*juce::parseXML (wrongXml), wrong);
+    c.proc->setStateInformation (wrong.getData(), (int) wrong.getSize());
+    c.proc->setStateInformation (nullptr, 0);
+    auto* hp = c.proc->apvts.getParameter (ids::heat);
+    check (std::abs (hp->convertFrom0to1 (hp->getValue()) - 42.0f) < 0.05f, "malformed / foreign / empty state ignored", "heat still " + juce::String (hp->convertFrom0to1 (hp->getValue()), 1));
+}
+
+void testBypassAndMono()
+{
+    section ("12. Bypass and mono");
+    const auto in = testsig::musicLike (48000.0, 2.0);
+    Rig r;
+    r.set (ids::heat, 100); r.set (ids::bypass, 1);
+    r.prepare (48000.0, 512);
+    const auto out = r.run (in, fixedBlocks (512));
+    const double err = delayedError (out, in, r.proc->getLatencySamples());
+    check (err < 1.0e-6, "bypass = latency-aligned dry", "max err " + juce::String (err, 9));
+
+    Rig m (1);
+    m.prepare (48000.0, 512);
+    Channels mono { in[0] };
+    const auto mout = m.run (mono, fixedBlocks (512));
+    check (m.proc->getTotalNumInputChannels() == 1 && allFinite (mout) && maxAbs (mout, 4096) > 0.01,
+           "mono in/out layout processes", "channels " + juce::String (m.proc->getTotalNumInputChannels()) + ", peak " + db (toDb (maxAbs (mout))));
+}
+
+void testPreEcho()
+{
+    section ("13. Pre-echo of written harmonics (80 Hz hit after silence, Heat 100 %)");
+    const double fs = 48000.0;
+    const int n = (int) (2 * fs), t0 = (int) fs;
+    auto in = testsig::silence (2, n);
+    for (int i = t0; i < n; ++i)
+    {
+        const double t = (i - t0) / fs;
+        const float v = (float) (0.5 * std::sin (2.0 * testsig::pi * 80.0 * t) * std::exp (-t * 12.0) + (i - t0 < 48 ? 0.4 : 0.0));
+        in[0][(size_t) i] = in[1][(size_t) i] = v;
+    }
+    Channels outs[2];
+    for (int k = 0; k < 2; ++k)
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2);
+        auto p = neutral();
+        p.heat = k == 0 ? 0.0f : 1.0f;
+        e->setParameters (p);
+        outs[k] = runEngine (*e, in, fixedBlocks (512));
+    }
+    const int L = 4096, w = (int) (0.040 * fs);
+    double before = 0.0, after = 0.0;
+    for (int i = 0; i < w; ++i)
+    {
+        const double db_ = outs[1][0][(size_t) (t0 + L - w + i)] - outs[0][0][(size_t) (t0 + L - w + i)];
+        const double da = outs[1][0][(size_t) (t0 + L + i)] - outs[0][0][(size_t) (t0 + L + i)];
+        before += db_ * db_;
+        after += da * da;
+    }
+    const double ratio = 10.0 * std::log10 (std::max (before, 1e-30) / std::max (after, 1e-30));
+    check (ratio < -30.0, "harmonic pre-echo >= 30 dB below post-onset", "40 ms before vs 40 ms after onset: " + db (ratio));
+}
+
+void benchmark()
+{
+    section ("14. Benchmark (Release build, this machine)");
+    for (auto [fs, block] : { std::pair<double, int> { 48000.0, 64 }, { 48000.0, 128 }, { 48000.0, 512 }, { 96000.0, 512 } })
+    {
+        Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
+        r.prepare (fs, block);
+        const auto in = testsig::musicLike (fs, 20.0, 1);
+        const int n = (int) in[0].size();
+        juce::AudioBuffer<float> buf (2, block);
+        juce::MidiBuffer midi;
+        double total = 0.0, worst = 0.0;
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            for (int c = 0; c < 2; ++c)
+                buf.copyFrom (c, 0, in[(size_t) c].data() + pos, block);
+            const auto t0 = std::chrono::steady_clock::now();
+            r.proc->processBlock (buf, midi);
+            const double dt = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+            total += dt;
+            worst = std::max (worst, dt);
+        }
+        const double audio = n / fs, deadline = block / fs;
+        info (juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+              + " % of one core, worst block " + juce::String (worst * 1000.0, 3) + " ms of " + juce::String (deadline * 1000.0, 3)
+              + " ms (" + juce::String (100.0 * worst / deadline, 1) + " %)");
+    }
+}
+}
+
+int main()
+{
+    juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
+
+    testIdentity();
+    testLatency();
+    testNulls();
+    testHarmonics();
+    testAliasing();
+    testImd();
+    testModel();
+    testBlockInvariance();
+    testStress();
+    testReprepare();
+    testState();
+    testBypassAndMono();
+    testPreEcho();
+    benchmark();
+
+    std::printf ("\n%d checks, %d failed\n", checks, failures);
+    return failures;
+}

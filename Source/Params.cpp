@@ -1,0 +1,134 @@
+#include "Params.h"
+
+namespace anneal
+{
+namespace
+{
+    using Float = juce::AudioParameterFloat;
+    using Attr  = juce::AudioParameterFloatAttributes;
+
+    float leadingNumber (const juce::String& text)
+    {
+        return text.retainCharacters ("0123456789.-+").getFloatValue();
+    }
+
+    std::unique_ptr<Float> percent (const char* id, const char* name, float def)
+    {
+        return std::make_unique<Float> (juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), def,
+            Attr().withLabel ("%")
+                  .withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v)) + " %"; })
+                  .withValueFromStringFunction ([] (const juce::String& t) { return leadingNumber (t); }));
+    }
+}
+
+juce::String formatHz (float hz)
+{
+    if (hz < 1000.0f)
+        return juce::String (juce::roundToInt (hz)) + " Hz";
+    return juce::String (hz / 1000.0f, hz < 10000.0f ? 2 : 1) + " kHz";
+}
+
+float parseHz (const juce::String& text)
+{
+    const auto lower = text.toLowerCase();
+    const float v = leadingNumber (lower);
+    return lower.containsChar ('k') ? v * 1000.0f : v;
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    layout.add (percent (ids::reveal, "Reveal", 40.0f));
+    layout.add (percent (ids::smooth, "Smooth", 40.0f));
+
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::tilt, 1 }, "Tilt",
+        juce::NormalisableRange<float> (-1.5f, 1.5f, 0.01f), 0.0f,
+        Attr().withLabel ("dB/oct")
+              .withStringFromValueFunction ([] (float v, int)
+              {
+                  if (std::abs (v) < 0.005f) return juce::String ("0.00 dB/oct");
+                  return (v > 0 ? "+" : "") + juce::String (v, 2) + " dB/oct";
+              })
+              .withValueFromStringFunction ([] (const juce::String& t) { return leadingNumber (t); })));
+
+    {
+        juce::NormalisableRange<float> r (20.0f, 500.0f, 1.0f);
+        r.setSkewForCentre (120.0f);
+        layout.add (std::make_unique<Float> (juce::ParameterID { ids::response, 1 }, "Response", r, 120.0f,
+            Attr().withLabel ("ms")
+                  .withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; })
+                  .withValueFromStringFunction ([] (const juce::String& t) { return leadingNumber (t); })));
+    }
+
+    auto hzAttr = Attr().withLabel ("Hz")
+                        .withStringFromValueFunction ([] (float v, int) { return formatHz (v); })
+                        .withValueFromStringFunction ([] (const juce::String& t) { return parseHz (t); });
+    {
+        juce::NormalisableRange<float> r (20.0f, 2000.0f, 0.1f);
+        r.setSkewForCentre (200.0f);
+        layout.add (std::make_unique<Float> (juce::ParameterID { ids::rangeLo, 1 }, "Range Low", r, 30.0f, hzAttr));
+    }
+    {
+        juce::NormalisableRange<float> r (1000.0f, 20000.0f, 1.0f);
+        r.setSkewForCentre (4472.0f);
+        layout.add (std::make_unique<Float> (juce::ParameterID { ids::rangeHi, 1 }, "Range High", r, 18000.0f, hzAttr));
+    }
+
+    layout.add (percent (ids::heat, "Heat", 30.0f));
+
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::color, 1 }, "Color",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 35.0f,
+        Attr().withLabel ("% odd")
+              .withStringFromValueFunction ([] (float v, int)
+              {
+                  if (v < 0.5f)  return juce::String ("Even");
+                  if (v > 99.5f) return juce::String ("Odd");
+                  if (std::abs (v - 50.0f) < 0.5f) return juce::String ("Even + Odd");
+                  return juce::String (juce::roundToInt (v)) + " % odd";
+              })
+              .withValueFromStringFunction ([] (const juce::String& t)
+              {
+                  const auto l = t.toLowerCase();
+                  if (l.containsAnyOf ("0123456789")) return leadingNumber (l);
+                  if (l.contains ("even") && l.contains ("odd")) return 50.0f;
+                  return l.contains ("odd") ? 100.0f : 0.0f;
+              })));
+
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::focus, 1 }, "Focus",
+        juce::NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f,
+        Attr().withStringFromValueFunction ([] (float v, int)
+              {
+                  const int a = juce::roundToInt (std::abs (v));
+                  if (a == 0) return juce::String ("Broad");
+                  return (v < 0 ? "Body " : "Air ") + juce::String (a);
+              })
+              .withValueFromStringFunction ([] (const juce::String& t)
+              {
+                  const auto l = t.toLowerCase();
+                  const float n = std::abs (leadingNumber (l));
+                  if (l.contains ("body")) return -n;
+                  if (l.contains ("air"))  return n;
+                  return l.contains ("broad") ? 0.0f : leadingNumber (l);
+              })));
+
+    layout.add (percent (ids::mix, "Mix", 100.0f));
+
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::output, 1 }, "Output",
+        juce::NormalisableRange<float> (-18.0f, 18.0f, 0.1f), 0.0f,
+        Attr().withLabel ("dB")
+              .withStringFromValueFunction ([] (float v, int)
+              {
+                  if (std::abs (v) < 0.05f) return juce::String ("0.0 dB");
+                  return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB";
+              })
+              .withValueFromStringFunction ([] (const juce::String& t) { return leadingNumber (t); })));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::match, 1 }, "Match", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::delta, 1 }, "Delta", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::bypass, 1 }, "Bypass", false));
+
+    return layout;
+}
+}
