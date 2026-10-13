@@ -2,7 +2,10 @@
 
 #include "PluginProcessor.h"
 #include "ui/AnnealLookAndFeel.h"
+#include "ui/Fader.h"
+#include "ui/HarmonicGraph.h"
 #include "ui/Knob.h"
+#include "ui/LatencyMenu.h"
 #include "ui/OutputMeter.h"
 #include "ui/PerceptionScreen.h"
 #include "ui/PresetBar.h"
@@ -10,6 +13,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 // Everything laid out at a fixed base size; the editor scales it uniformly.
+// Layout (docs/DESIGN.md, v2): header with presets and the compare cluster (Match, Delta,
+// Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT, OUTPUT.
 class AnnealEditorContent : public juce::Component
 {
 public:
@@ -19,20 +24,24 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
-    void tick (float dtSeconds);   // meters + read-outs, called from the editor's timer
+    void tick (float dtSeconds);   // meters + live read-outs, called from the editor's timer
 
     anneal::PerceptionScreen screen;
     anneal::PresetBar presets;
 
 private:
+    void updateActivity();
+
     AnnealAudioProcessor& processor;
 
-    anneal::Knob reveal, smooth, tilt, response, heat, color, focus, mix, output;
+    anneal::Knob reveal, smooth, tilt, response, heat, mix, output;
+    anneal::Fader color, focus;
+    anneal::HarmonicGraph harmonics;
     anneal::Toggle match, delta, bypass;
     anneal::OutputMeter meter;
+    anneal::LatencyMenu latency;
 
-    float shownMatchDb = 0.0f;
-    bool shownMatchOn = false;
+    juce::String shownMatchText;
 };
 
 class AnnealEditor final : public juce::AudioProcessorEditor, private juce::Timer

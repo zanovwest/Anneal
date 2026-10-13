@@ -21,7 +21,7 @@ install:
 
 - **Just for me** (recommended, no administrator rights): the VST3 goes into
   `%LOCALAPPDATA%\Programs\Common\VST3`, the standalone app into `%LOCALAPPDATA%\Programs\Anneal`.
-  Updates never need approval, so the daily update installs them by itself, even at night.
+  Updates never need approval, so the hourly update installs them by itself, even at night.
   FL Studio doesn't look in that folder by default: once, open *Options → Manage plugins*, add
   `C:\Users\<you>\AppData\Local\Programs\Common\VST3` under *Plugin search paths*, then click
   *Find installed plugins*. Cubase scans it already.
@@ -44,12 +44,13 @@ Unattended update: `Anneal-<version>-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRES
 | | Tilt ±1.5 dB/oct | Static slope around 1 kHz inside the range (darker ↔ brighter). |
 | | Response 20–500 ms | How fast the curve follows the music (release; attack is 3× faster). |
 | Heat | **Heat** 0–100 % | Spectral saturation drive. Level-dependent like a real saturator (calibrated at −18 dBFS). |
-| | Color | Even (2nd/4th/6th) ↔ odd (3rd/5th) harmonics; the centre gives both. |
-| | Focus | Body (harmonics concentrated low) ↔ Air (high). Centre = follow the model only. |
+| | Color | Slider, even (2nd/4th/6th) ↔ odd (3rd/5th) harmonics; the bars under it show the harmonics Heat writes. |
+| | Focus | Slider, body (harmonics concentrated low) ↔ air (high). Centre = follow the model only. |
 | Output | Mix, Output | Latency-aligned dry blend, final gain. |
 | | Match | Slow (~3 s) K-weighted loudness match, so you compare tone rather than level. The measured gain is shown. |
 | | Delta | Listen to only what Anneal adds or removes. |
 | Display | Range handles | Drag the dashed handles to limit where Anneal acts (both EQ and heat). Double-click resets. |
+| Header | Latency | Low 21 ms (default), Normal 43 ms, Precise 85 ms (finest bass detail). Projects from before 0.2.0 open in Precise. |
 | Header | Preset | Factory presets: click the name for the list, or step with the arrows. `*` = changed since loading it. Also in the DAW's preset menu. Match, Delta and Bypass are left alone. |
 | Header | Bypass | Latency-compensated, click-free. |
 
@@ -104,10 +105,10 @@ then reports instead of hanging. `-Setup -Test` also runs `tools\TestSetup.ps1` 
 setup with its own AppId: it installs into a sandbox without admin rights, updates while another
 process has the plugin DLL loaded (as a DAW would), and uninstalls, without touching a real install.
 
-## Daily updates
+## Hourly updates
 
-A scheduled Claude task ("Anneal daily update" in the Claude desktop app's scheduled tasks) works on
-Anneal every day at 7:00 (Hawaii time). Each run fixes the bugs it finds and adds one new feature or
+A scheduled Claude task ("Anneal hourly update" in the Claude desktop app's scheduled tasks) works on
+Anneal every hour, day and night. Each run fixes the bugs it finds and adds one new feature or
 mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not
 wanted*). It bumps the version and runs `.\build.ps1 -Test -Snapshot -Setup`. Only when everything
 passes does it add a [CHANGELOG.md](CHANGELOG.md) entry, commit, push, publish the setup as a GitHub
@@ -120,10 +121,10 @@ projects keep their settings.
 ## Status
 
 - **Built:** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
-- **Tested headless (`AnnealTests`, 31/31 pass):** STFT identity (44.1/48/96 kHz, blocks 1–4096 and random), latency = 4096 @48k, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects).
-- **CPU (this machine):** ≈ 3.4 % of one core at 48 kHz stereo (budget 3 %; the gated harmonic stream costs one extra iFFT). Measured at high priority like a DAW audio thread: the slowest 0.1 % of blocks take 0.37 ms of 1.33 ms at 64 samples (28 %), 0.38 ms of 2.67 ms at 128.
-- **UI:** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size.
-- **Host-checked (`AnnealHostCheck`, 11/11 pass)** including factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
+- **Tested headless (`AnnealTests`, 34/34 pass):** STFT identity in every latency mode (44.1/48/96 kHz, blocks 1–4096 and random), latency per mode and mode switching, old projects load as Precise, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects).
+- **CPU (this machine):** at 48 kHz stereo, Low 2.4 %, Normal 2.1 %, Precise 3.3 % of one core. Measured at high priority like a DAW audio thread, the slowest 0.1 % of blocks at 64 samples take 10 % (Low) / 28 % (Precise) of the deadline.
+- **UI (v3, 0.2.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio.
+- **Host-checked (`AnnealHostCheck`, 12/12 pass)** including latency switching through the host, factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
 - **Setup-tested (`TestSetup.ps1`, 16/16 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
 - **Installed** just for the user (no admin) with `Anneal-0.1.1-Setup.exe` on 2026-10-13: VST3 in `%LOCALAPPDATA%\Programs\Common\VST3`, standalone in `%LOCALAPPDATA%\Programs\Anneal`, listed under Settings → Apps. The earlier all-users copy was removed.
-- **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Latency is 85 ms at 48 kHz, so it suits mixing/mastering, not tracking.
+- **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Low latency (21 ms) suits tracking; Precise (85 ms) is for mixing/mastering.

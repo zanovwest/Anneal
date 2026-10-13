@@ -2,45 +2,51 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-// Visual tokens. Palette roles follow steel temper colours (see docs/DESIGN.md):
-// straw = lift, bronze = heat, temper blue = cut.
+// Visual tokens (docs/DESIGN.md, v3). Cool near-black graphite so the temper accents read
+// clearly: straw = lift, temper blue = cut, bronze = heat. Everything else stays neutral.
 namespace anneal::theme
 {
     namespace colour
     {
-        inline const juce::Colour panel   { 0xff1a1917 };
-        inline const juce::Colour screen  { 0xff100f0e };
-        inline const juce::Colour grid    { 0xff26231f };
-        inline const juce::Colour divider { 0xff2f2c28 };
-        inline const juce::Colour track   { 0xff34312c };
-        inline const juce::Colour body    { 0xff24221f };
-        inline const juce::Colour text    { 0xffece6da };
-        inline const juce::Colour muted   { 0xff8f897e };
-        inline const juce::Colour faint   { 0xff5d584f };
-        inline const juce::Colour straw   { 0xffe3c072 };
-        inline const juce::Colour bronze  { 0xffd9823f };
-        inline const juce::Colour blue    { 0xff7898cc };
-        inline const juce::Colour warning { 0xffe2553d };
+        inline const juce::Colour panel   { 0xff111215 };   // deck
+        inline const juce::Colour screen  { 0xff0a0b0d };   // display background
+        inline const juce::Colour grid    { 0xff1b1e23 };
+        inline const juce::Colour divider { 0xff24272d };
+        inline const juce::Colour track   { 0xff2a2e35 };   // knob / fader tracks
+        inline const juce::Colour body    { 0xff191b1f };   // raised surfaces: buttons, menus, read-outs
+        inline const juce::Colour text    { 0xffeceef1 };
+        inline const juce::Colour muted   { 0xff8c939d };
+        inline const juce::Colour faint   { 0xff575d67 };
+        inline const juce::Colour straw   { 0xfff1c36b };
+        inline const juce::Colour bronze  { 0xffff8b3d };
+        inline const juce::Colour blue    { 0xff6fa7ff };
+        inline const juce::Colour warning { 0xffff5a4e };
     }
 
     namespace size
     {
         constexpr int unit = 8;
-        constexpr float label = 13.0f;     // control titles
+        constexpr float label = 12.0f;     // control titles (caps)
         constexpr float value = 14.0f;     // value read-outs
         constexpr float caption = 12.0f;   // explanatory captions / axis labels
-        constexpr float wordmark = 26.0f;
+        constexpr float wordmark = 22.0f;
     }
 
-    // Bahnschrift ships with Windows 10/11; JUCE falls back to the default sans elsewhere.
+    // Segoe UI ships with every Windows; its figures are tabular, so changing values don't jitter.
+    // The wordmark alone uses Bahnschrift Light. JUCE falls back to the default sans elsewhere.
     inline juce::Font font (float height, const juce::String& style = "Regular")
     {
-        return juce::Font (juce::FontOptions ("Bahnschrift", style, height));
+        return juce::Font (juce::FontOptions ("Segoe UI", style, height));
     }
 
-    inline juce::Font caps (float height, const juce::String& style = "SemiBold")
+    inline juce::Font caps (float height, const juce::String& style = "Semibold")
     {
-        return juce::Font (juce::FontOptions ("Bahnschrift", style, height).withKerningFactor (0.08f));
+        return juce::Font (juce::FontOptions ("Segoe UI", style, height).withKerningFactor (0.09f));
+    }
+
+    inline juce::Font wordmarkFont (float height)
+    {
+        return juce::Font (juce::FontOptions ("Bahnschrift", "Light", height).withKerningFactor (0.42f));
     }
 
     inline float advanceOf (const juce::Font& f, const juce::String& s)

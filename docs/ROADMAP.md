@@ -1,6 +1,6 @@
 # Anneal roadmap
 
-Every daily update does two things:
+Every hourly update does two things:
 
 1. **Bug pass.** It looks for real bugs (code review, the tests, the benchmark, the rendered UI) and
    fixes every one it can prove with a test.
@@ -11,21 +11,22 @@ Add ideas anywhere in the list and reorder freely. Never add anything listed und
 
 ## Next up
 
-1. **Low-latency mode**: a "Latency: Normal / Low" switch (N 4096 → 1024 at 48 kHz, ~21 ms) for
-   tracking. It reports the new latency to the host.
-2. **Mid/Side mode**: Stereo (linked) / Mid-Side. Heat on Mid only and Reveal on Side, or both.
-3. **Saturation flavours**: Tape (soft, mostly even, gentle HF roll-off), Tube (2nd-heavy),
+0. **Fix (setup): uninstall while a DAW has Anneal loaded.** Install moves a loaded DLL aside, but
+   uninstall doesn't, so the locked DLL and its folders stay behind. Do the same move-aside in
+   `CurUninstallStepChanged (usUninstall)` and extend TestSetup to uninstall while the DLL is held.
+1. **Mid/Side mode**: Stereo (linked) / Mid-Side. Heat on Mid only and Reveal on Side, or both.
+2. **Saturation flavours**: Tape (soft, mostly even, gentle HF roll-off), Tube (2nd-heavy),
    Transformer (odd, low end), Exciter (air only). A flavour menu next to Color.
-4. **Transient guard**: protect attacks from the smoothing and from the harmonic smear (pre-echo).
-5. **Freeze curve**: hold the current auto-EQ curve as a static EQ.
-6. **Listen modes**: solo what Reveal adds, what Smooth removes, or only the harmonics.
-7. **Sidechain unmask mode**: lift what a sidechain key masks, or dip the bands the key needs.
-8. **True-peak output ceiling** (a look-ahead limiter, as in Morphfall) so Heat can't clip.
-9. **CPU under the 3 % budget** (now 3.3 %): SIMD FFT (PFFFT) and batched log/exp, as in
+3. **Transient guard**: protect attacks from the smoothing and from the harmonic smear (pre-echo).
+4. **Freeze curve**: hold the current auto-EQ curve as a static EQ.
+5. **Listen modes**: solo what Reveal adds, what Smooth removes, or only the harmonics.
+6. **Sidechain unmask mode**: lift what a sidechain key masks, or dip the bands the key needs.
+7. **True-peak output ceiling** (a look-ahead limiter, as in Morphfall) so Heat can't clip.
+8. **CPU under the 3 % budget in Precise** (now 3.3 %; Low is 2.4 %): SIMD FFT (PFFFT) and batched log/exp, as in
     Morphfall (8.8 % → 1.5 %).
-10. **Undo/redo** for parameter changes, in the header.
-11. **Icon** for the plug-in bundle, the standalone app and the setup.
-12. **Spread the frame work across blocks** (optional): each STFT frame (~0.35 ms) lands in one host
+9. **Undo/redo** for parameter changes, in the header.
+10. **Icon** for the plug-in bundle, the standalone app and the setup.
+11. **Spread the frame work across blocks** (optional): each STFT frame (~0.35 ms) lands in one host
    block. That's fine for Anneal alone (28 % of a 64-sample block), but spreading it over the hop
    would leave more headroom for other plugins at tiny buffers. Costs one hop of latency, so only
    do it as a switch.
@@ -39,6 +40,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 0.2.0 (2026-10-13): new interface (cool graphite, ring knobs with live activity, one large
+  display with a smooth spectrum and glowing EQ curve, harmonic bars, pill buttons); latency
+  modes Low 21 ms (new default) / Normal 43 ms / Precise 85 ms. Fixed: Smooth stopped cutting
+  during development (name clash), caught by the tests before release.
 - 0.1.1 (2026-10-13): factory presets (header menu + host programs). Fixed: old audio after a
   host reset. Checked: the "64-sample overrun" was the benchmark measuring Windows interruptions,
   not Anneal (slowest 0.1 % of blocks: 28 % of the deadline).

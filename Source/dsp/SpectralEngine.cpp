@@ -6,19 +6,20 @@
 
 namespace anneal
 {
-int SpectralEngine::fftSizeFor (double sr) noexcept
+int SpectralEngine::fftSizeFor (double sr, int mode) noexcept
 {
-    if (sr <= 50000.0)  return 4096;
-    if (sr <= 100000.0) return 8192;
-    return 16384;
+    const int base = sr <= 50000.0 ? 4096 : sr <= 100000.0 ? 8192 : 16384;
+    return mode == low ? base / 4 : mode == normal ? base / 2 : base;
 }
 
-void SpectralEngine::prepare (double newSampleRate, int numChannels)
+void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
 {
     sampleRate = newSampleRate;
     channels = std::clamp (numChannels, 1, maxChannels);
-    fftSize = fftSizeFor (sampleRate);
-    hop = fftSize / 8;
+    fftSize = fftSizeFor (sampleRate, mode);
+    // Precise keeps the original 1/8 hop. The shorter frames use 1/4 (Hann^2 still overlap-adds
+    // to a constant), so the model doesn't run more often than it needs to.
+    hop = mode == precise ? fftSize / 8 : fftSize / 4;
     numBins = fftSize / 2 + 1;
     framesPerSecond = (float) (sampleRate / hop);
 
@@ -27,7 +28,8 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels)
         ++order;
     fft = std::make_unique<juce::dsp::FFT> (order);
 
-    // Periodic Hann for analysis and synthesis. Overlap-add of w^2 at hop N/8 sums to 3.
+    // Periodic Hann for analysis and synthesis. Overlap-add of w^2 sums to 3N/8 / hop (3 at N/8,
+    // 1.5 at N/4); olaNorm scales it to unity either way.
     window.resize ((size_t) fftSize);
     double sumSq = 0.0;
     for (int n = 0; n < fftSize; ++n)
@@ -236,17 +238,28 @@ void SpectralEngine::processFrame() noexcept
             hp *= heatGuard * heatGuard;
 
     {
-        DisplayFrame& f = display.beginWrite();
+        DisplayFrame& f = displayOut->beginWrite();
         f.z0 = model.getZ0();
         f.dz = model.getDz();
         f.rangeLoHz = current.rangeLoHz;
         f.rangeHiHz = current.rangeHiHz;
         f.counter = ++frameCounter;
+        f.liftDb = model.getMaxLiftDb();
+        f.cutDb = model.getMaxCutDb();
+        {
+            double h = 0.0, o = 0.0;
+            for (int k = 0; k < numBins; ++k)
+            {
+                h += harmPower[(size_t) k];
+                o += outPower[(size_t) k];
+            }
+            f.heatRelDb = (h > 1.0e-14 && o > 1.0e-14) ? (float) (10.0 * std::log10 (h / o)) : -200.0f;
+        }
         model.bandLevelsDb (power.data(), f.inDb);
         model.bandLevelsDb (outPower.data(), f.outDb);
         model.bandLevelsDb (harmPower.data(), f.heatDb);
         std::copy (model.getBandGainDb(), model.getBandGainDb() + DisplayFrame::numBands, f.gainDb);
-        display.endWrite();
+        displayOut->endWrite();
     }
 
     auto synthesise = [this, half, mask] (float* s, float* acc, float* fifo)

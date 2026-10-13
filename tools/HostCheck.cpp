@@ -124,7 +124,7 @@ int main (int argc, char* argv[])
     for (int i = 0; i < (int) out[0].size(); ++i)
         if (std::abs (out[0][(size_t) i]) > std::abs (out[0][(size_t) peakAt]))
             peakAt = i;
-    check (latency == 4096 && peakAt - 1000 == latency, "latency reported and applied (Mix 0 %)",
+    check (latency == 1024 && peakAt - 1000 == latency, "latency reported and applied (Mix 0 %, Low)",
            "reported " + juce::String (latency) + ", impulse delayed by " + juce::String (peakAt - 1000));
     mix->setValueNotifyingHost (1.0f);
 
@@ -163,6 +163,40 @@ int main (int argc, char* argv[])
             worst = std::max (worst, std::abs (findParam (*second, n)->getValue() - findParam (*plugin, n)->getValue()));
         check (worst < 1.0e-4f, "state restores in a second instance", "state " + juce::String ((int) state.getSize()) + " bytes, max diff " + juce::String (worst, 6));
         findParam (*plugin, "Delta")->setValueNotifyingHost (0.0f);
+    }
+
+    // 6a. Latency mode through the host: switch to Precise, the host sees the new latency and the
+    //     dry path is still aligned; back to Low.
+    {
+        auto* lat = findParam (*plugin, "Latency");
+        plugin->releaseResources();
+        plugin->setPlayConfigDetails (2, 2, 48000.0, 512);
+        plugin->prepareToPlay (48000.0, 512);
+        auto* mixParam = findParam (*plugin, "Mix");
+        mixParam->setValueNotifyingHost (0.0f);
+        juce::String log;
+        bool ok = lat != nullptr;
+        for (float v : { 1.0f, 0.5f, 0.0f })   // Precise, Normal, Low (normalised choice values)
+        {
+            if (! ok) break;
+            lat->setValueNotifyingHost (v);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            auto imp = testsig::silence (2, 16384);
+            imp[0][1000] = imp[1][1000] = 1.0f;
+            testsig::Channels o;
+            run (*plugin, testsig::silence (2, 2048), o, [] { return 512; });
+            plugin->reset();
+            run (*plugin, imp, o, [] { return 512; });
+            int pk = 0;
+            for (int i = 0; i < (int) o[0].size(); ++i)
+                if (std::abs (o[0][(size_t) i]) > std::abs (o[0][(size_t) pk]))
+                    pk = i;
+            const int expected = v > 0.75f ? 4096 : v > 0.25f ? 2048 : 1024;
+            ok = ok && plugin->getLatencySamples() == expected && pk - 1000 == expected;
+            log << plugin->getLatencySamples() << " (impulse +" << (pk - 1000) << ")  ";
+        }
+        mixParam->setValueNotifyingHost (1.0f);
+        check (ok, "latency modes switch through the host", log);
     }
 
     // 6b. Factory presets as host programs: listed, selectable, and a saved project keeps both its

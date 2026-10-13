@@ -26,7 +26,7 @@ namespace anneal
         void mouseExit (const juce::MouseEvent&) override;
         void mouseDown (const juce::MouseEvent&) override;
 
-        static constexpr int arrowWidth = 24, gap = 4;
+        static constexpr int arrowWidth = 30;
 
     private:
         enum class Zone { none, prev, name, next };

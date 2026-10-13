@@ -16,10 +16,10 @@ input ──► dry delay (N samples) ──────────────
 
 | Item | Value |
 |---|---|
-| FFT size N | 4096 (fs ≤ 50 kHz), 8192 (≤ 100 kHz), 16384 above |
-| Hop | N/8 (≈ 94 frames/s at 48 kHz) |
+| FFT size N | Precise: 4096 (fs ≤ 50 kHz), 8192 (≤ 100 kHz), 16384 above. Normal: N/2. Low: N/4 |
+| Hop | Precise N/8, Normal and Low N/4 (94 / 94 / 188 frames/s at 48 kHz) |
 | Window | periodic Hann analysis + synthesis, OLA gain 3 → scaled by 1/3 |
-| Latency | N samples (85.3 ms at 48 kHz) — reported to the host, dry path delayed by the same amount |
+| Latency | N samples: Low 21.3 ms, Normal 42.7 ms, Precise 85.3 ms at 48 kHz. Reported to the host, dry path delayed by the same amount. One engine per mode is prepared up front; a switch happens on the message thread with processing suspended, then the new latency is reported |
 | Tail | N samples |
 | Channels | mono or stereo, in = out; analysis is stereo-linked, synthesis per channel (image preserved) |
 | Parameter resolution | parameters are sampled once per host block, smoothed per frame (τ 40 ms) |

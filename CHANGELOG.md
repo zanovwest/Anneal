@@ -1,8 +1,32 @@
 # Changelog
 
-Newest first. One entry per version; the daily update adds one (see README → Daily updates).
+Newest first. One entry per version; the hourly update adds one (see README → Hourly updates).
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
+
+## 0.2.0 — 2026-10-13
+
+New
+- **Redesigned interface.** Cool near-black graphite instead of brown, so the gold (lift), blue
+  (cut) and orange (heat) accents stand out. One large display: the live auto-EQ curve in front
+  with a soft glow, the spectrum behind it as smooth flowing lines (no more blocky plateaus),
+  and a smooth heat lane underneath. Ring knobs with the value inside (click to type); under
+  Reveal, Smooth and Heat a live line says how hard each is working right now ("lifting
+  +2.9 dB", "cutting −3.6 dB", "harmonics −44 dB"), also shown as a thin inner arc. Color and
+  Focus are sliders with named ends, and next to them bars show the harmonics Heat writes for
+  the current Color. Match, Delta and Bypass are in the header; Match shows its gain.
+- **Lower latency.** A Latency menu in the header: **Low 21 ms** (default for new instances),
+  Normal 43 ms, Precise 85 ms (the original engine, finest bass detail). FL Studio re-aligns
+  tracks automatically when it changes. Projects saved with earlier versions open in Precise,
+  so they sound exactly as before. Low is also lighter on CPU (2.4 % vs 3.3 %).
+
+Fixes
+- During this update Smooth briefly stopped cutting (a new display value had the same name as
+  the cut limit); the tests caught it before release, and a Low-mode test now guards it too.
+
+Tests: 34/34 DSP checks (identity, latency and Smooth/Heat in every mode, old projects load as
+Precise), 12/12 host checks (latency switching through the host), 16/16 setup checks.
+CPU at 48 kHz stereo: Low 2.4 %, Normal 2.1 %, Precise 3.3 % of one core.
 
 ## 0.1.1 — 2026-10-13
 

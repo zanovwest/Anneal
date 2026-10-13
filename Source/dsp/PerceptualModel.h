@@ -38,6 +38,10 @@ namespace anneal
         // Display helper: level within one ERB around each band centre, dBFS. Real-time safe.
         void bandLevelsDb (const float* binPower, float* outDb);
 
+        // Strongest Reveal lift / Smooth cut in the last frame, inside the range, without Tilt (dB).
+        float getMaxLiftDb() const noexcept { return liftPeakDb; }
+        float getMaxCutDb() const noexcept  { return cutPeakDb; }   // <= 0
+
         float getZ0() const noexcept { return (float) z0; }
         float getDz() const noexcept { return (float) dz; }
         double getBandHz (int band) const noexcept { return bandHz[(size_t) band]; }
@@ -52,6 +56,7 @@ namespace anneal
         int fftSize = 0, numBins = 0, boxHalf = 12, exclusion = 25, smoothHalf = 6;
         double aUp = 0.0, aDn = 0.0, aUpM = 0.0, aDnM = 0.0;
         bool primed = false;
+        float liftPeakDb = 0.0f, cutPeakDb = 0.0f;   // (not maxCutDb/maxBoostDb: those are the limits)
 
         // band -> bin partition (CSR)
         std::vector<int> partStart, partBin;

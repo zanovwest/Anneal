@@ -28,7 +28,7 @@ juce::Rectangle<int> PresetBar::zoneBounds (Zone z) const
     {
         case Zone::prev: return r.removeFromLeft (arrowWidth);
         case Zone::next: return r.removeFromRight (arrowWidth);
-        case Zone::name: return r.reduced (arrowWidth + gap, 0);
+        case Zone::name: return r.reduced (arrowWidth, 0);
         case Zone::none: break;
     }
     return {};
@@ -44,44 +44,51 @@ PresetBar::Zone PresetBar::zoneAt (juce::Point<int> p) const
 
 void PresetBar::paint (juce::Graphics& g)
 {
-    auto box = [&g, this] (Zone z)
+    // One pill: arrows at the ends, the name in the middle with a drop-down mark.
+    const auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const float rad = r.getHeight() * 0.5f;
+    g.setColour (colour::body);
+    g.fillRoundedRectangle (r, rad);
+    if (hover != Zone::none)
     {
-        const auto r = zoneBounds (z).toFloat().reduced (0.5f);
-        if (hover == z)
-        {
-            g.setColour (colour::body);
-            g.fillRoundedRectangle (r, 3.0f);
-        }
-        g.setColour (hover == z ? colour::muted : colour::divider);
-        g.drawRoundedRectangle (r, 3.0f, 1.0f);
-        return r;
-    };
+        juce::Graphics::ScopedSaveState save (g);
+        g.reduceClipRegion (zoneBounds (hover));
+        g.setColour (colour::divider);
+        g.fillRoundedRectangle (r, rad);
+    }
+    g.setColour (hover != Zone::none ? colour::muted.withAlpha (0.6f) : colour::divider);
+    g.drawRoundedRectangle (r, rad, 1.0f);
+    g.setColour (colour::divider);
+    for (auto z : { Zone::prev, Zone::next })
+    {
+        const auto zb = zoneBounds (z).toFloat();
+        const float lx = z == Zone::prev ? zb.getRight() : zb.getX();
+        g.drawVerticalLine (juce::roundToInt (lx), r.getY() + 6.0f, r.getBottom() - 6.0f);
+    }
 
-    auto chevron = [&g] (juce::Rectangle<float> r, bool left, juce::Colour c)
+    auto chevron = [&g] (juce::Rectangle<float> zr, bool left, juce::Colour c)
     {
-        const auto m = r.getCentre();
+        const auto m = zr.getCentre();
         const float w = 3.0f, h = 4.5f, dx = left ? w : -w;
         juce::Path p;
         p.startNewSubPath (m.x + dx * 0.5f, m.y - h);
         p.lineTo (m.x - dx * 0.5f, m.y);
         p.lineTo (m.x + dx * 0.5f, m.y + h);
         g.setColour (c);
-        g.strokePath (p, juce::PathStrokeType (1.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+        g.strokePath (p, juce::PathStrokeType (1.6f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
     };
+    chevron (zoneBounds (Zone::prev).toFloat().withTrimmedLeft (3.0f), true, hover == Zone::prev ? colour::text : colour::muted);
+    chevron (zoneBounds (Zone::next).toFloat().withTrimmedRight (3.0f), false, hover == Zone::next ? colour::text : colour::muted);
 
-    chevron (box (Zone::prev), true, hover == Zone::prev ? colour::text : colour::muted);
-    chevron (box (Zone::next), false, hover == Zone::next ? colour::text : colour::muted);
-
-    const auto name = box (Zone::name);
+    const auto name = zoneBounds (Zone::name).toFloat();
     g.setColour (colour::text);
-    g.setFont (font (14.0f));
-    g.drawFittedText (shown, name.reduced (10.0f, 0.0f).withTrimmedRight (14.0f).toNearestInt(),
-                      juce::Justification::centredLeft, 1, 0.85f);
+    g.setFont (font (14.0f, "Semibold"));
+    g.drawFittedText (shown, name.reduced (12.0f, 0.0f).withTrimmedRight (12.0f).toNearestInt(),
+                      juce::Justification::centred, 1, 0.85f);
 
-    // Drop-down mark.
-    const float cx = name.getRight() - 12.0f, cy = name.getCentreY();
+    const float cx = name.getRight() - 14.0f, cy = name.getCentreY();
     juce::Path tri;
-    tri.addTriangle (cx - 4.0f, cy - 2.0f, cx + 4.0f, cy - 2.0f, cx, cy + 2.5f);
+    tri.addTriangle (cx - 3.5f, cy - 1.5f, cx + 3.5f, cy - 1.5f, cx, cy + 2.5f);
     g.setColour (hover == Zone::name ? colour::text : colour::muted);
     g.fillPath (tri);
 }

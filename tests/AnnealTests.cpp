@@ -163,58 +163,105 @@ double delayedError (const Channels& out, const Channels& in, int latency)
 //==============================================================================
 void testIdentity()
 {
-    section ("1. STFT identity (neutral settings)");
-    for (double fs : { 44100.0, 48000.0, 96000.0 })
+    section ("1. STFT identity (neutral settings), every latency mode");
+    const char* modeNames[] = { "Low", "Normal", "Precise" };
+    for (int mode = 0; mode < anneal::SpectralEngine::numModes; ++mode)
     {
-        const std::pair<const char*, std::function<int()>> patterns[] = {
-            { "1", fixedBlocks (1) }, { "31", fixedBlocks (31) }, { "64", fixedBlocks (64) }, { "480", fixedBlocks (480) },
-            { "512", fixedBlocks (512) }, { "4096", fixedBlocks (4096) }, { "rand 1-2000", randomBlocks (1, 2000, 3) } };
-
         double worst = 0.0, worstHead = 0.0;
-        int latency = 0;
-        for (auto& [name, gen] : patterns)
+        juce::String sizes;
+        for (double fs : { 44100.0, 48000.0, 96000.0 })
         {
-            auto e = std::make_unique<anneal::SpectralEngine>();
-            e->prepare (fs, 2);
-            e->setParameters (neutral());
-            latency = e->getLatencySamples();
-            const auto in = testsig::whiteNoise (2, (int) fs + latency, 0.5f, 11);
-            const auto out = runEngine (*e, in, gen);
-            worst = std::max (worst, delayedError (out, in, latency));
-            double head = 0.0;
-            for (auto& ch : out)
-                for (int i = 0; i < latency; ++i)
-                    head = std::max (head, (double) std::abs (ch[(size_t) i]));
-            worstHead = std::max (worstHead, head);
+            const std::pair<const char*, std::function<int()>> patterns[] = {
+                { "1", fixedBlocks (1) }, { "31", fixedBlocks (31) }, { "64", fixedBlocks (64) }, { "480", fixedBlocks (480) },
+                { "512", fixedBlocks (512) }, { "4096", fixedBlocks (4096) }, { "rand 1-2000", randomBlocks (1, 2000, 3) } };
+
+            int latency = 0;
+            for (auto& [name, gen] : patterns)
+            {
+                auto e = std::make_unique<anneal::SpectralEngine>();
+                e->prepare (fs, 2, mode);
+                e->setParameters (neutral());
+                latency = e->getLatencySamples();
+                const auto in = testsig::whiteNoise (2, (int) (fs * 0.5) + latency, 0.5f, 11);
+                const auto out = runEngine (*e, in, gen);
+                worst = std::max (worst, delayedError (out, in, latency));
+                double head = 0.0;
+                for (auto& ch : out)
+                    for (int i = 0; i < latency; ++i)
+                        head = std::max (head, (double) std::abs (ch[(size_t) i]));
+                worstHead = std::max (worstHead, head);
+            }
+            sizes << juce::String (fs / 1000.0, 1) << "k:" << latency << " ";
         }
         check (worst < 1.0e-4 && worstHead < 1.0e-4,
-               ("identity @" + juce::String (fs / 1000.0, 1) + " kHz, 7 block patterns").toRawUTF8(),
-               "N=" + juce::String (latency) + "  max err " + juce::String (worst, 9) + "  pre-latency " + juce::String (worstHead, 9));
+               (juce::String ("identity, ") + modeNames[mode] + ", 44.1/48/96 kHz x 7 block patterns").toRawUTF8(),
+               "N " + sizes + " max err " + juce::String (worst, 9) + "  pre-latency " + juce::String (worstHead, 9));
     }
+}
+
+int peakIndex (const Channels& x)
+{
+    return (int) (std::max_element (x[0].begin(), x[0].end(), [] (float a, float b) { return std::abs (a) < std::abs (b); }) - x[0].begin());
 }
 
 void testLatency()
 {
     section ("2. Latency");
-    auto e = std::make_unique<anneal::SpectralEngine>();
-    e->prepare (48000.0, 2);
-    e->setParameters (neutral());
     auto in = testsig::silence (2, 20000);
     in[0][1000] = in[1][1000] = 1.0f;
-    const auto out = runEngine (*e, in, fixedBlocks (256));
-    const int peakAt = (int) (std::max_element (out[0].begin(), out[0].end(), [] (float a, float b) { return std::abs (a) < std::abs (b); }) - out[0].begin());
-    check (peakAt == 1000 + e->getLatencySamples() && std::abs (out[0][(size_t) peakAt] - 1.0f) < 1.0e-4f,
-           "engine impulse arrives at reported latency",
-           "peak at " + juce::String (peakAt) + " (expected " + juce::String (1000 + e->getLatencySamples()) + "), value " + juce::String (out[0][(size_t) peakAt], 6));
 
+    {
+        bool ok = true;
+        juce::String log;
+        for (int mode = 0; mode < anneal::SpectralEngine::numModes; ++mode)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (48000.0, 2, mode);
+            e->setParameters (neutral());
+            const auto out = runEngine (*e, in, fixedBlocks (256));
+            const int peakAt = peakIndex (out);
+            ok = ok && peakAt == 1000 + e->getLatencySamples() && std::abs (out[0][(size_t) peakAt] - 1.0f) < 1.0e-4f;
+            log << e->getLatencySamples() << " ";
+        }
+        check (ok, "engine impulse arrives at reported latency, each mode", "N at 48 kHz: " + log);
+    }
+
+    // Processor: new instances run Low; switching modes re-reports the latency and stays aligned.
     Rig rig;
     rig.setNeutral();
     rig.prepare (48000.0, 512);
-    const auto pout = rig.run (in, fixedBlocks (512));
-    const int pPeak = (int) (std::max_element (pout[0].begin(), pout[0].end(), [] (float a, float b) { return std::abs (a) < std::abs (b); }) - pout[0].begin());
-    check (pPeak == 1000 + rig.proc->getLatencySamples() && rig.proc->getLatencySamples() == 4096,
-           "processor reports and applies 4096 @48k",
-           "reported " + juce::String (rig.proc->getLatencySamples()) + ", impulse at " + juce::String (pPeak));
+    juce::String log;
+    bool ok = rig.proc->getLatencyMode() == anneal::SpectralEngine::low;
+    for (int mode : { 0, 1, 2, 0 })
+    {
+        rig.set (ids::latency, (float) mode);
+        rig.proc->applyLatencyModeIfChanged();
+        const auto pout = rig.run (in, fixedBlocks (512));
+        const int lat = rig.proc->getLatencySamples();
+        const int pPeak = peakIndex (pout);
+        ok = ok && lat == anneal::SpectralEngine::fftSizeFor (48000.0, mode) && pPeak == 1000 + lat;
+        log << juce::String (1000.0 * lat / 48000.0, 1) << " ms (impulse +" << (pPeak - 1000) << ")  ";
+    }
+    check (ok, "processor: Low by default, modes switch and stay aligned", log);
+
+    // A project saved before 0.2.0 has no Latency parameter: it loads as Precise.
+    {
+        Rig a;
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        if (auto* lat = xml->getChildByAttribute ("id", ids::latency))
+            xml->removeChildElement (lat, true);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig b;
+        b.prepare (48000.0, 512);
+        b.proc->setStateInformation (old.getData(), (int) old.getSize());
+        b.proc->applyLatencyModeIfChanged();
+        check (b.proc->getLatencyMode() == anneal::SpectralEngine::precise && b.proc->getLatencySamples() == 4096,
+               "projects from before 0.2.0 load as Precise (85 ms)", "mode " + juce::String (b.proc->getLatencyMode())
+                   + ", latency " + juce::String (b.proc->getLatencySamples()));
+    }
 }
 
 void testNulls()
@@ -270,6 +317,23 @@ void testHarmonics()
             check (h[2] > -40.0 && h[3] < -60.0 && h[5] < -60.0, "even colour: 2nd present, odd absent", "2nd " + db (h[2]) + ", 3rd " + db (h[3]));
         else
             check (h[3] > -40.0 && h[2] < -60.0 && h[4] < -60.0, "odd colour: 3rd present, even absent", "3rd " + db (h[3]) + ", 2nd " + db (h[2]));
+    }
+
+    {
+        // Low latency mode: the shorter frame still writes the harmonic series.
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.heat = 1.0f;
+        p.color = 0.0f;
+        e->setParameters (p);
+        const auto in = testsig::sines (fs, (int) (3 * fs), { { 1000.0, 0.125893 } });
+        const auto out = runEngine (*e, in, fixedBlocks (512));
+        const float* seg = out[0].data() + (int) (1.5 * fs);
+        const int n = (int) fs;
+        const double ref = testsig::toneAmplitude (seg, n, 1000.0, fs);
+        const double h2 = rel (seg, n, fs, 2000.0, ref), h3 = rel (seg, n, fs, 3000.0, ref);
+        check (h2 > -40.0 && h3 < -60.0, "Low latency: even colour still writes the 2nd", "2nd " + db (h2) + ", 3rd " + db (h3));
     }
 }
 
@@ -387,6 +451,16 @@ void testModel()
         runEngine (*e, ringy, fixedBlocks (512));
         const float g3150 = bandGain (*e, 3150.0), g500 = bandGain (*e, 500.0);
         check (g3150 <= -3.0f && std::abs (g500) < 1.0f, "Smooth 100 %: ring at 3150 Hz is cut", "3150 Hz " + db (g3150) + ", 500 Hz " + db (g500));
+
+        {
+            // Same in the Low latency mode (N = 1024 at 48 kHz): the coarser frame still finds it.
+            auto lowE = std::make_unique<anneal::SpectralEngine>();
+            lowE->prepare (fs, 2, anneal::SpectralEngine::low);
+            lowE->setParameters (p);
+            runEngine (*lowE, ringy, fixedBlocks (512));
+            const float l3150 = bandGain (*lowE, 3150.0), l500 = bandGain (*lowE, 500.0);
+            check (l3150 <= -3.0f && std::abs (l500) < 1.0f, "Low latency: Smooth still cuts the ring", "3150 Hz " + db (l3150) + ", 500 Hz " + db (l500));
+        }
 
         p.rangeLoHz = 5000.0f;
         auto e2 = std::make_unique<anneal::SpectralEngine>();
@@ -524,7 +598,7 @@ void testReprepare()
     {
         r.prepare (fs, 480);
         const auto out = r.run (testsig::musicLike (fs, 1.0), fixedBlocks (480));
-        const int expected = anneal::SpectralEngine::fftSizeFor (fs);
+        const int expected = anneal::SpectralEngine::fftSizeFor (fs, r.proc->getLatencyMode());
         ok = ok && allFinite (out) && r.proc->getLatencySamples() == expected;
         log << juce::String (fs / 1000.0, 1) << "k:" << r.proc->getLatencySamples() << "  ";
     }
@@ -720,9 +794,14 @@ void benchmark()
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    for (auto [fs, block] : { std::pair<double, int> { 48000.0, 64 }, { 48000.0, 128 }, { 48000.0, 512 }, { 96000.0, 512 } })
+    struct Case { double fs; int block; int mode; };
+    const char* modeNames[] = { "Low", "Normal", "Precise" };
+    for (auto [fs, block, mode] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+                                    Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
+                                    Case { 96000.0, 512, 0 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
+        r.set (ids::latency, (float) mode);
         r.prepare (fs, block);
         const auto in = testsig::musicLike (fs, 20.0, 1);
         const int n = (int) in[0].size();
@@ -748,7 +827,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + " " + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;

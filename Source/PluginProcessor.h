@@ -5,14 +5,15 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <array>
 #include <atomic>
 #include <memory>
 
-class AnnealAudioProcessor final : public juce::AudioProcessor
+class AnnealAudioProcessor final : public juce::AudioProcessor, private juce::Timer
 {
 public:
     AnnealAudioProcessor();
-    ~AnnealAudioProcessor() override = default;
+    ~AnnealAudioProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -49,15 +50,28 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
-    anneal::SpectralEngine& getEngine() noexcept { return *engine; }
+    // The engine of the latency mode in use (one per mode, all prepared up front).
+    anneal::SpectralEngine& getEngine() noexcept { return *engines[(size_t) mode]; }
+    anneal::TripleBuffer<anneal::DisplayFrame>& getDisplay() noexcept { return display; }
     float getMatchGainDb() const noexcept { return matchGainDb.load (std::memory_order_relaxed); }
     float takeOutputPeak (int channel) noexcept;   // linear peak since the last call
     double getLatencyMs() const noexcept;
+    double getLatencyMsForMode (int latencyMode) const noexcept;
+    int getLatencyMode() const noexcept { return mode; }
+
+    // Applies the Latency parameter now if it differs from the mode in use (message thread; the
+    // processor's own timer does this within 100 ms of a change). Pauses processing for the
+    // switch, then reports the new latency to the host.
+    void applyLatencyModeIfChanged();
 
 private:
     void pushParametersToEngine() noexcept;
+    void timerCallback() override;
+    int requestedLatencyMode() const noexcept;
 
-    std::unique_ptr<anneal::SpectralEngine> engine;
+    std::array<std::unique_ptr<anneal::SpectralEngine>, anneal::SpectralEngine::numModes> engines;
+    anneal::TripleBuffer<anneal::DisplayFrame> display;   // shared by the engines
+    int mode = anneal::SpectralEngine::low;              // changed only while processing is suspended
     anneal::LoudnessMatch match;
 
     juce::AudioBuffer<float> dryRing, dryBlock;
@@ -88,6 +102,7 @@ private:
     std::atomic<float>* pMatch = nullptr;
     std::atomic<float>* pDelta = nullptr;
     std::atomic<float>* pBypass = nullptr;
+    std::atomic<float>* pLatency = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnnealAudioProcessor)
 };

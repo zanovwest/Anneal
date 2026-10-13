@@ -118,6 +118,7 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
 void PerceptualModel::reset()
 {
     primed = false;
+    liftPeakDb = cutPeakDb = 0.0f;
     for (auto* v : { &smoothed, &gain, &promSlow, &prom, &gainOut, &needOut })
         std::fill (v->begin(), v->end(), 0.0f);
     std::fill (binGainDb.begin(), binGainDb.end(), 0.0f);
@@ -233,6 +234,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     const double zLo = erb::hzToCam (std::max (20.0f, s.rangeLoHz));
     const double zHi = std::max (zLo + 0.5, erb::hzToCam (s.rangeHiHz));
 
+    liftPeakDb = cutPeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
         const double z = z0 + b * dz;
@@ -240,6 +242,8 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
                        * smoothstep ((float) (((zHi + 0.25) - z) / 0.5));
         const float tilt = std::clamp (s.tiltDbPerOct * (float) std::log2 (bandHz[(size_t) b] / 1000.0), -9.0f, 9.0f);
         gainOut[(size_t) b] = rg * (gain[(size_t) b] + tilt);
+        liftPeakDb = std::max (liftPeakDb, rg * gain[(size_t) b]);
+        cutPeakDb  = std::min (cutPeakDb, rg * gain[(size_t) b]);
 
         const float ps = promSlow[(size_t) b];
         const float shadowed = clamp01 ((-ps - 1.0f) / 9.0f);

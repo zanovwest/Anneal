@@ -49,9 +49,10 @@ bool shoot (juce::Component& c, const juce::File& file, float scale = 1.0f)
 
 void reportFonts()
 {
-    for (auto style : { "Light", "Regular", "SemiBold" })
+    for (auto [family, style] : { std::pair<const char*, const char*> { "Bahnschrift", "Light" }, { "Segoe UI", "Regular" },
+                                  { "Segoe UI", "Semibold" }, { "Segoe UI", "Light" } })
     {
-        juce::Font f (juce::FontOptions ("Bahnschrift", style, 20.0f));
+        juce::Font f (juce::FontOptions (family, style, 20.0f));
         auto tf = f.getTypefacePtr();
         juce::String widths;
         for (auto d : { "0", "1", "7", "8" })
@@ -60,7 +61,7 @@ void reportFonts()
             ga.addLineOfText (f, d, 0.0f, 0.0f);
             widths << juce::String (ga.getBoundingBox (0, -1, false).getWidth() > 0 ? ga.getGlyph (0).getRight() : 0.0f, 2) << " ";
         }
-        std::printf ("font request Bahnschrift %-8s -> %s / %s, digit advance: %s\n", style,
+        std::printf ("font request %s %-8s -> %s / %s, digit advance: %s\n", family, style,
                      tf != nullptr ? tf->getName().toRawUTF8() : "(null)",
                      tf != nullptr ? tf->getStyle().toRawUTF8() : "", widths.toRawUTF8());
     }
@@ -130,6 +131,7 @@ int main (int argc, char* argv[])
             }
         }
         content.screen.refreshNow();
+        content.tick (0.0f);   // live read-outs under the knobs, from the frame just taken
         if (s.readoutHz > 0.0f)
             content.screen.setReadoutHz (s.readoutHz);
 

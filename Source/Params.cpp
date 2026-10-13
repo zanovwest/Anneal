@@ -129,6 +129,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::delta, 1 }, "Delta", false));
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::bypass, 1 }, "Bypass", false));
 
+    // Latency mode. New instances start at Low; projects saved before 0.2.0 load as Precise (the
+    // only engine they had), see AnnealAudioProcessor::setStateInformation. Not automatable:
+    // a latency change makes the host re-align every track.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::latency, 1 }, "Latency",
+        juce::StringArray { "Low", "Normal", "Precise" }, 0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
     return layout;
 }
 }

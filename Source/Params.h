@@ -19,6 +19,7 @@ namespace anneal::ids
     inline constexpr const char* match    = "match";
     inline constexpr const char* delta    = "delta";
     inline constexpr const char* bypass   = "bypass";
+    inline constexpr const char* latency  = "latency";   // 0.2.0: Low / Normal / Precise (choice)
 
     inline constexpr int stateVersion = 1;
 }

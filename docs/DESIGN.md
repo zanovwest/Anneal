@@ -38,38 +38,46 @@ in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve ─┐
 |---|---|---|
 | AUTO EQ | Reveal, Smooth | Tilt, Response |
 | HEAT | Heat | Color (even↔odd), Focus (body↔air) |
-| OUTPUT | — | Mix, Output, Match (loudness), Δ (delta listen) |
+| OUTPUT | — | Mix, Output |
+| Header | Preset, Latency (Low / Normal / Precise) | Match (loudness), Δ (delta listen), Bypass |
 | On the display | Range low / high handles (limits where Anneal acts) | |
 
-## Visual direction: "temper colours on a measurement screen"
+## Visual direction (v3, 0.2.0): temper accents on cool graphite
 
-Annealed steel changes colour with heat — pale straw, dark straw, bronze, purple,
-blue. Those **temper colours are the palette's semantic roles**, not decoration:
+Annealed steel changes colour with heat: pale straw, bronze, blue. Those **temper colours
+are the palette's semantic roles**, not decoration. v1 put them on warm brown graphite, where
+gold-on-brown read as muddy and nothing stood out; v3 keeps the roles and moves everything else
+to a cool, near-black neutral so the accents carry the information.
 
 | Role | Token | Meaning |
 |---|---|---|
-| Reveal / boost | straw `#E3C072` | lifted bands |
-| Heat / harmonics | bronze `#D9823F` | harmonic energy written |
-| Smooth / cut | temper blue `#7898CC` | reduced bands |
-| Panel | warm graphite `#1A1917` | |
-| Screen | `#100F0E`, grid `#26231F` | |
-| Text / muted | `#ECE6DA` / `#8F897E` | |
-| Divider | `#2F2C28` | |
-| Warning | `#E2553D` | output over 0 dBFS only |
+| Reveal / lift | straw `#F1C36B` | lifted bands, Reveal ring |
+| Heat / harmonics | bronze `#FF8B3D` | harmonic energy written, Heat ring, harmonic bars |
+| Smooth / cut | temper blue `#6FA7FF` | reduced bands, Smooth ring |
+| Deck | `#111215` | |
+| Screen | `#0A0B0D`, grid `#1B1E23`, divider `#24272D` | |
+| Raised (buttons, menus) | `#191B1F` | |
+| Text / muted / faint | `#ECEEF1` / `#8C939D` / `#575D67` | |
+| Warning | `#FF5A4E` | output over 0 dBFS only |
 
-Boost vs. cut is also encoded by **position** (above/below the 0 dB line) and
-fill pattern, so it does not rely on hue.
+Lift vs. cut is also encoded by **position** (above/below the 0 dB line), so it never relies
+on hue alone; even vs. odd harmonics are solid vs. lighter bars.
 
-- **Type:** Bahnschrift (DIN-derived, ships with Windows 10/11) for everything;
-  stable-width digits for values. Fallback: the default system sans. Product name
-  in Bahnschrift Light with wide tracking; control labels plain caps at 13 px.
-- **Surface:** flat ink. No gradients-as-decoration, no glow, no fake hardware.
-  Hairline dividers between groups instead of cards.
-- **Controls:** one knob family. 270° arc, value arc in the role colour, a short
-  pointer, bipolar knobs fill from the centre tick. Primary knobs 88 px, secondary
-  54 px. Double-click resets, Ctrl/Alt-drag is fine adjust, the value field under
-  each knob is typeable (units parsed by the parameter).
-- **Spacing:** 8 px grid; header 40 px; display ≈ 55 % of height.
+- **Type:** Segoe UI (every Windows; tabular figures) for labels and values: caps 11–12 px
+  semibold for titles, 14 px values, 21–25 px semibold inside the rings. The wordmark alone
+  is Bahnschrift Light with wide tracking.
+- **Surface:** flat, with two exceptions that carry meaning: the EQ curve has a soft halo
+  and its fill grows stronger away from 0 dB (bigger moves read as stronger); the spectrum
+  and heat lanes are soft washes so they stay behind the curve.
+- **Controls:** one ring family. Hero (Heat, 132 px) and primary (Reveal, Smooth, 112 px)
+  rings show the value inside (click it to type), the title under the ring, and a live line
+  under the title ("lifting +2.9 dB", "cutting −3.6 dB", "harmonics −44 dB") that comes from
+  the engine; the same amount is a thin inner arc. Secondary controls are compact rows: a
+  42 px ring with title and value beside it. Color and Focus are faders with their two
+  ends named (even/odd, body/air). Buttons are pills; on = tinted in the role colour.
+- **Layout:** header 48 px (wordmark, latency, presets centred, compare cluster right);
+  the display takes 56 % of the height; the deck follows the signal: AUTO EQ → HEAT → OUTPUT,
+  hairlines between groups, no cards.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
@@ -77,11 +85,13 @@ The display's x-axis is the **ERB-rate (Cam) scale**, not a log-frequency axis:
 horizontal space is proportional to how much of the cochlea a frequency range
 occupies, which is exactly the grid the model works on. On it:
 
-- input spectrum (thin line) and output spectrum (filled),
-- the live auto-EQ curve (straw above 0 dB, blue below, ±12 dB scale on the right),
-- a **heat strip** along the bottom showing how much harmonic energy is being
-  written into each band (bronze intensity + height),
-- draggable **Range** handles.
+- the live auto-EQ curve in front (straw above 0 dB, blue below, ±12 dB on the right),
+- input and output spectrum behind it as smooth lines over a soft wash (smoothed across
+  ±0.25 Cam for display only, so tonal music reads as a flowing line, not plateaus),
+- a **heat lane** below: how much harmonic energy is written into each band, relative to
+  the output there,
+- draggable **Range** handles; outside the range is dimmed.
 
 Everything drawn comes from the processor's real per-frame data (published through
-a lock-free triple buffer). The curve is labelled "AUTO EQ (live)".
+a lock-free triple buffer). The harmonic bars next to Color are model-derived (the synth's
+own formula at −18 dBFS) and say so.

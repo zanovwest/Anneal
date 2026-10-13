@@ -32,9 +32,14 @@ namespace anneal
     {
     public:
         static constexpr int maxChannels = 2;
-        static int fftSizeFor (double sampleRate) noexcept;
 
-        void prepare (double sampleRate, int numChannels);
+        // Latency modes. Precise is the original engine (N = 4096 at <= 50 kHz, hop N/8);
+        // Normal halves N and Low quarters it (hop N/4), trading bass resolution for latency.
+        enum Mode { low = 0, normal = 1, precise = 2 };
+        static constexpr int numModes = 3;
+        static int fftSizeFor (double sampleRate, int mode = precise) noexcept;
+
+        void prepare (double sampleRate, int numChannels, int mode = precise);
         void reset();
 
         // Called once per host block from the audio thread; values are smoothed per frame.
@@ -52,7 +57,9 @@ namespace anneal
         float getLastHeatGuard() const noexcept { return lastHeatGuard; }   // 1 = harmonics written in full
 
         const PerceptualModel& getModel() const noexcept { return model; }
-        TripleBuffer<DisplayFrame>& getDisplay() noexcept { return display; }
+        TripleBuffer<DisplayFrame>& getDisplay() noexcept { return *displayOut; }
+        // Several engines (one per latency mode) can publish into one shared display buffer.
+        void setDisplayTarget (TripleBuffer<DisplayFrame>* shared) noexcept { displayOut = shared != nullptr ? shared : &display; }
 
     private:
         void processFrame() noexcept;
@@ -80,6 +87,7 @@ namespace anneal
         bool paramsPrimed = false;
 
         TripleBuffer<DisplayFrame> display;
+        TripleBuffer<DisplayFrame>* displayOut = &display;
         std::uint32_t frameCounter = 0;
     };
 }

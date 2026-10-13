@@ -40,20 +40,28 @@ float OutputMeter::yForDb (float db, juce::Rectangle<float> bar) const noexcept
 void OutputMeter::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    const auto labelArea = r.removeFromLeft (26.0f);
-    auto bars = r.withTrimmedTop (10.0f).withTrimmedBottom (8.0f);
+
+    // Peak-hold number on top, so the meter answers "how loud" without reading the scale.
+    const auto readout = r.removeFromTop (18.0f);
+    const float peak = juce::jmax (hold[0], channels > 1 ? hold[1] : hold[0]);
+    g.setFont (font (12.0f, "Semibold"));
+    g.setColour (peak > 0.0f ? colour::warning : colour::muted);
+    const auto peakText = peak <= bottomDb ? juce::String::fromUTF8 ("\xe2\x88\x92\xe2\x88\x9e")
+                                           : (peak > 0.0f ? "+" : peak < -0.05f ? juce::String::fromUTF8 ("\xe2\x88\x92") : juce::String())
+                                                 + juce::String (std::abs (peak), 1);
+    drawTabular (g, peakText, readout, juce::Justification::centred);
+    r.removeFromTop (6.0f);
+
+    // Slim bars with tick marks only: the number on top carries the value.
+    r = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 16.0f), r.getHeight());
+    auto bars = r.withTrimmedTop (10.0f).withTrimmedBottom (2.0f);
     const auto latchArea = r.withHeight (6.0f);
 
-    // Scale.
-    g.setFont (font (size::caption));
-    for (float db : { 0.0f, -6.0f, -12.0f, -24.0f, -48.0f })
+    for (float db : { 0.0f, -6.0f, -12.0f, -24.0f })
     {
         const float y = yForDb (db, bars);
         g.setColour (db == 0.0f ? colour::muted : colour::faint);
-        g.drawText (db == 0.0f ? juce::String ("0") : juce::String::fromUTF8 ("\xe2\x88\x92") + juce::String ((int) -db),
-                    juce::Rectangle<float> (labelArea.getX(), y - 7.0f, 22.0f, 14.0f), juce::Justification::centredRight, false);
-        g.setColour (colour::grid);
-        g.drawHorizontalLine (juce::roundToInt (y), bars.getX(), bars.getRight());
+        g.drawHorizontalLine (juce::roundToInt (y), bars.getX() - 5.0f, bars.getX() - 2.0f);
     }
 
     const float gap = 3.0f;
@@ -69,7 +77,7 @@ void OutputMeter::paint (juce::Graphics& g)
         const float y = yForDb (level[c], bar);
         if (level[c] > bottomDb)
         {
-            g.setColour (colour::muted);
+            g.setColour (colour::text.withAlpha (0.42f));
             g.fillRect (bar.withTop (juce::jmax (y, y0)));
             if (y < y0)
             {

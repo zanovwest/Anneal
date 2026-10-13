@@ -16,6 +16,11 @@ namespace anneal
         float rangeHiHz = 20000.0f;
         std::uint32_t counter = 0;
 
+        // How hard each primary control is working in this frame (for the knobs' live read-outs).
+        float liftDb = 0.0f;          // strongest Reveal lift inside the range, dB (no Tilt)
+        float cutDb = 0.0f;           // strongest Smooth cut inside the range, dB (<= 0)
+        float heatRelDb = -200.0f;    // harmonic energy written, relative to the whole output, dB
+
         float inDb[numBands]   {};    // input level per ERB, dBFS (signal power within +-0.5 Cam)
         float outDb[numBands]  {};    // output level per ERB, dBFS
         float gainDb[numBands] {};    // live auto-EQ gain incl. tilt and range gate, dB

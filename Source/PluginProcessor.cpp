@@ -7,8 +7,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "AnnealState", anneal::createParameterLayout()),
-      engine (std::make_unique<anneal::SpectralEngine>())
+      apvts (*this, nullptr, "AnnealState", anneal::createParameterLayout())
 {
     namespace ids = anneal::ids;
     pReveal   = apvts.getRawParameterValue (ids::reveal);
@@ -25,10 +24,51 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pMatch    = apvts.getRawParameterValue (ids::match);
     pDelta    = apvts.getRawParameterValue (ids::delta);
     pBypass   = apvts.getRawParameterValue (ids::bypass);
+    pLatency  = apvts.getRawParameterValue (ids::latency);
 
     // A usable default before the host calls prepareToPlay (e.g. state loading, editor opening).
-    engine->prepare (48000.0, 2);
-    setLatencySamples (engine->getLatencySamples());
+    for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
+    {
+        engines[(size_t) m] = std::make_unique<anneal::SpectralEngine>();
+        engines[(size_t) m]->setDisplayTarget (&display);
+        engines[(size_t) m]->prepare (48000.0, 2, m);
+    }
+    mode = requestedLatencyMode();
+    setLatencySamples (getEngine().getLatencySamples());
+    startTimerHz (10);
+}
+
+AnnealAudioProcessor::~AnnealAudioProcessor()
+{
+    stopTimer();
+}
+
+int AnnealAudioProcessor::requestedLatencyMode() const noexcept
+{
+    return juce::jlimit (0, anneal::SpectralEngine::numModes - 1, juce::roundToInt (pLatency->load()));
+}
+
+void AnnealAudioProcessor::timerCallback()
+{
+    applyLatencyModeIfChanged();
+}
+
+void AnnealAudioProcessor::applyLatencyModeIfChanged()
+{
+    const int wanted = requestedLatencyMode();
+    if (wanted == mode)
+        return;
+
+    // suspendProcessing takes the callback lock the host processes under, so no block is running
+    // while the engine and the dry path change length. Everything was allocated in prepareToPlay.
+    suspendProcessing (true);
+    mode = wanted;
+    getEngine().reset();
+    ringLength = getEngine().getLatencySamples();
+    dryRing.clear();
+    dryPos = 0;
+    suspendProcessing (false);
+    setLatencySamples (ringLength);   // the host re-aligns (VST3: restartComponent kLatencyChanged)
 }
 
 bool AnnealAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -42,11 +82,14 @@ bool AnnealAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     preparedChannels = juce::jlimit (1, 2, getTotalNumInputChannels());
-    engine->prepare (sampleRate, preparedChannels);
-    setLatencySamples (engine->getLatencySamples());
+    for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
+        engines[(size_t) m]->prepare (sampleRate, preparedChannels, m);
+    mode = requestedLatencyMode();
+    setLatencySamples (getEngine().getLatencySamples());
 
-    ringLength = engine->getLatencySamples();
-    dryRing.setSize (2, ringLength);
+    // The dry ring is sized for the longest mode, so switching modes never allocates.
+    ringLength = getEngine().getLatencySamples();
+    dryRing.setSize (2, engines[anneal::SpectralEngine::precise]->getLatencySamples());
     dryRing.clear();
     dryPos = 0;
 
@@ -74,7 +117,8 @@ void AnnealAudioProcessor::reset()
     // a new prepareToPlay. Clears every buffer that holds audio, so playback that starts again
     // doesn't replay the last ~85 ms from before. No allocation. The loudness-match gain is a slow
     // measurement, not audio, so it is kept (otherwise every restart would re-converge for ~3 s).
-    engine->reset();
+    for (auto& e : engines)
+        e->reset();
     dryRing.clear();
     dryBlock.clear();
     dryPos = 0;
@@ -85,12 +129,20 @@ void AnnealAudioProcessor::reset()
 
 double AnnealAudioProcessor::getTailLengthSeconds() const
 {
-    return engine->getFftSize() / engine->getSampleRate();
+    const auto& e = *engines[(size_t) mode];
+    return e.getFftSize() / e.getSampleRate();
 }
 
 double AnnealAudioProcessor::getLatencyMs() const noexcept
 {
-    return 1000.0 * engine->getLatencySamples() / engine->getSampleRate();
+    const auto& e = *engines[(size_t) mode];
+    return 1000.0 * e.getLatencySamples() / e.getSampleRate();
+}
+
+double AnnealAudioProcessor::getLatencyMsForMode (int m) const noexcept
+{
+    const auto& e = *engines[(size_t) juce::jlimit (0, anneal::SpectralEngine::numModes - 1, m)];
+    return 1000.0 * e.getLatencySamples() / e.getSampleRate();
 }
 
 void AnnealAudioProcessor::pushParametersToEngine() noexcept
@@ -105,7 +157,7 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.heat         = pHeat->load() * 0.01f;
     p.color        = pColor->load() * 0.01f;
     p.focus        = pFocus->load() * 0.01f;
-    engine->setParameters (p);
+    getEngine().setParameters (p);
 }
 
 void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -155,7 +207,7 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
         // 2. Spectral engine, in place -> wet.
         float* wet[2] = { buffer.getWritePointer (0, start), nch > 1 ? buffer.getWritePointer (1, start) : nullptr };
-        engine->process (wet, nch, len);
+        getEngine().process (wet, nch, len);
 
         // 3. Loudness match (always measured, applied only when enabled).
         const float* dryPtrs[2] = { dryBlock.getReadPointer (0), dryBlock.getReadPointer (nch > 1 ? 1 : 0) };
@@ -252,10 +304,21 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
         if (xml->hasTagName (apvts.state.getType()))
         {
             const auto tree = juce::ValueTree::fromXml (*xml);
+            // Check before replaceState: the APVTS fills missing parameters into the same tree.
+            const bool hasLatency = tree.getChildWithProperty ("id", anneal::ids::latency).isValid();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
             apvts.replaceState (tree);
+
+            // Projects saved before 0.2.0 have no Latency: they keep the engine they were made
+            // with (Precise, 85 ms at 48 kHz), so they sound exactly as before.
+            if (! hasLatency)
+                if (auto* lp = apvts.getParameter (anneal::ids::latency))
+                    lp->setValueNotifyingHost (lp->convertTo0to1 ((float) anneal::SpectralEngine::precise));
+
+            if (juce::MessageManager::existsAndIsCurrentThread())
+                applyLatencyModeIfChanged();
         }
 }
 

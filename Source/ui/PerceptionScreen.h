@@ -10,8 +10,9 @@
 namespace anneal
 {
     // The main display. Horizontal axis is the ERB-rate (Cam) scale, the same grid the model
-    // uses. Three aligned lanes: spectrum (in/out), live auto-EQ gain, harmonic energy written.
-    // Range handles are bound to the rangeLo / rangeHi parameters.
+    // uses. The large lane shows the live auto-EQ gain (the thing Anneal is doing) drawn over a
+    // dimmed in/out spectrum; a short lane below shows the harmonic energy written. Range
+    // handles run the full height and are bound to the rangeLo / rangeHi parameters.
     class PerceptionScreen : public juce::Component,
                              public juce::SettableTooltipClient,
                              private juce::Timer
@@ -34,6 +35,11 @@ namespace anneal
         void refreshNow();
         void setReadoutHz (float hz);
 
+        // How hard Reveal / Smooth / Heat are working (from the engine's frames, with meter
+        // ballistics: instant rise, 12 dB/s fall). live = audio is arriving.
+        struct Activity { float liftDb = 0.0f, cutDb = 0.0f, heatRelDb = -200.0f; bool live = false; };
+        Activity getActivity() const noexcept { return activity; }
+
     private:
         enum class Handle { none, lo, hi };
 
@@ -45,6 +51,7 @@ namespace anneal
 
         void paintSpectrum (juce::Graphics&);
         void paintEq (juce::Graphics&);
+        float eqY (float db) const noexcept;
         void paintHeat (juce::Graphics&);
         void paintRange (juce::Graphics&);
         void paintReadout (juce::Graphics&);
@@ -54,11 +61,16 @@ namespace anneal
 
         static constexpr int nb = DisplayFrame::numBands;
         std::array<float, nb> inDb {}, outDb {}, gainDb {}, heatDb {};
+        // What is drawn: the levels above, smoothed across bands (about +-0.25 Cam) so tonal
+        // content reads as a flowing line rather than one-ERB-wide plateaus. Display only.
+        std::array<float, nb> inView {}, outView {}, heatView {};
+        void updateViews();
         float z0 = 0.0f, dz = 0.0f;
         bool haveFrame = false;
         int idleTicks = 0;
 
-        juce::Rectangle<float> plot, specLane, eqLane, heatLane;
+        juce::Rectangle<float> plot, mainLane, heatLane;
+        Activity activity;
 
         std::unique_ptr<juce::ParameterAttachment> loAttachment, hiAttachment;
         juce::RangedAudioParameter* loParam = nullptr;

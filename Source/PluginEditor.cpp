@@ -8,38 +8,49 @@ namespace ids = anneal::ids;
 
 namespace
 {
-    const juce::Rectangle<int> matchReadoutArea { 780, 504, 112, 40 };
-    constexpr int dividerX[] = { 392, 656 };
+    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> OUTPUT.
+    constexpr int titleY = 408, dividerTop = 414, dividerBottom = 604;
+    constexpr int dividerX[] = { 490, 832 };
+
+    juce::String minus() { return juce::String::fromUTF8 ("\xe2\x88\x92"); }
+
+    juce::String signedDb (float v)
+    {
+        if (std::abs (v) < 0.05f) return "0.0";
+        return (v > 0 ? "+" : minus()) + juce::String (std::abs (v), 1);
+    }
 }
 
 AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
-    : screen (p.getEngine().getDisplay(), p.apvts),
+    : screen (p.getDisplay(), p.apvts),
       processor (p),
       reveal   (p.apvts, ids::reveal,   "Reveal",   colour::straw,  Size::primary,   false, "lifts masked detail",
                 "Reveal: lifts bands that sit in the masking shadow of louder neighbours"),
-      smooth   (p.apvts, ids::smooth,   "Smooth",   colour::blue,   Size::primary,   false, "tames dominance",
+      smooth   (p.apvts, ids::smooth,   "Smooth",   colour::blue,   Size::primary,   false, "tames dominant bands",
                 "Smooth: pulls down bands that dominate their auditory neighbourhood"),
       tilt     (p.apvts, ids::tilt,     "Tilt",     colour::muted,  Size::secondary, true,  {},
                 "Tilt: static slope around 1 kHz, applied inside the range (darker to brighter)"),
       response (p.apvts, ids::response, "Response", colour::muted,  Size::secondary, false, {},
                 "Response: how quickly the auto EQ follows the music (release; attack is 3x faster)"),
-      heat     (p.apvts, ids::heat,     "Heat",     colour::bronze, Size::primary,   false, "harmonics where thin",
+      heat     (p.apvts, ids::heat,     "Heat",     colour::bronze, Size::hero,      false, "harmonics where thin",
                 "Heat: spectral saturation; each partial grows its own 2nd-6th harmonics where the spectrum is thin"),
-      color    (p.apvts, ids::color,    "Color",    colour::bronze, Size::secondary, false, {},
-                "Color: even harmonics (round, 2nd/4th/6th) to odd harmonics (edgier, 3rd/5th)"),
-      focus    (p.apvts, ids::focus,    "Focus",    colour::bronze, Size::secondary, true,  {},
-                "Focus: concentrates harmonics toward the body (low) or the air (high)"),
       mix      (p.apvts, ids::mix,      "Mix",      colour::muted,  Size::secondary, false, {},
                 "Mix: blend with the latency-aligned dry signal"),
       output   (p.apvts, ids::output,   "Output",   colour::muted,  Size::secondary, true,  {},
                 "Output: final gain"),
-      match    (p.apvts, ids::match,  "MATCH",  colour::straw,  "Loudness match: slow K-weighted gain so you judge tone, not level"),
+      color    (p.apvts, ids::color, "Color", "even", "odd", colour::bronze, false,
+                "Color: even harmonics (round, 2nd/4th/6th) to odd harmonics (edgier, 3rd/5th)"),
+      focus    (p.apvts, ids::focus, "Focus", "body", "air", colour::bronze, true,
+                "Focus: concentrates harmonics toward the body (low) or the air (high); centre follows the model"),
+      harmonics (p.apvts),
+      match    (p.apvts, ids::match,  "MATCH",  colour::straw,  "Loudness match: slow K-weighted gain so you judge tone, not level (shows the gain)"),
       delta    (p.apvts, ids::delta,  "DELTA",  colour::bronze, "Delta: hear only what Anneal adds and removes"),
-      bypass   (p.apvts, ids::bypass, "BYPASS", colour::text,   "Bypass (latency-compensated, click-free)")
+      bypass   (p.apvts, ids::bypass, "BYPASS", colour::text,   "Bypass (latency-compensated, click-free)"),
+      latency  (p.apvts, [&p] (int m) { return p.getLatencyMsForMode (m); }, [&p] { return p.getLatencyMs(); })
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
-             &screen, &presets, &reveal, &smooth, &tilt, &response, &heat, &color, &focus, &mix, &output,
-             &match, &delta, &bypass, &meter })
+             &screen, &presets, &reveal, &smooth, &tilt, &response, &heat, &color, &focus, &harmonics,
+             &mix, &output, &match, &delta, &bypass, &meter, &latency })
         addAndMakeVisible (c);
 
     presets.getCount = [&p] { return p.getNumPrograms(); };
@@ -52,32 +63,41 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
         p.updateHostDisplay (juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
     };
     presets.refresh();
+    harmonics.refresh();
+    updateActivity();
 }
 
 void AnnealEditorContent::resized()
 {
-    screen.setBounds (16, 52, 968, 330);
+    // Header: wordmark left, presets centred, the compare cluster right.
+    latency.setBounds (182, 11, anneal::LatencyMenu::captionWidth + 92, 26);
+    presets.setBounds (380, 10, 240, 28);
+    match.setBounds (712, 11, 100, 26);
+    delta.setBounds (820, 11, 72, 26);
+    bypass.setBounds (900, 11, 78, 26);
 
-    // AUTO EQ
-    reveal.setBounds (24, 432, 120, 146);
-    smooth.setBounds (150, 432, 120, 146);
-    tilt.setBounds (284, 414, 92, 92);
-    response.setBounds (284, 510, 92, 92);
+    screen.setBounds (12, 50, 976, 346);
 
-    // HEAT
-    heat.setBounds (412, 432, 120, 146);
-    color.setBounds (544, 414, 92, 92);
-    focus.setBounds (544, 510, 92, 92);
+    const int primaryW = anneal::Knob::preferredWidth (Size::primary), primaryH = anneal::Knob::preferredHeight (Size::primary);
+    const int heroW = anneal::Knob::preferredWidth (Size::hero), heroH = anneal::Knob::preferredHeight (Size::hero);
+    const int smallH = anneal::Knob::preferredHeight (Size::secondary);
+
+    // AUTO EQ: the two primary rings, their settings stacked beside them.
+    reveal.setBounds (26, 432, primaryW, primaryH);
+    smooth.setBounds (172, 432, primaryW, primaryH);
+    tilt.setBounds (334, 448, 140, smallH);
+    response.setBounds (334, 514, 140, smallH);
+
+    // HEAT: the largest ring; Color with the harmonics it produces, then Focus.
+    heat.setBounds (500, 424, heroW, heroH);
+    color.setBounds (684, 428, 134, 53);
+    harmonics.setBounds (690, 486, 122, 40);
+    focus.setBounds (684, 536, 134, 53);
 
     // OUTPUT
-    mix.setBounds (672, 414, 92, 92);
-    output.setBounds (672, 510, 92, 92);
-    match.setBounds (780, 428, 112, 28);
-    delta.setBounds (780, 464, 112, 28);
-    meter.setBounds (912, 412, 64, 190);
-
-    presets.setBounds (452, 13, 236, 26);
-    bypass.setBounds (892, 13, 92, 26);
+    mix.setBounds (846, 448, 100, smallH);
+    output.setBounds (846, 514, 100, smallH);
+    meter.setBounds (950, 424, 34, 176);
 }
 
 void AnnealEditorContent::paint (juce::Graphics& g)
@@ -85,78 +105,73 @@ void AnnealEditorContent::paint (juce::Graphics& g)
     g.fillAll (colour::panel);
 
     // Header.
-    const auto wordmark = juce::Font (juce::FontOptions ("Bahnschrift", "Light", size::wordmark).withKerningFactor (0.32f));
     g.setColour (colour::text);
-    g.setFont (wordmark);
-    g.drawText ("ANNEAL", juce::Rectangle<int> (20, 10, 170, 32), juce::Justification::centredLeft, false);
-    g.setColour (colour::muted);
-    g.setFont (font (13.5f));
-    g.drawText ("perceptual spectral saturator", juce::Rectangle<int> (172, 14, 260, 28), juce::Justification::centredLeft, false);
+    g.setFont (wordmarkFont (size::wordmark));
+    g.drawText ("ANNEAL", juce::Rectangle<int> (24, 10, 170, 28), juce::Justification::centredLeft, false);
 
-    g.setFont (caps (11.5f));
-    g.drawText ("PRESET", juce::Rectangle<int> (380, 13, 64, 26), juce::Justification::centredRight, false);
-    g.drawText ("LATENCY", juce::Rectangle<int> (700, 13, 110, 26), juce::Justification::centredRight, false);
-    g.setColour (colour::text);
-    g.setFont (font (14.0f));
-    drawTabular (g, juce::String (processor.getLatencyMs(), 1) + " ms", juce::Rectangle<float> (814.0f, 13.0f, 70.0f, 26.0f),
-                 juce::Justification::centredLeft);
 
-    // Group titles with role swatches, and hairline dividers between groups.
-    auto groupTitle = [&g] (int x, const juce::String& text, std::initializer_list<juce::Colour> swatches)
+    // Group titles with role dots, hairlines between groups.
+    auto groupTitle = [&g] (int x, const juce::String& text, std::initializer_list<juce::Colour> dots)
     {
-        int sx = x;
-        for (auto c : swatches)
+        int dx = x;
+        for (auto c : dots)
         {
             g.setColour (c);
-            g.fillRect (sx, 401, 7, 7);
-            sx += 10;
+            g.fillEllipse ((float) dx, (float) titleY + 4.5f, 6.0f, 6.0f);
+            dx += 9;
         }
         g.setColour (colour::muted);
-        g.setFont (caps (12.0f));
-        g.drawText (text, juce::Rectangle<int> (sx + 4, 396, 200, 16), juce::Justification::centredLeft, false);
+        g.setFont (caps (11.0f));
+        g.drawText (text, juce::Rectangle<int> (dx + 4, titleY, 200, 15), juce::Justification::centredLeft, false);
     };
-    groupTitle (24, "AUTO EQ", { colour::straw, colour::blue });
-    groupTitle (412, "HEAT", { colour::bronze });
-    groupTitle (672, "OUTPUT", { colour::muted });
+    groupTitle (28, "AUTO EQ", { colour::straw, colour::blue });
+    groupTitle (506, "HEAT", { colour::bronze });
+    groupTitle (848, "OUTPUT", { colour::muted });
 
     g.setColour (colour::divider);
     for (int x : dividerX)
-        g.drawVerticalLine (x, 398.0f, 604.0f);
+        g.drawVerticalLine (x, (float) dividerTop, (float) dividerBottom);
+}
 
-    // Live loudness-match gain (measured by the processor).
-    const auto r = matchReadoutArea;
-    g.setColour (colour::muted);
-    g.setFont (caps (11.0f));
-    g.drawText ("MATCH GAIN", r.withHeight (16), juce::Justification::centredLeft, false);
-    g.setFont (font (size::value));
-    if (shownMatchOn)
-    {
-        g.setColour (colour::text);
-        const float v = shownMatchDb;
-        const auto s = std::abs (v) < 0.05f ? juce::String ("0.0")
-                                            : (v > 0 ? "+" : juce::String::fromUTF8 ("\xe2\x88\x92")) + juce::String (std::abs (v), 1);
-        drawTabular (g, s + " dB", r.withTrimmedTop (18).withHeight (20).toFloat(), juce::Justification::centredLeft);
-    }
-    else
-    {
-        g.setColour (colour::faint);
-        g.drawText ("off", r.withTrimmedTop (18).withHeight (20), juce::Justification::centredLeft, false);
-    }
+void AnnealEditorContent::updateActivity()
+{
+    // Short sentences: they must fit under the ring at every size.
+    const auto a = screen.getActivity();
+    auto param = [this] (const char* id) { return processor.apvts.getRawParameterValue (id)->load(); };
+
+    if (param (ids::reveal) < 0.05f)        reveal.setActivity (0.0f, "off");
+    else if (! a.live)                      reveal.setActivity (0.0f, {});
+    else if (a.liftDb < 0.1f)               reveal.setActivity (0.0f, "nothing masked");
+    else                                    reveal.setActivity (a.liftDb / 8.0f, "lifting " + signedDb (a.liftDb) + " dB");
+
+    if (param (ids::smooth) < 0.05f)        smooth.setActivity (0.0f, "off");
+    else if (! a.live)                      smooth.setActivity (0.0f, {});
+    else if (a.cutDb > -0.1f)               smooth.setActivity (0.0f, "nothing dominant");
+    else                                    smooth.setActivity (-a.cutDb / 9.0f, "cutting " + signedDb (a.cutDb) + " dB");
+
+    if (param (ids::heat) < 0.05f)          heat.setActivity (0.0f, "off");
+    else if (! a.live)                      heat.setActivity (0.0f, {});
+    else if (a.heatRelDb < -90.0f)          heat.setActivity (0.0f, "no harmonics yet");
+    else                                    heat.setActivity ((a.heatRelDb + 54.0f) / 48.0f,
+                                                              "harmonics " + signedDb (a.heatRelDb) + " dB");
 }
 
 void AnnealEditorContent::tick (float dt)
 {
     const float peaks[2] = { processor.takeOutputPeak (0), processor.takeOutputPeak (1) };
     meter.push (peaks, processor.getTotalNumOutputChannels(), dt);
+    latency.refresh();
     presets.refresh();
+    harmonics.refresh();
+    updateActivity();
 
+    // The match gain lives in its button: you see what the comparison is compensating.
     const bool on = processor.apvts.getRawParameterValue (ids::match)->load() > 0.5f;
-    const float db = processor.getMatchGainDb();
-    if (on != shownMatchOn || std::abs (db - shownMatchDb) > 0.05f)
+    const auto text = on ? "MATCH " + signedDb (processor.getMatchGainDb()) : juce::String ("MATCH");
+    if (text != shownMatchText)
     {
-        shownMatchOn = on;
-        shownMatchDb = db;
-        repaint (matchReadoutArea);
+        shownMatchText = text;
+        match.setButtonText (text);
     }
 }
 
