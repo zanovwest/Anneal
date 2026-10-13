@@ -16,16 +16,24 @@ What's next: [docs/ROADMAP.md](docs/ROADMAP.md) · What changed: [CHANGELOG.md](
 
 ## Install
 
-Download `Anneal-<version>-Setup.exe` from the repository's **Releases** and run it. It installs:
+Download `Anneal-<version>-Setup.exe` from the repository's **Releases** and run it. It asks how to
+install:
 
-- the VST3 into `C:\Program Files\Common Files\VST3` (the folder FL Studio scans), and updates the
-  copy in your per-user VST3 folder too if you have one (Cubase scans both);
-- optionally the standalone app (Start menu → Anneal);
-- an uninstaller (Settings → Apps → Anneal).
+- **Just for me** (recommended, no administrator rights): the VST3 goes into
+  `%LOCALAPPDATA%\Programs\Common\VST3`, the standalone app into `%LOCALAPPDATA%\Programs\Anneal`.
+  Updates never need approval, so the daily update installs them by itself, even at night.
+  FL Studio doesn't look in that folder by default: once, open *Options → Manage plugins*, add
+  `C:\Users\<you>\AppData\Local\Programs\Common\VST3` under *Plugin search paths*, then click
+  *Find installed plugins*. Cubase scans it already.
+- **All users** (administrator approval): the VST3 goes into `C:\Program Files\Common Files\VST3`,
+  which FL Studio scans by default, the app into Program Files. Every later update asks for approval
+  again.
 
-First install: in FL Studio open *Options → Manage plugins → Find installed plugins*. Updates can be
-installed while FL Studio is open, even with Anneal loaded; FL uses the new version the next time it
-loads the plugin. Silent update: `Anneal-<version>-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
+Both add the standalone app (optional, Start menu → Anneal) and an uninstaller (Settings → Apps →
+Anneal). Updates can be installed while FL Studio is open, even with Anneal loaded; FL uses the new
+version the next time it loads the plugin. Don't keep both installs: FL would list Anneal twice.
+
+Unattended update: `Anneal-<version>-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 
 ## Controls
 
@@ -59,14 +67,13 @@ point elsewhere); otherwise CMake fetches tag `8.0.4` from GitHub. The setup nee
 .\build.ps1                     # Release: VST3 + Standalone + AnnealTests + AnnealSnapshot
 .\build.ps1 -Test -Snapshot     # also run the acceptance tests and render editor PNGs
 .\build.ps1 -Setup              # also build dist\Anneal-<version>-Setup.exe (with -Test: and test it)
-.\build.ps1 -Install            # after the tests, copy Anneal.vst3 to %LOCALAPPDATA%\Programs\Common\VST3
-.\build.ps1 -InstallSystem      # after the tests, run the setup silently (UAC prompt; implies -Setup)
+.\build.ps1 -Install            # after the tests, run the setup silently just for you (no admin prompt)
+.\build.ps1 -InstallSystem      # after the tests, run the setup silently for all users (admin prompt)
 ```
 
 **Which folder your DAWs see:** FL Studio 2024/2026 scan `C:\Program Files\Common Files\VST3`
-but not the per-user folder (checked in the registry list `Image-Line\Shared\Plugin search
-paths`). Cubase 15 scans both. So use `-InstallSystem` for FL Studio, then in FL open
-*Options → Manage plugins → Find installed plugins*. Cubase picks it up at the next start.
+and the folders you add under *Plugin search paths* (stored in the registry under
+`Image-Line\Shared\Plugin search paths`). Cubase 15 scans the system and the per-user folder.
 
 `-Test` also runs `AnnealHostCheck`, which loads the **built `.vst3`** through JUCE's VST3 host
 (scan, parameters, latency, processing at 44.1/48/96 kHz, state, editor attach ×3, 4 instances).
@@ -90,20 +97,22 @@ cmake --build C:\path\to\short\build --config Release --parallel
 Outputs (under the build folder): `Anneal_artefacts\Release\VST3\Anneal.vst3`,
 `Anneal_artefacts\Release\Standalone\Anneal.exe`.
 
-Nothing is installed unless you pass `-Install` / `-InstallSystem`. `tools\Install.ps1` does
-both: a plain copy for the per-user folder, the silent setup for the system folder (it waits at most
-5 minutes for the administrator approval, then reports instead of hanging). `-Setup -Test` also runs
-`tools\TestSetup.ps1`, which installs into a sandbox without admin rights, updates while another
-process has the plugin DLL loaded (as a DAW would), and uninstalls.
+Nothing is installed unless you pass `-Install` / `-InstallSystem`; both go through the setup
+(`tools\Install.ps1`). The all-users install waits at most 5 minutes for the administrator approval,
+then reports instead of hanging. `-Setup -Test` also runs `tools\TestSetup.ps1` on a copy of the
+setup with its own AppId: it installs into a sandbox without admin rights, updates while another
+process has the plugin DLL loaded (as a DAW would), and uninstalls, without touching a real install.
 
 ## Daily updates
 
 A scheduled Claude task ("Anneal daily update" in the Claude desktop app's scheduled tasks) works on
-Anneal once a day: a new feature, a new mode or a bug fix, usually the next item in
-[docs/ROADMAP.md](docs/ROADMAP.md). It bumps the version, runs `.\build.ps1 -Test -Snapshot -Setup`,
-and only when everything passes it installs the new setup, adds a [CHANGELOG.md](CHANGELOG.md)
-entry, commits, pushes and publishes the setup as a GitHub release. Parameter IDs, plugin codes and
-saved-state compatibility never change, so existing FL Studio projects keep their settings.
+Anneal every day at 7:00 (Hawaii time). Each run fixes the bugs it finds and adds one new feature or
+mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not
+wanted*). It bumps the version and runs `.\build.ps1 -Test -Snapshot -Setup`. Only when everything
+passes does it install the new build just for you (no approval needed), add a
+[CHANGELOG.md](CHANGELOG.md) entry, commit, push and publish the setup as a GitHub release.
+Parameter IDs, plugin codes and saved-state compatibility never change, so existing FL Studio
+projects keep their settings.
 
 ## Status
 

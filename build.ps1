@@ -8,10 +8,10 @@ param(
     [switch]$Test,       # run AnnealTests and the host check after building (and the setup test with -Setup)
     [switch]$Snapshot,   # render editor PNGs into .\snapshots
     [switch]$Setup,      # build dist\Anneal-<version>-Setup.exe (Inno Setup 6)
-    [switch]$Install,       # copy Anneal.vst3 to %LOCALAPPDATA%\Programs\Common\VST3 (off by default)
-    [switch]$InstallSystem  # run the setup silently: C:\Program Files\Common Files\VST3 (UAC prompt; FL Studio scans only this one). Implies -Setup
+    [switch]$Install,       # run the setup silently just for you: %LOCALAPPDATA%\Programs\Common\VST3, no admin prompt. Implies -Setup
+    [switch]$InstallSystem  # run the setup silently for all users: C:\Program Files\Common Files\VST3 (admin prompt). Implies -Setup
 )
-if ($InstallSystem) { $Setup = $true }
+if ($Install -or $InstallSystem) { $Setup = $true }
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -137,18 +137,25 @@ if ($Setup) {
     Write-Log "Setup: $setupExe"
 
     if ($Test) {
+        # Same script, its own AppId and name, so the sandbox test never touches a real install.
+        $testDir = Join-Path $buildDir "setup-test"
+        $testArgs = @("/Q", "/DAppVersion=$version", "/DBuildDir=$buildDir", "/DOutDir=$testDir",
+                      "/DAppIdValue={{C3A9A011-1FE8-4D62-BC17-61FF1488E1F2}", "/DOutputName=Anneal-test-Setup",
+                      (Join-Path $root "installer\Anneal.iss"))
+        if ((Invoke-Logged $iscc $testArgs) -ne 0) { Write-Log "Test setup build failed. Log: $logFile" "ERROR"; exit 1 }
         $builtBin = Join-Path $vst3 "Contents\x86_64-win\Anneal.vst3"
         Write-Log "Testing the setup (sandbox install, update while loaded, uninstall)"
         $code = Invoke-Logged "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                                             (Join-Path $root "tools\TestSetup.ps1"), "-Setup", $setupExe, "-Built", $builtBin)
+                                             (Join-Path $root "tools\TestSetup.ps1"),
+                                             "-Setup", (Join-Path $testDir "Anneal-test-Setup.exe"), "-Built", $builtBin)
         if ($code -ne 0) { Write-Log "$code setup check(s) failed." "ERROR"; exit 1 }
     }
 }
 
 $installer = Join-Path $root "tools\Install.ps1"
 if ($Install) {
-    $userDir = Join-Path $env:LOCALAPPDATA "Programs\Common\VST3"
-    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Source $vst3 -Destination $userDir
+    Write-Log "Running the setup silently just for you (no administrator approval needed)"
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Source $vst3 -Setup $setupExe -CurrentUser
     $code = $LASTEXITCODE
     Write-Log "$out"
     if ($code -ne 0) { Write-Log "Per-user install failed ($code)." "ERROR"; exit 1 }
@@ -157,7 +164,7 @@ if ($Install) {
 if ($InstallSystem) {
     $sysDir = Join-Path $env:CommonProgramFiles "VST3"
     Write-Log "Running the setup silently into $sysDir (Windows will ask for administrator approval)"
-    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Source $vst3 -Destination $sysDir -Setup $setupExe
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Source $vst3 -Setup $setupExe
     $code = $LASTEXITCODE
     Write-Log "$out"
     if ($code -ne 0) { Write-Log "System install not done ($code)." "WARN" }

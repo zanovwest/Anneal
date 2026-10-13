@@ -13,8 +13,8 @@ First release on GitHub, with a Windows setup (`Anneal-0.1.0-Setup.exe`).
 - Spectral saturation (**Heat**, Color even↔odd, Focus body↔air): harmonics 2nd–6th written per
   spectral peak, so no aliasing and no intermodulation.
 - Output: Mix, Output, loudness Match, Delta listen, click-free bypass.
-- Setup: installs the VST3 into `C:\Program Files\Common Files\VST3` (and updates the per-user copy
-  when there is one), the standalone app, and an uninstaller. Updates install while a DAW has
-  Anneal loaded.
+- Setup: "just for me" (no admin; VST3 in `%LOCALAPPDATA%\Programs\Common\VST3`) or "all users"
+  (`C:\Program Files\Common Files\VST3`), plus the standalone app and an uninstaller. Updates
+  install while a DAW has Anneal loaded.
 - Tests: 26/26 DSP checks, 9/9 host checks on the built and the installed VST3, 16/16 setup
   checks. CPU 3.3 % of one core at 48 kHz stereo.

@@ -1,11 +1,11 @@
 ﻿# Tests the setup without administrator rights, in a sandbox under %TEMP%: fresh install, update while
 # another process has the plug-in DLL loaded (as a DAW would), uninstall. Touches no real VST3 folder.
-#   TestSetup.ps1 -Setup dist\Anneal-x.y.z-Setup.exe -Built <built bundle>\Contents\x86_64-win\Anneal.vst3
-# Exit code = number of failed checks.
+#   TestSetup.ps1 -Setup <build>\setup-test\Anneal-test-Setup.exe -Built <built bundle>\Contents\x86_64-win\Anneal.vst3
+# Use the test setup build.ps1 makes: same script with its own AppId (below), so a real "just for me"
+# install of Anneal is never touched. Exit code = number of failed checks.
 param([string]$Setup, [string]$Built)
 $ErrorActionPreference = "Stop"
-$key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{146CC042-90A4-4E67-8055-FE35CBE64CD9}_is1"
-if (Test-Path $key) { "[FAIL] a per-user Anneal install exists; not touching it"; exit 1 }
+$key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{C3A9A011-1FE8-4D62-BC17-61FF1488E1F2}_is1"
 # Short path on purpose: Setup refuses to start with a very long /LOG or /DIR.
 $sb = Join-Path $env:TEMP "anneal-setup-test"
 if (Test-Path $sb) { Remove-Item -Recurse -Force $sb }
@@ -40,13 +40,15 @@ Check ($handle -ne "0" -and $handle -ne "none") "test process has the installed 
 $locked = $false
 try { [IO.File]::Delete($bin) } catch { $locked = $true }
 Check $locked "the loaded DLL cannot be deleted (so this really tests the in-use case)"
+# %TEMP%\AnnealOld is shared with real installs (a DAW may still hold one of those), so only the file
+# this test adds is checked.
 $oldDir = "$env:TEMP\AnnealOld"
-$before = @(Get-ChildItem $oldDir -ErrorAction SilentlyContinue).Count
+$before = @(Get-ChildItem $oldDir -File -ErrorAction SilentlyContinue | ForEach-Object Name)
 $c = Run-Setup "$sb\install2.log"
 Check ($c -eq 0) "update while loaded: exit 0 (got $c)"
 Check ((Test-Path $bin) -and (Get-FileHash $bin).Hash -eq $builtHash) "update while loaded: new binary in place"
-$after = @(Get-ChildItem $oldDir -ErrorAction SilentlyContinue).Count
-Check ($after -eq $before + 1) "loaded binary moved aside to %TEMP%\AnnealOld ($before -> $after)"
+$ours = @(Get-ChildItem $oldDir -File -ErrorAction SilentlyContinue | ForEach-Object Name | Where-Object { $before -notcontains $_ })
+Check ($ours.Count -eq 1) "loaded binary moved aside to %TEMP%\AnnealOld ($($ours.Count) new)"
 Stop-Process -Id $loader.Id -Force
 Start-Sleep 1
 
@@ -57,8 +59,8 @@ Start-Sleep 1
 Check (-not (Test-Path "$vst\Anneal.vst3")) "uninstall removes the bundle"
 Check (-not (Test-Path $key)) "uninstall removes the Apps entry"
 Check (-not (Test-Path "$app\unins000.exe")) "uninstall removes itself"
-$left = @(Get-ChildItem $oldDir -ErrorAction SilentlyContinue).Count
-Check ($left -eq 0) "moved-aside binaries cleaned up once released ($left left)"
+$left = @($ours | Where-Object { Test-Path (Join-Path $oldDir $_) }).Count
+Check ($ours.Count -eq 1 -and $left -eq 0) "moved-aside binary cleaned up once released ($left left)"
 Remove-Item -Recurse -Force $sb -ErrorAction SilentlyContinue
 "$fails setup check(s) failed"
 exit $fails

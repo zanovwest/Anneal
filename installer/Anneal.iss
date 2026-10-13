@@ -2,13 +2,18 @@
 ; CMakeLists.txt and the build folder:
 ;     ISCC /DAppVersion=0.1.0 /DBuildDir=..\build /DOutDir=..\dist installer\Anneal.iss
 ;
-; Installs the VST3 into the system VST3 folder (the one FL Studio scans), optionally the standalone
-; app, and an uninstaller under Settings > Apps. Updating while a DAW has Anneal loaded works: the
-; loaded binary is moved aside first (Windows allows that for a DLL in use) and the DAW picks up the
-; new build the next time it loads the plugin. Nobody is asked to close anything.
+; Two install modes (Setup asks, or pass /CURRENTUSER or /ALLUSERS):
+;   just for me  - no administrator rights. VST3 into %LOCALAPPDATA%\Programs\Common\VST3, the app into
+;                  %LOCALAPPDATA%\Programs\Anneal. Updates never ask for approval, so they can run
+;                  unattended. FL Studio needs that folder added once under Plugin search paths.
+;   all users    - administrator approval. VST3 into C:\Program Files\Common Files\VST3 (FL Studio's
+;                  default folder), the app into Program Files.
+; Plus an uninstaller under Settings > Apps. Updating while a DAW has Anneal loaded works: the loaded
+; binary is moved aside first (Windows allows that for a DLL in use) and the DAW picks up the new build
+; the next time it loads the plugin. Nobody is asked to close anything.
 ;
-; Silent update:  Anneal-x.y.z-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-; Testing without admin rights:  /CURRENTUSER /VST3DIR=<folder> /DIR=<folder>
+; Unattended update:  Anneal-x.y.z-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+; Sandbox test (build.ps1 builds it with its own AppId):  /CURRENTUSER /VST3DIR=<folder> /DIR=<folder>
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -19,12 +24,18 @@
 #ifndef OutDir
   #define OutDir "..\dist"
 #endif
+; Never change the real AppId: it is how an update finds the installed copy.
+#ifndef AppIdValue
+  #define AppIdValue "{{146CC042-90A4-4E67-8055-FE35CBE64CD9}"
+#endif
+#ifndef OutputName
+  #define OutputName "Anneal-" + AppVersion + "-Setup"
+#endif
 #define Bundle BuildDir + "\Anneal_artefacts\Release\VST3\Anneal.vst3"
 #define StandaloneExe BuildDir + "\Anneal_artefacts\Release\Standalone\Anneal.exe"
 
 [Setup]
-; Never change AppId: it is how an update finds the installed copy.
-AppId={{146CC042-90A4-4E67-8055-FE35CBE64CD9}
+AppId={#AppIdValue}
 AppName=Anneal
 AppVersion={#AppVersion}
 AppVerName=Anneal {#AppVersion}
@@ -35,13 +46,13 @@ VersionInfoDescription=Anneal setup
 DefaultDirName={autopf}\Anneal
 DisableDirPage=yes
 DisableProgramGroupPage=yes
-PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=commandline
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog commandline
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#OutDir}
-OutputBaseFilename=Anneal-{#AppVersion}-Setup
+OutputBaseFilename={#OutputName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -54,10 +65,6 @@ SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-
-[Messages]
-FinishedLabelNoIcons=Anneal is installed.%n%nFirst install: in FL Studio open Options > Manage plugins > Find installed plugins.%nUpdate: a DAW that has Anneal open uses the new version the next time it loads it.
-FinishedLabel=Anneal is installed.%n%nFirst install: in FL Studio open Options > Manage plugins > Find installed plugins.%nUpdate: a DAW that has Anneal open uses the new version the next time it loads it.
 
 [Components]
 Name: "vst3"; Description: "Anneal VST3 plug-in"; Types: full compact custom; Flags: fixed
@@ -156,6 +163,39 @@ begin
     if WizardIsComponentSelected('vst3') then MoveAside(Vst3Dir(''));
     if WizardIsTaskSelected('peruser') then MoveAside(PerUserVst3Dir(''));
   end;
+end;
+
+function AllUsersKeyExists(): Boolean;
+begin
+  Result := RegKeyExists(HKLM64, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+                         '{#StringChange(AppIdValue, "{{", "{")}_is1');
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if (not IsAdminInstallMode) and AllUsersKeyExists() then
+  begin
+    Log('An all-users Anneal is also installed; DAWs may load that copy.');
+    if not WizardSilent() then
+      MsgBox('Anneal is also installed for all users (C:\Program Files\Common Files\VST3).' + #13#10 +
+             'Your DAW may keep loading that copy. Remove it under Settings > Apps > Anneal, ' +
+             'then add your per-user VST3 folder in FL Studio.', mbInformation, MB_OK);
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  First: String;
+begin
+  if CurPageID <> wpFinished then Exit;
+  if IsAdminInstallMode then
+    First := 'First install: in FL Studio open Options > Manage plugins > Find installed plugins.'
+  else
+    First := 'First install: in FL Studio open Options > Manage plugins, add this folder under ' +
+             'Plugin search paths, then click Find installed plugins.';
+  WizardForm.FinishedLabel.Caption := 'Anneal is installed in' + #13#10 + Vst3Dir('') + #13#10#13#10 +
+    First + #13#10#13#10 + 'Update: a DAW that has Anneal open uses the new version the next time it loads it.';
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
