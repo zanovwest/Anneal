@@ -5,6 +5,7 @@
 #include "Params.h"
 #include "Presets.h"
 #include "dsp/SpectralEngine.h"
+#include "dsp/ErbScale.h"
 #include "ui/PerceptionScreen.h"
 #include "TestSignals.h"
 
@@ -983,9 +984,68 @@ void testDisplayRange()
                + " Hz, display " + juce::String (shown.x, 0) + "-" + juce::String (shown.y, 0) + " Hz");
 }
 
+void testRangeHandleDrag()
+{
+    section ("17. Range handles after crossed automation");
+    Rig r;
+    r.set (ids::rangeLo, 1800.0f);
+    r.set (ids::rangeHi, 1000.0f);
+    anneal::PerceptionScreen screen (r.proc->getDisplay(), r.proc->apvts);
+    screen.setSize (800, 350);
+
+    auto pointAt = [&screen] (float hz)
+    {
+        const double lo = anneal::erb::hzToCam (20.0), hi = anneal::erb::hzToCam (20000.0);
+        return juce::Point<float> { 18.0f + (float) ((anneal::erb::hzToCam (hz) - lo) / (hi - lo))
+                                                   * (screen.getWidth() - 64.0f), 50.0f };
+    };
+    auto eventAt = [&screen] (juce::Point<float> point, juce::Point<float> down, bool dragged)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), point,
+                                juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier),
+                                1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &screen, &screen,
+                                now, down, now, 1, dragged);
+    };
+    auto shownAs = [&screen] (float lo, float hi)
+    {
+        const auto shown = screen.getShownRange();
+        return std::abs (shown.x - lo) < 1.0f && std::abs (shown.y - hi) < 1.0f;
+    };
+
+    const auto lowDown = pointAt (1800.0f);
+    screen.mouseDown (eventAt (lowDown, lowDown, false));
+    check (shownAs (1800.0f, 2700.0f) && r.proc->apvts.getRawParameterValue (ids::rangeHi)->load() == 1000.0f,
+           "crossed range: clicking leaves values intact", "no drag yet");
+    screen.mouseDrag (eventAt (lowDown, lowDown, true));
+    check (shownAs (1800.0f, 2700.0f), "crossed range: low handle starts without a jump",
+           "shown low " + juce::String (screen.getShownRange().x, 1) + " Hz");
+    screen.mouseDrag (eventAt (pointAt (1500.0f), lowDown, true));
+    check (shownAs (1500.0f, 2700.0f), "crossed range: dragging low preserves shown high",
+           "shown " + juce::String (screen.getShownRange().x, 1) + "-"
+               + juce::String (screen.getShownRange().y, 1) + " Hz");
+    screen.mouseUp (eventAt (pointAt (1500.0f), lowDown, true));
+
+    r.set (ids::rangeLo, 1800.0f);
+    r.set (ids::rangeHi, 1000.0f);
+    const auto highDown = pointAt (2700.0f);
+    screen.mouseDown (eventAt (highDown, highDown, false));
+    screen.mouseDrag (eventAt (pointAt (3200.0f), highDown, true));
+    screen.mouseUp (eventAt (pointAt (3200.0f), highDown, true));
+    check (shownAs (1800.0f, 3200.0f), "crossed range: high handle follows the pointer", "low stays at 1800 Hz");
+
+    r.set (ids::rangeLo, 1200.0f);
+    r.set (ids::rangeHi, 18000.0f);
+    const auto normalDown = pointAt (1200.0f);
+    screen.mouseDown (eventAt (normalDown, normalDown, false));
+    screen.mouseDrag (eventAt (pointAt (1300.0f), normalDown, true));
+    screen.mouseUp (eventAt (pointAt (1300.0f), normalDown, true));
+    check (shownAs (1300.0f, 18000.0f), "ordered range: low drag leaves high unchanged", "high stays at 18000 Hz");
+}
+
 void benchmark()
 {
-    section ("17. Benchmark (Release build, this machine)");
+    section ("18. Benchmark (Release build, this machine)");
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
@@ -1053,6 +1113,7 @@ int main()
     testPresets();
     testGuard();
     testDisplayRange();
+    testRangeHandleDrag();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

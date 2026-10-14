@@ -531,7 +531,14 @@ void PerceptionScreen::mouseDrag (const juce::MouseEvent& e)
     const float x = juce::jlimit (plot.getX(), plot.getRight(), e.position.x);
     float hz = (float) erb::camToHz (camForX (x));
     if (dragging == Handle::lo)
-        loAttachment->setValueAsPartOfGesture (juce::jlimit (20.0f, juce::jmin (2000.0f, rangeHi / 1.5f), hz));
+    {
+        // Automation can leave the stored high limit below the range shown by the engine.
+        // Preserve that shown limit before moving Low, so neither handle jumps on the drag.
+        const float shownHi = getShownRange().y;
+        if (rangeHi < shownHi)
+            hiAttachment->setValueAsCompleteGesture (shownHi);
+        loAttachment->setValueAsPartOfGesture (juce::jlimit (20.0f, juce::jmin (2000.0f, shownHi / 1.5f), hz));
+    }
     else
         hiAttachment->setValueAsPartOfGesture (juce::jlimit (juce::jmax (1000.0f, rangeLo * 1.5f), 20000.0f, hz));
 

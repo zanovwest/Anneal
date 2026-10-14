@@ -34,9 +34,6 @@ the hourly runs.)
     as a switch.
 11. **Show the guard on the display**: a faint mark in the bands where Guard is holding an attack,
     and a live line under the Guard knob, so you can see it working.
-12. **Range handles after crossed automation**: when automation has put Range Low above Range
-    High, grabbing the Low handle snaps it below High (the drag limits use the raw High value).
-    Let the drag start from the range shown instead.
 
 ## Not wanted
 
@@ -47,6 +44,9 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- Unreleased (2026-10-13): **Range handles after crossed automation.** Dragging Low starts from
+  the displayed range and preserves the displayed High limit; a click without dragging leaves
+  the parameters alone. Five interaction regression checks added (45/45 acceptance checks).
 - 0.2.2 (2026-10-13): **Transient guard** (Guard, in AUTO EQ): attacks pass the auto EQ and get no
   smeared harmonics; the curve doesn't chase hits. Fixed: with crossed Range automation the
   display showed a different range from the one the engine used.

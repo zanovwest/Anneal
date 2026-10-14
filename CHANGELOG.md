@@ -4,6 +4,17 @@ Newest first. One entry per version; the hourly update adds one (see README → 
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## Unreleased
+
+Fixes
+- Dragging Range Low after automation crosses the range limits now starts from the displayed
+  range instead of jumping below the stored Range High. The displayed high limit stays in place
+  while dragging Low. Clicking without dragging leaves the stored values unchanged.
+
+Tests: 45/45 acceptance checks, including five range-handle interaction checks; 13/13 host checks
+on the patched VST3. The installed 0.2.2 copy also passed 13/13 host checks. Editor snapshots
+rendered at 100/150/200 % and at the minimum and maximum window sizes.
+
 ## 0.2.2 — 2026-10-13 14:50
 
 New
