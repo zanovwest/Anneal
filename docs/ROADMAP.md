@@ -38,13 +38,20 @@ The user asked for a major 4.0 on 2026-10-14. These belong to that run; hourly u
 
 These need the user's own accounts or decisions. Hourly updates don't take them.
 
-- **Switch on the macOS / Linux / CLAP workflow**: the gh login needs the `workflow` scope
+- **Public downloads, KVR listing, Plugin Alliance**: making releases public, and licence choices
+  (JUCE, VST3). See docs/DISTRIBUTION.md. The user will do KVR later (2026-10-13).
+- **Pro Tools (AAX)**: Avid developer account and AAX SDK, plus PACE signing (iLok).
+
+## Not now
+
+The user is on Windows and dropped the Mac plans on 2026-10-13 ("im on windows i thought mac
+coding was free"). The setup stays in the repo, untouched, in case that changes. Keep the code
+portable, but don't work on these:
+
+- **Switch on the macOS / Linux / CLAP workflow**: it needs the gh login's `workflow` scope
   (`gh auth refresh -h github.com -s workflow`), then `packaging/ci/platforms.yml` moves to
   `.github/workflows/`.
-- **Pro Tools (AAX)**: Avid developer account and AAX SDK, plus PACE signing (iLok).
-- **Notarized macOS builds**: Apple Developer Program membership (Developer ID certificate).
-- **Public downloads, KVR listing, Plugin Alliance**: making releases public, and licence choices
-  (JUCE, VST3). See docs/DISTRIBUTION.md.
+- **Notarized macOS builds**: Apple Developer Program membership (99 USD a year).
 
 ## Not wanted
 
