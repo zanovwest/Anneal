@@ -79,8 +79,11 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     // suspendProcessing takes the callback lock the host processes under, so no block is running
     // while the engine and the dry path change length. Everything was allocated in prepareToPlay.
     suspendProcessing (true);
+    const int previous = mode;
     mode = wanted;
     getEngine().reset();
+    if (pFreeze->load() > 0.5f)   // a frozen curve stays what it is in the new mode
+        getEngine().adoptCurveFrom (*engines[(size_t) previous]);
     ringLength = getEngine().getLatencySamples();
     dryRing.clear();
     dryPos = 0;
@@ -153,8 +156,10 @@ void AnnealAudioProcessor::reset()
     // a new prepareToPlay. Clears every buffer that holds audio, so playback that starts again
     // doesn't replay the last ~85 ms from before. No allocation. The loudness-match gain is a slow
     // measurement, not audio, so it is kept (otherwise every restart would re-converge for ~3 s).
+    // So is a frozen auto-EQ curve (4.0: it was re-primed from the first frame after the restart).
+    const bool frozen = pFreeze->load() > 0.5f;
     for (auto& e : engines)
-        e->reset();
+        e->reset (frozen);
     limiter.reset();
     bypassRing.clear();
     bypassPos = 0;

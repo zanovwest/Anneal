@@ -73,7 +73,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
     reset();
 }
 
-void SpectralEngine::reset()
+void SpectralEngine::reset (bool keepCurve)
 {
     for (int c = 0; c < maxChannels; ++c)
         for (auto* v : { &inFifo[c], &outAcc[c], &outFifo[c], &harmAcc[c], &harmFifo[c], &alignRing[c] })
@@ -84,10 +84,17 @@ void SpectralEngine::reset()
     envIn = envHarm = 0.0f;
     gateGain = 1.0f;
     paramsPrimed = false;
-    model.reset();
-    for (auto& m : msModel) m.reset();
+    model.reset (keepCurve);
+    for (auto& m : msModel) m.reset (keepCurve);
     msActive = false;
     lastPeakCount = 0;
+}
+
+void SpectralEngine::adoptCurveFrom (const SpectralEngine& other) noexcept
+{
+    model.copyCurveFrom (other.model);
+    for (int c = 0; c < 2; ++c)
+        msModel[c].copyCurveFrom (other.msModel[c]);
 }
 
 void SpectralEngine::process (float* const* io, int numChannels, int numSamples,

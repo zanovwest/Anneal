@@ -94,11 +94,13 @@ void TruePeakLimiter::process (float* const* io, int numChannels, int numSamples
             delay[c][(size_t) delayPos] = x;
             out[c] = delay[c][(size_t) readPos];
 
+            // The detector's history follows the audio also while the ceiling is off, so switching
+            // it on never measures samples from the last time it was on (a spurious dip).
+            float* h = history[c].data();
+            std::copy (h + 1, h + taps, h);
+            h[taps - 1] = x;
             if (enabled)
             {
-                float* h = history[c].data();
-                std::copy (h + 1, h + taps, h);
-                h[taps - 1] = x;
                 // True peak of the interval ending at x[t - detectDelay]: that sample and three points before it.
                 float m = std::abs (h[detectDelay + 1]);
                 for (int p = 0; p < phases; ++p)

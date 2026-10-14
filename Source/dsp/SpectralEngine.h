@@ -53,7 +53,11 @@ namespace anneal
         static int fftSizeFor (double sampleRate, int mode = precise) noexcept;
 
         void prepare (double sampleRate, int numChannels, int mode = precise);
-        void reset();
+        // keepCurve: a frozen auto-EQ curve survives (the host stopping and starting again).
+        void reset (bool keepCurve = false);
+        // Takes over another engine's auto-EQ curve (same sample rate), e.g. a frozen curve when
+        // the latency mode changes.
+        void adoptCurveFrom (const SpectralEngine& other) noexcept;
 
         // Called once per host block from the audio thread; values are smoothed per frame.
         void setParameters (const EngineParams& p) noexcept { target = p; }

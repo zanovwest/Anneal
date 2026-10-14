@@ -29,7 +29,11 @@ namespace anneal
         static constexpr int numBands = 1024;
 
         void prepare (double sampleRate, int fftSize);
-        void reset();
+        // keepCurve: the auto-EQ curve (a measurement, not audio) stays where it is, e.g. a frozen
+        // curve when the host stops and starts again. Everything else starts over.
+        void reset (bool keepCurve = false);
+        // Takes over another model's curve (same sample rate): a frozen curve across latency modes.
+        void copyCurveFrom (const PerceptualModel& other) noexcept;
 
         // binPower: fftSize/2+1 values in amplitude^2 units (a full-scale sine peaks at 1.0).
         // keyPower: the sidechain key's spectrum in the same units, or nullptr (no key).
@@ -72,7 +76,8 @@ namespace anneal
         double sampleRate = 48000.0, binHz = 0.0, z0 = 0.0, dz = 0.0;
         int fftSize = 0, numBins = 0, boxHalf = 12, exclusion = 25, smoothHalf = 6;
         double aUp = 0.0, aDn = 0.0, aUpM = 0.0, aDnM = 0.0;
-        bool primed = false;
+        bool primed = false;        // signal state (integration, transient detector)
+        bool curvePrimed = false;   // the gain curve and its prominence memory
         float liftPeakDb = 0.0f, cutPeakDb = 0.0f;   // (not maxCutDb/maxBoostDb: those are the limits)
         float sidePeakDb = 0.0f;
         float transientPeak = 0.0f;

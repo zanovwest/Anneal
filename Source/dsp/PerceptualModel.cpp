@@ -120,19 +120,34 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
     reset();
 }
 
-void PerceptualModel::reset()
+void PerceptualModel::reset (bool keepCurve)
 {
     primed = false;
     liftPeakDb = cutPeakDb = transientPeak = 0.0f;
-    for (auto* v : { &smoothed, &gain, &promSlow, &prom, &gainOut, &needOut, &slowPlace, &transient, &autoOut })
+    for (auto* v : { &smoothed, &prom, &slowPlace, &transient })
+        std::fill (v->begin(), v->end(), 0.0f);
+    keyPrimed = false;
+    std::fill (transientAge.begin(), transientAge.end(), idleAge);
+    if (keepCurve && curvePrimed)
+        return;   // gain, promSlow and the per-bin curve they produced stay as they are
+
+    curvePrimed = false;
+    for (auto* v : { &gain, &promSlow, &gainOut, &needOut, &autoOut })
         std::fill (v->begin(), v->end(), 0.0f);
     std::fill (binGainDb.begin(), binGainDb.end(), 0.0f);
     std::fill (binGain.begin(), binGain.end(), 1.0f);
     std::fill (binAutoDb.begin(), binAutoDb.end(), 0.0f);
     std::fill (binAutoGain.begin(), binAutoGain.end(), 1.0f);
-    keyPrimed = false;
     std::fill (binNeed.begin(), binNeed.end(), 0.0f);
-    std::fill (transientAge.begin(), transientAge.end(), idleAge);
+}
+
+void PerceptualModel::copyCurveFrom (const PerceptualModel& other) noexcept
+{
+    if (other.gain.size() != gain.size() || other.dz != dz || ! other.curvePrimed)
+        return;
+    std::copy (other.gain.begin(), other.gain.end(), gain.begin());
+    std::copy (other.promSlow.begin(), other.promSlow.end(), promSlow.begin());
+    curvePrimed = true;
 }
 
 int PerceptualModel::bandForHz (double hz) const noexcept
@@ -310,11 +325,12 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     const float aSlow = 1.0f - std::exp (-1.0f / (tauSlow * fps));
     const float aFast = 1.0f - std::exp (-3.0f / (tauSlow * fps));
 
-    if (! primed)
+    const bool curveWasPrimed = curvePrimed;
+    curvePrimed = primed = true;
+    if (! curveWasPrimed)
     {
         std::copy (targetSmoothed.begin(), targetSmoothed.end(), gain.begin());
         std::copy (prom.begin(), prom.end(), promSlow.begin());
-        primed = true;
     }
     else if (! s.freeze)   // Freeze: the curve (and its prominence memory) hold where they are
     {

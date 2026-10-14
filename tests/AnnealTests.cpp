@@ -2021,6 +2021,80 @@ void testUndo()
                + " -> undo " + juce::String (beforePreset, 1));
 }
 
+void testFixes40()
+{
+    section ("26. 4.0 bug fixes");
+    const double fs = 48000.0;
+
+    // Freeze survives the host stopping and starting (reset()) and a latency mode change: the held
+    // curve is a measurement, not audio. Before 4.0 a stop re-primed the curve from the first frame
+    // after the restart, and the new latency mode's engine started from its own stale curve.
+    {
+        const int n = (int) (2 * fs);
+        Channels ringy = testsig::silence (2, n);
+        testsig::Pink pl (1), pr (2);
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+            ringy[0][(size_t) i] = 0.03f * pl.next() + ring;
+            ringy[1][(size_t) i] = 0.03f * pr.next() + ring;
+        }
+        const auto plain = pinkNoise (fs, 1.0, 0.03f, 9);
+
+        Rig r;
+        r.setNeutral();
+        r.set (ids::smooth, 100.0f);
+        r.prepare (fs, 512);
+        r.run (ringy, fixedBlocks (512));
+        r.set (ids::freeze, 1.0f);
+        r.run (pinkNoise (fs, 0.1, 0.03f, 4), fixedBlocks (512));
+        const float held = bandGain (r.proc->getEngine(), 3150.0);
+        r.proc->reset();   // the host stops and starts again
+        r.run (plain, fixedBlocks (512));
+        const float afterStop = bandGain (r.proc->getEngine(), 3150.0);
+        r.set (ids::latency, 2.0f);   // Precise
+        r.proc->applyLatencyModeIfChanged();
+        r.run (plain, fixedBlocks (512));
+        const float afterSwitch = bandGain (r.proc->getEngine(), 3150.0);
+        check (held <= -3.0f && std::abs (afterStop - held) < 0.05f && std::abs (afterSwitch - held) < 0.05f,
+               "Freeze holds across a host stop and a latency change",
+               "held " + db (held) + ", after stop " + db (afterStop) + ", after Low -> Precise " + db (afterSwitch));
+    }
+
+    // Switching the Ceiling back on never measures audio from the last time it was on: a quiet
+    // signal after a loud one passes untouched (before 4.0 the stale detector dipped it ~80 ms).
+    {
+        anneal::TruePeakLimiter lim;
+        lim.prepare (fs, 2);
+        const int part = (int) (0.2 * fs);
+        auto loud = testsig::sines (fs, part, { { 997.0, 1.0 } });
+        auto quiet = testsig::sines (fs, 2 * part, { { 997.0, 0.1 } });
+        auto runLim = [&lim] (Channels& x) { float* p[2] = { x[0].data(), x[1].data() }; lim.process (p, 2, (int) x[0].size()); };
+        lim.setCeiling (true, -1.0f);
+        runLim (loud);
+        lim.setCeiling (false, -1.0f);
+        Channels first (2), second (2);
+        for (int c = 0; c < 2; ++c)
+        {
+            first[(size_t) c].assign (quiet[(size_t) c].begin(), quiet[(size_t) c].begin() + part);
+            second[(size_t) c].assign (quiet[(size_t) c].begin() + part, quiet[(size_t) c].end());
+        }
+        runLim (first);
+        lim.takeGainReductionDb();
+        lim.setCeiling (true, -1.0f);
+        runLim (second);
+        const float gr = lim.takeGainReductionDb();
+        // The output now is the quiet input `latency` samples earlier, unchanged.
+        double err = 0.0;
+        const int lat = lim.getLatency();
+        for (int c = 0; c < 2; ++c)
+            for (int i = lat; i < part; ++i)
+                err = std::max (err, (double) std::abs (second[(size_t) c][(size_t) i] - quiet[(size_t) c][(size_t) (part + i - lat)]));
+        check (gr > -0.01f && err < 1.0e-6, "Ceiling switched on again: no dip from old audio",
+               "reduction " + db (gr, 2) + ", max err vs delayed input " + juce::String (err, 9));
+    }
+}
+
 void testOldProjects30()
 {
     section ("25. Projects from before 3.0");
@@ -2075,6 +2149,7 @@ int main()
     testCeiling();
     testUndo();
     testOldProjects30();
+    testFixes40();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);
