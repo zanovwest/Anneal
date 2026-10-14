@@ -6,3 +6,6 @@ installer/Output/
 .vs/
 *.user
 CMakeUserPresets.json
+# Hourly update bookkeeping (local to this PC): last successful run, and the lock a run holds.
+.hourly-state.json
+.hourly-run.lock
