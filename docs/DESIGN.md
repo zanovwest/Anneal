@@ -37,7 +37,7 @@ in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve ─┐
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
 | AUTO EQ | Reveal, Smooth | Tilt, Response, Guard (transients) |
-| HEAT | Heat | Color (even↔odd), Focus (body↔air) |
+| HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
@@ -103,6 +103,13 @@ blue = Smooth only, bronze = Heat only), Delta dims (the solo overrides it), and
 a matching pill at the top right of the EQ lane ("REVEAL ONLY · hearing what Reveal lifts"). The
 curves and the knobs' live lines keep showing the full processing, so you can see the whole
 picture while hearing one part of it.
+
+**Flavour (0.2.6).** A pill menu on the HEAT title row, between the group title and the Heat
+routing menu (the Heat ring sits at y 432, level with Reveal and Smooth, to leave it room). Clean is a
+plain raised pill ("Flavour: clean"); any other flavour shows its name tinted bronze, the Heat role
+colour, like Listen's solos. The harmonic bars under Color are drawn with the synth's own flavour law,
+for a 120 Hz partial (Transformer's drive depends on the note) or a 4 kHz one for Exciter, and the
+tooltip says so.
 
 In Mid/Side mode the centre and sides are analysed independently. The EQ curve is solid for Mid
 and dashed for Side, with the same straw-above / blue-below colour convention. Hover reports

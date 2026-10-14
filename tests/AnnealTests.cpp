@@ -616,7 +616,7 @@ void testState()
         { ids::response, 300.0f }, { ids::rangeLo, 85.0f }, { ids::rangeHi, 9000.0f }, { ids::heat, 66.0f }, { ids::color, 80.0f },
         { ids::focus, -45.0f }, { ids::mix, 70.0f }, { ids::output, -3.5f }, { ids::match, 1.0f }, { ids::delta, 1.0f },
         { ids::guard, 55.0f }, { ids::stereoMode, 1.0f }, { ids::eqTarget, 2.0f }, { ids::heatTarget, 1.0f },
-        { ids::listen, 2.0f } };
+        { ids::listen, 2.0f }, { ids::flavour, 3.0f } };
     for (auto [id, v] : values)
         a.set (id, v);
     juce::MemoryBlock blob;
@@ -1043,6 +1043,43 @@ void testRangeHandleDrag()
     screen.mouseDrag (eventAt (pointAt (1300.0f), normalDown, true));
     screen.mouseUp (eventAt (pointAt (1300.0f), normalDown, true));
     check (shownAs (1300.0f, 18000.0f), "ordered range: low drag leaves high unchanged", "high stays at 18000 Hz");
+
+    // Double-clicking a handle resets it in one host gesture. JUCE delivers down, up, down,
+    // double-click, up: the second press has already opened the handle's gesture, so the reset
+    // must not open another inside it (a host recording touch automation would see begin, begin,
+    // end, end for the same parameter).
+    struct GestureLog final : juce::AudioProcessorParameter::Listener
+    {
+        int depth = 0, deepest = 0, begins = 0, ends = 0;
+        void parameterValueChanged (int, float) override {}
+        void parameterGestureChanged (int, bool starting) override
+        {
+            depth += starting ? 1 : -1;
+            deepest = std::max (deepest, depth);
+            ++(starting ? begins : ends);
+        }
+    };
+    for (const char* id : { ids::rangeLo, ids::rangeHi })
+    {
+        r.set (ids::rangeLo, 300.0f);
+        r.set (ids::rangeHi, 9000.0f);
+        auto* param = r.proc->apvts.getParameter (id);
+        GestureLog log;
+        param->addListener (&log);
+        const auto at = pointAt (id == ids::rangeLo ? 300.0f : 9000.0f);
+        screen.mouseDown (eventAt (at, at, false));
+        screen.mouseUp (eventAt (at, at, false));
+        screen.mouseDown (eventAt (at, at, false));
+        screen.mouseDoubleClick (eventAt (at, at, false));
+        screen.mouseUp (eventAt (at, at, false));
+        param->removeListener (&log);
+        const float now = param->convertFrom0to1 (param->getValue());
+        const float def = param->convertFrom0to1 (param->getDefaultValue());
+        check (log.deepest == 1 && log.begins == log.ends && std::abs (now - def) < 0.5f,
+               id == ids::rangeLo ? "double-click resets Range Low in one gesture" : "double-click resets Range High in one gesture",
+               juce::String (log.begins) + " begins / " + juce::String (log.ends) + " ends, nested " + juce::String (log.deepest)
+                   + " deep; now " + anneal::formatHz (now));
+    }
 }
 
 void testMidSide()
@@ -1355,6 +1392,233 @@ void testListen()
     }
 }
 
+// Levels (dB relative to each fundamental) of the 2nd..6th harmonics the engine writes on steady
+// -18 dBFS tones; h[t][n] for tone t. Precise mode unless the params say otherwise.
+std::vector<std::array<double, 7>> harmonicsOf (const anneal::EngineParams& p, std::initializer_list<double> tones,
+                                                int mode = anneal::SpectralEngine::precise)
+{
+    const double fs = 48000.0;
+    auto e = std::make_unique<anneal::SpectralEngine>();
+    e->prepare (fs, 2, mode);
+    e->setParameters (p);
+    Channels in = testsig::silence (2, (int) (3 * fs));
+    for (double f : tones)
+    {
+        const auto one = testsig::sines (fs, (int) (3 * fs), { { f, 0.125893 } });
+        for (size_t c = 0; c < 2; ++c)
+            for (size_t i = 0; i < in[c].size(); ++i)
+                in[c][i] += one[c][i];
+    }
+    const auto out = runEngine (*e, in, fixedBlocks (512));
+    const float* seg = out[0].data() + (int) (1.5 * fs);
+    std::vector<std::array<double, 7>> result;
+    for (double f : tones)
+    {
+        const double ref = testsig::toneAmplitude (seg, (int) fs, f, fs);
+        std::array<double, 7> h {};
+        for (int n = 2; n <= 6; ++n)
+            h[(size_t) n] = n * f < 0.49 * fs ? rel (seg, (int) fs, fs, n * f, ref) : -300.0;
+        result.push_back (h);
+    }
+    return result;
+}
+
+void testFlavours()
+{
+    section ("Saturation flavours: Clean / Tape / Tube / Transformer / Exciter");
+    const double fs = 48000.0;
+    auto params = [] (int flavour, float heat)
+    {
+        auto p = neutral();
+        p.heat = heat;
+        p.color = 0.35f;   // the default Color: the flavours must read as themselves there
+        p.flavour = flavour;
+        return p;
+    };
+    auto line = [] (const std::array<double, 7>& h)
+    {
+        return "2nd " + db (h[2]) + ", 3rd " + db (h[3]) + ", 4th " + db (h[4]) + ", 5th " + db (h[5]) + ", 6th " + db (h[6]);
+    };
+
+    // Tube: a strong 2nd, the rest pulled back.
+    {
+        const auto clean = harmonicsOf (params (anneal::flavourClean, 1.0f), { 1000.0 })[0];
+        const auto tube = harmonicsOf (params (anneal::flavourTube, 1.0f), { 1000.0 })[0];
+        info ("1 kHz, Heat 100 %: Clean " + line (clean));
+        info ("                   Tube  " + line (tube));
+        check (tube[2] >= clean[2] + 2.0 && (tube[2] - tube[3]) >= (clean[2] - clean[3]) + 8.0,
+               "Tube: 2nd-heavy", "2nd " + db (clean[2]) + " -> " + db (tube[2]) + "; 2nd over 3rd "
+                   + db (clean[2] - clean[3]) + " -> " + db (tube[2] - tube[3]));
+    }
+
+    // Tape: mostly even, the upper orders fall away, and harmonics landing high are rolled off
+    // (a 4.5 kHz partial's 2nd at 9 kHz) while low ones are not (a 500 Hz partial's 2nd).
+    {
+        const auto clean = harmonicsOf (params (anneal::flavourClean, 1.0f), { 500.0, 4500.0 });
+        const auto tape = harmonicsOf (params (anneal::flavourTape, 1.0f), { 500.0, 4500.0 });
+        info ("500 Hz: Clean " + line (clean[0]) + " | Tape " + line (tape[0]));
+        const bool even = (tape[0][2] - tape[0][3]) >= (clean[0][2] - clean[0][3]) + 4.0
+                          && tape[0][5] <= clean[0][5] - 12.0 && tape[0][6] <= clean[0][6] - 12.0;
+        check (even, "Tape: mostly even, soft upper orders",
+               "2nd over 3rd " + db (clean[0][2] - clean[0][3]) + " -> " + db (tape[0][2] - tape[0][3])
+                   + "; 5th " + db (clean[0][5]) + " -> " + db (tape[0][5]));
+        const double low = tape[0][2] - clean[0][2], high = tape[1][2] - clean[1][2];
+        check (std::abs (low) < 1.0 && high <= -4.0, "Tape: gentle roll-off of high harmonics",
+               "2nd vs Clean at 1 kHz " + db (low) + ", at 9 kHz " + db (high));
+    }
+
+    // Transformer: odd harmonics, driven by the low end. A 60 Hz partial gets a strong 3rd (more
+    // than Clean, and well above its own 2nd); a 2 kHz partial gets almost nothing.
+    {
+        const auto clean = harmonicsOf (params (anneal::flavourClean, 0.6f), { 60.0 });
+        const auto xf = harmonicsOf (params (anneal::flavourTransformer, 0.6f), { 60.0 });
+        const auto cleanHigh = harmonicsOf (params (anneal::flavourClean, 0.6f), { 2000.0 });
+        const auto xfHigh = harmonicsOf (params (anneal::flavourTransformer, 0.6f), { 2000.0 });
+        info ("60 Hz, Heat 60 %: Clean " + line (clean[0]) + " | Transformer " + line (xf[0]));
+        check (xf[0][3] - xf[0][2] >= 10.0 && xf[0][3] >= clean[0][3] + 6.0 && xfHigh[0][3] <= cleanHigh[0][3] - 20.0,
+               "Transformer: odd, from the low end",
+               "60 Hz: 3rd over 2nd " + db (xf[0][3] - xf[0][2]) + ", 3rd " + db (clean[0][3]) + " -> " + db (xf[0][3])
+                   + "; 2 kHz: 3rd " + db (cleanHigh[0][3]) + " -> " + db (xfHigh[0][3]));
+    }
+
+    // Exciter: air only. A 300 Hz partial gets nothing; a 4 kHz partial gets more than Clean gives it.
+    for (int ms = 0; ms < 2; ++ms)
+    {
+        auto p = params (anneal::flavourExciter, 0.6f);
+        auto c = params (anneal::flavourClean, 0.6f);
+        if (ms == 1)
+            for (auto* q : { &p, &c })
+            {
+                q->midSide = 1.0f;
+                q->heatSide = 0.0f;   // Heat on Mid only (the tones are centred)
+            }
+        const auto ex = harmonicsOf (p, { 300.0, 4000.0 });
+        const auto cl = harmonicsOf (c, { 300.0, 4000.0 });
+        const bool ok = ex[0][2] < -80.0 && ex[0][3] < -80.0 && cl[0][2] > -40.0 && ex[1][2] > -40.0 && ex[1][2] >= cl[1][2] + 3.0;
+        check (ok, ms == 0 ? "Exciter: air only" : "Exciter in Mid/Side (Heat: Mid)",
+               "300 Hz partial: 600 Hz " + db (cl[0][2]) + " -> " + db (ex[0][2]) + "; 4 kHz partial: 8 kHz "
+                   + db (cl[1][2]) + " -> " + db (ex[1][2]));
+    }
+
+    // A flavour changes only the harmonics: at Heat 0 every flavour is bit-identical to Clean, and
+    // with Heat on, the output minus its Heat-only solo (= the EQ path) is the same for all of them.
+    {
+        const auto music = testsig::musicLike (fs, 3.0, 9);
+        auto render = [&music] (int flavour, float heat, int listen)
+        {
+            Rig r;
+            r.set (ids::reveal, 60); r.set (ids::smooth, 60); r.set (ids::heat, heat);
+            r.set (ids::flavour, (float) flavour); r.set (ids::listen, (float) listen);
+            r.prepare (48000.0, 512);
+            return r.run (music, fixedBlocks (512));
+        };
+        double cold = 0.0, eqPath = 0.0, solosDiffer = 1.0e9;
+        const auto cleanCold = render (0, 0.0f, 0);
+        const auto cleanOn = render (0, 60.0f, 0), cleanSolo = render (0, 60.0f, 3);
+        for (int f = 1; f < anneal::HarmonicSynth::numFlavours; ++f)
+        {
+            const auto c = render (f, 0.0f, 0);
+            const auto on = render (f, 60.0f, 0), solo = render (f, 60.0f, 3);
+            double soloDiff = 0.0;
+            for (size_t ch = 0; ch < music.size(); ++ch)
+                for (size_t i = 0; i < music[ch].size(); ++i)
+                {
+                    cold = std::max (cold, (double) std::abs (c[ch][i] - cleanCold[ch][i]));
+                    eqPath = std::max (eqPath, (double) std::abs ((on[ch][i] - solo[ch][i]) - (cleanOn[ch][i] - cleanSolo[ch][i])));
+                    soloDiff = std::max (soloDiff, (double) std::abs (solo[ch][i] - cleanSolo[ch][i]));
+                }
+            solosDiffer = std::min (solosDiffer, soloDiff);
+        }
+        check (cold == 0.0 && eqPath < 1.0e-5 && toDb (solosDiffer) > -60.0, "flavours change only the harmonics",
+               "Heat 0 vs Clean " + juce::String (cold, 9) + "; EQ path vs Clean " + juce::String (eqPath, 9)
+                   + "; harmonics differ by at least " + db (toDb (solosDiffer)));
+    }
+
+    // Switching flavour while playing doesn't click (the overlap-add crossfades it over one frame).
+    {
+        const auto tone = testsig::sines (fs, (int) (4 * fs), { { 110.0, 0.2 }, { 1000.0, 0.15 }, { 4000.0, 0.05 } });
+        auto maxStep = [] (const Channels& x, int from)
+        {
+            double m = 0.0;
+            for (auto& ch : x)
+                for (size_t i = (size_t) from + 1; i < ch.size(); ++i)
+                    m = std::max (m, (double) std::abs (ch[i] - ch[i - 1]));
+            return m;
+        };
+        double steady = 0.0;
+        int latency = 0;
+        for (int f = 0; f < anneal::HarmonicSynth::numFlavours; ++f)
+        {
+            Rig r;
+            r.set (ids::heat, 80); r.set (ids::flavour, (float) f);
+            r.prepare (fs, 512);
+            steady = std::max (steady, maxStep (r.run (tone, fixedBlocks (512)), r.proc->getLatencySamples() + 4096));
+            latency = r.proc->getLatencySamples();
+        }
+        Rig r;
+        r.set (ids::heat, 80);
+        r.prepare (fs, 512);
+        int block = 0;
+        const auto y = r.run (tone, [&r, &block] { r.set (ids::flavour, (float) ((block++ / 5) % 5)); return 512; });
+        const double switching = maxStep (y, latency + 4096);
+        check (allFinite (y) && switching <= 1.1 * steady, "flavours switch without clicks",
+               "largest sample step " + juce::String (switching, 5) + " (steady playback " + juce::String (steady, 5) + ")");
+    }
+
+    // The harmonic bars use the synth's own law: Clean exactly as before flavours, the others shaped.
+    {
+        float worst = 0.0f;
+        for (float heat : { 0.1f, 0.3f, 0.7f, 1.0f })
+            for (float color : { 0.0f, 0.35f, 0.5f, 1.0f })
+                for (int n = 2; n <= 6; ++n)
+                {
+                    // The formula of 0.2.5's HarmonicGraph::harmonicDb.
+                    const float t = std::tanh (std::pow (10.0f, (heat * 40.0f - 34.0f) / 20.0f));
+                    const float w = (n % 2) == 0 ? std::min (1.0f, 2.0f * (1.0f - color)) : std::min (1.0f, 2.0f * color);
+                    const float amp = w * std::pow (t, (float) (n - 1)) / (float) n;
+                    const float before = amp > 1.0e-10f ? 20.0f * std::log10 (amp) : -200.0f;
+                    worst = std::max (worst, std::abs (anneal::HarmonicGraph::harmonicDb (n, heat, color, 0) - before));
+                }
+        using G = anneal::HarmonicGraph;
+        const bool shaped = G::harmonicDb (2, 0.6f, 0.35f, anneal::flavourTube) > G::harmonicDb (2, 0.6f, 0.35f, 0) + 2.0f
+                         && G::harmonicDb (3, 0.6f, 0.35f, anneal::flavourTransformer) > G::harmonicDb (2, 0.6f, 0.35f, anneal::flavourTransformer)
+                         && G::harmonicDb (5, 0.6f, 0.35f, anneal::flavourTape) < G::harmonicDb (5, 0.6f, 0.35f, 0) - 12.0f
+                         && G::harmonicDb (2, 0.6f, 0.35f, anneal::flavourExciter) > G::harmonicDb (2, 0.6f, 0.35f, 0);
+        check (worst == 0.0f && shaped, "harmonic bars follow the flavour",
+               "Clean vs 0.2.5 formula: max diff " + juce::String (worst, 6) + " dB; Tube 2nd "
+                   + db (G::harmonicDb (2, 0.6f, 0.35f, anneal::flavourTube)) + " vs Clean " + db (G::harmonicDb (2, 0.6f, 0.35f, 0)));
+    }
+
+    // Older projects (no Flavour in the state) open Clean; typed values; presets set Clean.
+    {
+        Rig a;
+        auto old = a.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::flavour), nullptr);
+        juce::MemoryBlock state;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), state);
+        Rig b;
+        b.set (ids::flavour, 2);
+        b.proc->setStateInformation (state.getData(), (int) state.getSize());
+        auto* fp = b.proc->apvts.getParameter (ids::flavour);
+        auto typed = [fp] (const char* t) { return juce::roundToInt (fp->convertFrom0to1 (fp->getValueForText (t))); };
+        const bool parsed = typed ("tape") == 1 && typed ("Tube") == 2 && typed ("transformer") == 3 && typed ("iron") == 3
+                         && typed ("exciter") == 4 && typed ("air") == 4 && typed ("clean") == 0 && typed ("3") == 3;
+        check (fp->getValue() == 0.0f && fp->getDefaultValue() == 0.0f && fp->getCurrentValueAsText() == "Clean" && parsed,
+               "projects from before 0.2.6 open Clean", "Flavour " + fp->getCurrentValueAsText() + "; 'iron' -> "
+                   + fp->getText (fp->getValueForText ("iron"), 32) + ", 'air' -> " + fp->getText (fp->getValueForText ("air"), 32));
+
+        Rig c;
+        c.set (ids::flavour, 2);
+        c.proc->setCurrentProgram (2);
+        const bool presetClean = c.proc->apvts.getRawParameterValue (ids::flavour)->load() == 0.0f
+                                 && c.proc->getPresetDisplayName() == "Mix bus glue";
+        c.set (ids::flavour, 1);
+        check (presetClean && c.proc->getPresetDisplayName() == "Mix bus glue *",
+               "factory presets keep Clean (they sound as before)", "after Tube, preset 2 -> Clean; Tape then shows "
+                   + c.proc->getPresetDisplayName());
+    }
+}
+
 void testEditorLayout()
 {
     section ("Editor layout");
@@ -1383,12 +1647,15 @@ void testEditorLayout()
     // The EQ and Heat routing menus sit on the group title row (408..423), both at the same height.
     std::vector<juce::Component*> routing;
     anneal::ListenMenu* listen = nullptr;
+    anneal::FlavourMenu* flavour = nullptr;
     for (auto* c : content.getChildren())
     {
         if (auto* m = dynamic_cast<anneal::RoutingMenu*> (c); m != nullptr && m->getTooltip().startsWith ("In Mid/Side mode"))
             routing.push_back (c);
         if (auto* l = dynamic_cast<anneal::ListenMenu*> (c))
             listen = l;
+        if (auto* f = dynamic_cast<anneal::FlavourMenu*> (c))
+            flavour = f;
     }
     juce::String where;
     for (auto* c : routing)
@@ -1400,6 +1667,17 @@ void testEditorLayout()
     r.set (ids::listen, 2);
     check (listen != nullptr && listen->getChoice() == 2 && anneal::ListenMenu::pillText (2) == "Smooth only",
            "Listen menu follows the parameter", listen != nullptr ? anneal::ListenMenu::pillText (listen->getChoice()) : juce::String ("missing"));
+
+    // The Flavour menu sits on the HEAT title row with the routing menu, inside the HEAT group
+    // (after its title, before the Heat routing menu), and follows the parameter.
+    r.set (ids::flavour, 3);
+    const bool placed = flavour != nullptr && routing.size() == 2 && flavour->getY() == routing[1]->getY()
+                        && flavour->getX() > 556 && flavour->getRight() < routing[1]->getX();
+    check (placed && flavour->getChoice() == 3 && anneal::FlavourMenu::pillText (3) == "Transformer"
+               && anneal::FlavourMenu::pillText (0) == "Flavour: clean",
+           "Flavour menu on the HEAT title row, follows the parameter",
+           flavour != nullptr ? flavour->getBounds().toString() + ", shows " + anneal::FlavourMenu::pillText (flavour->getChoice())
+                              : juce::String ("missing"));
 }
 
 void benchmark()
@@ -1408,16 +1686,18 @@ void benchmark()
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    struct Case { double fs; int block; int mode; int midSide = 0; };
+    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; };
     const char* modeNames[] = { "Low", "Normal", "Precise" };
-    for (auto [fs, block, mode, midSide] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+    for (auto [fs, block, mode, midSide, flavour] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
                                     Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
                                     Case { 96000.0, 512, 0 }, Case { 48000.0, 64, 0, 1 },
-                                    Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 } })
+                                    Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 },
+                                    Case { 48000.0, 64, 0, 0, 1 }, Case { 48000.0, 512, 2, 0, 1 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
         r.set (ids::latency, (float) mode);
         r.set (ids::stereoMode, (float) midSide);
+        r.set (ids::flavour, (float) flavour);   // Tape: the flavour with per-bin work
         r.prepare (fs, block);
         const auto in = testsig::musicLike (fs, 20.0, 1);
         const int n = (int) in[0].size();
@@ -1443,7 +1723,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;
@@ -1477,6 +1757,7 @@ int main()
     testRangeHandleDrag();
     testMidSide();
     testListen();
+    testFlavours();
     testEditorLayout();
     benchmark();
 

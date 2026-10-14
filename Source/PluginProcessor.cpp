@@ -30,6 +30,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pEqTarget   = apvts.getRawParameterValue (ids::eqTarget);
     pHeatTarget = apvts.getRawParameterValue (ids::heatTarget);
     pListen     = apvts.getRawParameterValue (ids::listen);
+    pFlavour    = apvts.getRawParameterValue (ids::flavour);
 
     // A usable default before the host calls prepareToPlay (e.g. state loading, editor opening).
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
@@ -173,6 +174,7 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.heatMid = ht == 2 ? 0.0f : 1.0f;
     p.heatSide = ht == 1 ? 0.0f : 1.0f;
     p.listen = juce::jlimit (0, 3, juce::roundToInt (pListen->load()));
+    p.flavour = juce::jlimit (0, anneal::HarmonicSynth::numFlavours - 1, juce::roundToInt (pFlavour->load()));
     getEngine().setParameters (p);
 }
 
@@ -343,6 +345,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasEqTarget = tree.getChildWithProperty ("id", anneal::ids::eqTarget).isValid();
             const bool hasHeatTarget = tree.getChildWithProperty ("id", anneal::ids::heatTarget).isValid();
             const bool hasListen = tree.getChildWithProperty ("id", anneal::ids::listen).isValid();
+            const bool hasFlavour = tree.getChildWithProperty ("id", anneal::ids::flavour).isValid();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
@@ -374,6 +377,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasListen)
                 if (auto* lp = apvts.getParameter (anneal::ids::listen))
                     lp->setValueNotifyingHost (0.0f);
+
+            // Projects saved before 0.2.6 have no Flavour: Clean, the only saturation they had,
+            // so they sound exactly as before (not whatever flavour this instance was on).
+            if (! hasFlavour)
+                if (auto* fp = apvts.getParameter (anneal::ids::flavour))
+                    fp->setValueNotifyingHost (0.0f);
 
             if (juce::MessageManager::existsAndIsCurrentThread())
                 applyLatencyModeIfChanged();

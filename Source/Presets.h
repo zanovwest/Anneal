@@ -9,7 +9,7 @@
 namespace anneal::presets
 {
     // The parameters a preset sets, in the order of Preset::values.
-    inline constexpr int numValues = 11;
+    inline constexpr int numValues = 12;
     extern const std::array<const char*, numValues> paramIds;
 
     struct Preset

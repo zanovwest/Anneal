@@ -25,6 +25,7 @@ namespace anneal::ids
     inline constexpr const char* eqTarget   = "eqTarget";   // Both / Mid / Side (M/S only)
     inline constexpr const char* heatTarget = "heatTarget";
     inline constexpr const char* listen     = "listen";     // 0.2.5: Off / Reveal / Smooth / Heat only (solo)
+    inline constexpr const char* flavour    = "flavour";    // 0.2.6: saturation flavour, Clean = as before
 
     inline constexpr int stateVersion = 1;
 }
@@ -44,4 +45,5 @@ namespace anneal
     juce::String formatHz (float hz);
     float parseHz (const juce::String& text);
     int parseListen (const juce::String& text);   // "reveal", "smooth", "harmonics"/"heat", "off" or 0-3
+    int parseFlavour (const juce::String& text);  // "clean", "tape", "tube", "transformer", "exciter" or 0-4
 }

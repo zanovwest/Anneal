@@ -47,6 +47,18 @@ int parseListen (const juce::String& text)
     return 0;
 }
 
+int parseFlavour (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim();
+    if (l.containsAnyOf ("0123456789"))
+        return juce::jlimit (0, 4, l.getIntValue());
+    if (l.contains ("tape"))                                               return 1;
+    if (l.contains ("tube") || l.contains ("valve"))                       return 2;
+    if (l.contains ("trans") || l.contains ("iron") || l.contains ("xf"))  return 3;
+    if (l.contains ("exc") || l.contains ("air"))                          return 4;
+    return 0;
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -179,6 +191,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
         {
             return parseListen (t);
+        })));
+
+    // Saturation flavour: which harmonics Heat writes and where. Clean is Anneal's own law, the
+    // only one before 0.2.6, and what older projects load with (setStateInformation).
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::flavour, 1 }, "Flavour",
+        juce::StringArray { "Clean", "Tape", "Tube", "Transformer", "Exciter" }, 0,
+        juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
+        {
+            return parseFlavour (t);
         })));
     return layout;
 }

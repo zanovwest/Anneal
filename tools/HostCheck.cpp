@@ -103,7 +103,7 @@ int main (int argc, char* argv[])
     for (auto* prm : plugin->getParameters())
         names.add (prm->getName (64));
     bool haveAll = true;
-    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen" })
+    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -158,17 +158,19 @@ int main (int argc, char* argv[])
         findParam (*plugin, "EQ Target")->setValueNotifyingHost (1.0f);
         findParam (*plugin, "Heat Target")->setValueNotifyingHost (0.5f);
         findParam (*plugin, "Listen")->setValueNotifyingHost (1.0f / 3.0f);
+        findParam (*plugin, "Flavour")->setValueNotifyingHost (0.75f);   // Transformer
         juce::MemoryBlock state;
         plugin->getStateInformation (state);
 
         auto second = format.createInstanceFromDescription (desc, 48000.0, 512, error);
         second->setStateInformation (state.getData(), (int) state.getSize());
         float worst = 0.0f;
-        for (auto n : { "Heat", "Reveal", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen" })
+        for (auto n : { "Heat", "Reveal", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour" })
             worst = std::max (worst, std::abs (findParam (*second, n)->getValue() - findParam (*plugin, n)->getValue()));
         check (worst < 1.0e-4f, "state restores in a second instance", "state " + juce::String ((int) state.getSize()) + " bytes, max diff " + juce::String (worst, 6));
         findParam (*plugin, "Delta")->setValueNotifyingHost (0.0f);
         findParam (*plugin, "Listen")->setValueNotifyingHost (0.0f);
+        findParam (*plugin, "Flavour")->setValueNotifyingHost (0.0f);
 
         // Guard is automatable and processes cleanly when it is swept while playing.
         auto* guard = findParam (*plugin, "Guard");
@@ -231,6 +233,43 @@ int main (int argc, char* argv[])
         check (listenOk && testsig::toDb (soloPeak) < -90.0 && testsig::toDb (offPeak) > -20.0 && sweepPeak < 4.0,
                "Listen modes through VST3", texts + "; Heat-only solo at Heat 0: " + juce::String (testsig::toDb (soloPeak), 1)
                    + " dB, Off: " + juce::String (testsig::toDb (offPeak), 1) + " dB, sweep peak " + juce::String (testsig::toDb (sweepPeak), 1) + " dB");
+
+        // Flavour through VST3: five choices, typed values, and a Heat-only solo that changes with
+        // the flavour (Exciter writes nothing for a 220 Hz tone, Tube does), and every flavour swept
+        // during playback.
+        auto* flavour = findParam (*plugin, "Flavour");
+        bool flavourOk = flavour != nullptr && heatAmount != nullptr && listen != nullptr && flavour->isAutomatable();
+        juce::String names2;
+        double soloTube = 0.0, soloExciter = 0.0, flavourSweep = 0.0;
+        if (flavourOk)
+        {
+            for (int i = 0; i < 5; ++i)
+                names2 << flavour->getText ((float) i / 4.0f, 32) << (i < 4 ? ", " : "");
+            flavourOk = names2 == "Clean, Tape, Tube, Transformer, Exciter"
+                        && std::abs (flavour->getValueForText ("tube") - 0.5f) < 1.0e-4f
+                        && std::abs (flavour->getValueForText ("air") - 1.0f) < 1.0e-4f;
+            heatAmount->setValueNotifyingHost (0.6f);
+            listen->setValueNotifyingHost (1.0f);   // Heat only
+            const auto bass = testsig::sines (48000.0, 48000, { { 220.0, 0.2 } });
+            for (auto [value, peak] : { std::pair<float, double*> { 0.5f, &soloTube }, std::pair<float, double*> { 1.0f, &soloExciter } })
+            {
+                flavour->setValueNotifyingHost (value);
+                run (*plugin, bass, out, [] { return 512; });
+                for (auto& ch : out)
+                    for (size_t i = out[0].size() / 2; i < ch.size(); ++i)
+                        *peak = std::max (*peak, (double) std::abs (ch[i]));
+            }
+            listen->setValueNotifyingHost (0.0f);
+            int flavourBlock = 0;
+            flavourOk = flavourOk && run (*plugin, music, out, [&] { flavour->setValueNotifyingHost ((float) ((flavourBlock++ / 4) % 5) / 4.0f); return 300; });
+            flavourSweep = peakOf (out);
+            flavour->setValueNotifyingHost (0.0f);
+            heatAmount->setValueNotifyingHost (0.3f);
+        }
+        check (flavourOk && testsig::toDb (soloTube) > -40.0 && testsig::toDb (soloExciter) < -90.0 && flavourSweep < 4.0,
+               "Flavour through VST3", names2 + "; 220 Hz harmonics: Tube " + juce::String (testsig::toDb (soloTube), 1)
+                   + " dB, Exciter " + juce::String (testsig::toDb (soloExciter), 1) + " dB; sweep peak "
+                   + juce::String (testsig::toDb (flavourSweep), 1) + " dB");
     }
 
     // 6a. Latency mode through the host: switch to Precise, the host sees the new latency and the

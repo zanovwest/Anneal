@@ -136,6 +136,10 @@ int main (int argc, char* argv[])
           {
               set (p, ids::heat, 70); set (p, ids::listen, 3);
           }, -1.0f, true },
+        { "flavour", [] (AnnealAudioProcessor& p)
+          {
+              set (p, ids::heat, 70); set (p, ids::flavour, 3);   // Transformer: the longest pill text
+          }, 220.0f, true },
     };
 
     int failures = 0;

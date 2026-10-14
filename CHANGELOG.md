@@ -4,6 +4,58 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 0.2.6 — 2026-10-13 18:23
+
+New
+- **Saturation flavours**: a **Flavour** menu on the HEAT title row picks the character of the
+  harmonics Heat writes:
+  - **Clean**: Anneal's own saturation, exactly as before.
+  - **Tape**: soft and mostly even. The 2nd stays, the 3rd is halved, the 5th and 6th fall
+    away (about −17 dB against Clean), and harmonics that land high are rolled off gently
+    (−3 dB at 5 kHz, −6 dB at 9 kHz). Warm without fizz.
+  - **Tube**: a strong 2nd. About +3.5 dB more 2nd than Clean, with everything above it pulled
+    back (the 2nd sits 25 dB over the 3rd instead of 11 dB).
+  - **Transformer**: odd harmonics, driven by the low end, the way an iron core saturates. A
+    60 Hz note gets a 3rd 17 dB above its 2nd (13 dB more 3rd than Clean); the lower the note, the
+    harder it drives (+12 dB at 30 Hz), and from about 1 kHz up it does almost nothing (a 2 kHz
+    note's 3rd is 37 dB lower than Clean).
+  - **Exciter**: air only. Partials below 1.5 kHz get no harmonics at all; from 3 kHz up they
+    get bright even and odd harmonics, driven 6 dB harder than Clean (a 4 kHz note's 2nd at
+    8 kHz: +6 dB).
+
+  Color still moves the even/odd balance on top of the flavour, and Focus and the model still
+  decide where the harmonics are written. The harmonic bars under Color follow the flavour
+  (Transformer is drawn for a 120 Hz note, Exciter for a 4 kHz one). The pill turns bronze when a
+  flavour is on. A flavour changes only the harmonics: the auto EQ is untouched, and at Heat 0
+  every flavour sounds the same. Switching while playing is click-free, in Stereo and Mid/Side.
+  Flavour is a host parameter too (type `tape`, `tube`, `transformer`/`iron`, `exciter`/`air`
+  or `clean`). It defaults to Clean, and projects from earlier versions open in Clean, so they
+  sound the same. Factory presets set Clean, so they also sound as before; choosing another
+  flavour after a preset marks it `*`.
+
+Fixes
+- Double-clicking a Range handle (to reset it) sent the host a second "begin edit" for the same
+  parameter inside the first, so FL Studio and other hosts recording touch automation saw
+  begin, begin, end, end. The reset now happens inside the click's own edit: one begin, one end.
+- The Heat ring moved 8 px down, so its top lines up with Reveal and Smooth and the new Flavour
+  pill above it has room.
+
+Tests: 83/83 acceptance checks (14 new: Tube, Tape (two), Transformer, Exciter in Stereo and
+Mid/Side, flavours change only the harmonics, click-free switching, bars = synth law with Clean
+identical to 0.2.5's formula, older projects open Clean and typed values, presets keep Clean, the
+Flavour menu on the HEAT title row, and the Range-handle double-click as one gesture for Low and
+High, which failed before the fix). 16/16 host checks on the built VST3 (new: Flavour through
+VST3, with all five names, typed values, a 220 Hz tone that Tube enriches and Exciter leaves
+alone, and a sweep during playback). 25/25 isolated installer checks. Editor rendered at
+100/150/200 % and at minimum/maximum size, plus a new Transformer snapshot.
+CPU at 48 kHz on this machine: Stereo Low 1.9 %, Normal 1.7 %, Precise 2.7 % of one core;
+Mid/Side Low 3.6 % (64), Normal 2.9 % (512), Precise 4.3 % (64). Tape, the only flavour with extra
+per-bin work, measures the same as Clean in the same run (Low 1.94 % vs 1.95 % at 64 samples,
+Precise 2.69 % vs 2.72 % at 512). Slowest 0.1 % of 64-sample blocks: Stereo Low 10 %, Precise 22 %;
+Mid/Side Low 16 %, Precise 35 % of the deadline. 0.2.5's figures (2.4 / 2.1 / 3.4 %) were taken an
+hour earlier and not re-run side by side; the drop is the machine being less busy, not a
+speed-up. Clean runs the same code as before plus one multiply by 1 per harmonic.
+
 ## 0.2.5 — 2026-10-13 18:01
 
 New

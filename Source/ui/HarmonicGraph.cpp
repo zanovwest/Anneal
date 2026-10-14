@@ -1,6 +1,7 @@
 #include "HarmonicGraph.h"
 #include "Params.h"
 #include "Theme.h"
+#include "dsp/HarmonicSynth.h"
 
 #include <cmath>
 
@@ -17,32 +18,38 @@ HarmonicGraph::HarmonicGraph (juce::AudioProcessorValueTreeState& state)
 {
     heat = state.getRawParameterValue (ids::heat);
     color = state.getRawParameterValue (ids::color);
+    flavour = state.getRawParameterValue (ids::flavour);
     setTooltip ("Harmonics Heat writes for one partial at -18 dBFS where the spectrum is thin (model). "
-                "Color moves the balance between even (round) and odd (edgy) harmonics.");
+                "Color moves the balance between even (round) and odd (edgy) harmonics; the flavour shapes them. "
+                "Transformer is shown for a 120 Hz partial (lower notes saturate more, higher ones far less), "
+                "Exciter for a 4 kHz one (it leaves partials below 1.5 kHz alone), and Tape also rolls off "
+                "harmonics above 5 kHz.");
 }
 
-float HarmonicGraph::harmonicDb (int n, float heat01, float color01)
+double HarmonicGraph::referenceHz (int f)
 {
-    // Same law as HarmonicSynth::process: amplitude = parity weight * tanh(u)^(n-1) / n,
-    // u = drive at the reference level.
+    return f == flavourExciter ? 4000.0 : 120.0;
+}
+
+float HarmonicGraph::harmonicDb (int n, float heat01, float color01, int f)
+{
+    // HarmonicSynth's own law: parity weight * flavour weight * tanh(u)^(n-1) / n, u = drive at
+    // the reference level (Clean: exactly the formula from before flavours).
     if (heat01 <= 1.0e-4f || n < 2)
         return n < 2 ? 0.0f : -200.0f;
-    const float drive = std::pow (10.0f, (heat01 * 40.0f - 34.0f) / 20.0f);
-    const float t = std::tanh (drive);
-    const float evenW = std::min (1.0f, 2.0f * (1.0f - color01));
-    const float oddW  = std::min (1.0f, 2.0f * color01);
-    const float w = (n % 2) == 0 ? evenW : oddW;
-    const float amp = w * std::pow (t, (float) (n - 1)) / (float) n;
+    const float amp = HarmonicSynth::harmonicLevel (n, heat01, color01, f, referenceHz (f));
     return amp > 1.0e-10f ? 20.0f * std::log10 (amp) : -200.0f;
 }
 
 void HarmonicGraph::refresh()
 {
     const float h = heat->load() * 0.01f, c = color->load() * 0.01f;
-    if (std::abs (h - shownHeat) > 1.0e-4f || std::abs (c - shownColor) > 1.0e-4f)
+    const int f = juce::jlimit (0, HarmonicSynth::numFlavours - 1, juce::roundToInt (flavour->load()));
+    if (std::abs (h - shownHeat) > 1.0e-4f || std::abs (c - shownColor) > 1.0e-4f || f != shownFlavour)
     {
         shownHeat = h;
         shownColor = c;
+        shownFlavour = f;
         repaint();
     }
 }
@@ -65,7 +72,7 @@ void HarmonicGraph::paint (juce::Graphics& g)
     const float slot = plot.getWidth() / count, bw = std::min (12.0f, slot * 0.46f);
     for (int n = 1; n <= count; ++n)
     {
-        const float db = harmonicDb (n, shownHeat, shownColor);
+        const float db = harmonicDb (n, shownHeat, shownColor, shownFlavour);
         const float cx = plot.getX() + (n - 0.5f) * slot;
         if (db > floorDb)
         {

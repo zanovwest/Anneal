@@ -108,6 +108,27 @@ Amplitude per harmonic: `sign_n · w_parity · tanh(u)^(n−1) / n`, with `u = a
 (+, −, −, +, + for n = 2…6). Each write is scaled by the heat-need at the
 *destination* bin.
 
+### Flavours (0.2.6)
+
+A flavour reshapes that law and nothing else (the main path and the model are untouched). For a
+partial at `f0` and harmonic `n` landing at bin frequency `f`:
+
+`amp = parity(Color) · w_flavour[n] · gate(f0) · sign_n · tanh(u · s(f0))^(n−1) / n`, written
+scaled by `need[dst] · d(f)`.
+
+| Flavour | w for n = 2…6 | s(f0) (drive) | gate(f0) | d(f) (destination) |
+|---|---|---|---|---|
+| Clean | 1, 1, 1, 1, 1 | 1 | 1 | 1 |
+| Tape | 1, 0.5, 0.35, 0.15, 0.08 | 1 | 1 | 1/√(1+(f/5 kHz)²) |
+| Tube | 1.5, 0.3, 0.45, 0.08, 0.1 | 1 | 1 | 1 |
+| Transformer | 0.05, 1.4, 0.04, 0.8, 0.03 | clamp(120 Hz / f0, 0.1, 4) (core flux ∝ 1/f) | 1 | 1 |
+| Exciter | 1.1, 1, 0.6, 0.45, 0.3 | 2 | smoothstep(log2(f0 / 1.5 kHz)): 0 below 1.5 kHz, 1 from 3 kHz | 1 |
+
+Clean multiplies by exactly 1, so it is bit-identical to the law before flavours. `f0` is the
+interpolated peak position. Tape's `d` is a per-bin table built in `prepare()`; the rest is one
+multiply per peak. The flavour switches per frame and the harmonic stream's overlap-add crossfades it.
+`HarmonicSynth::harmonicLevel` evaluates the same law for the editor's bars.
+
 Properties: no intermodulation products and no aliasing (writes above the top bin are
 dropped). Expected weakness: like any STFT process, harmonics are smeared over the
 frame (pre-echo up to ~N/2 before sharp onsets). Measured in the tests.

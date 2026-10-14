@@ -12,11 +12,9 @@ Add ideas anywhere in the list and reorder freely. Never add anything listed und
 ## Next up
 
 Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (0.2.4), Listen
-modes (0.2.5), Saturation flavours, Sidechain unmask, then the rest. (The icon was done by hand that
+modes (0.2.5), Saturation flavours (0.2.6), Sidechain unmask, then the rest. (The icon was done by hand that
 day, outside the hourly runs.)
 
-3. **Saturation flavours**: Tape (soft, mostly even, gentle HF roll-off), Tube (2nd-heavy),
-   Transformer (odd, low end), Exciter (air only). A flavour menu next to Color.
 4. **Sidechain unmask mode**: lift what a sidechain key masks, or dip the bands the key needs.
 6. **Freeze curve**: hold the current auto-EQ curve as a static EQ.
 7. **True-peak output ceiling** (a look-ahead limiter, as in Morphfall) so Heat can't clip.
@@ -39,6 +37,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 0.2.6 (2026-10-13): **Saturation flavours** (Flavour menu on the HEAT title row): Clean (as
+  before), Tape (soft, mostly even, harmonics rolled off above 5 kHz), Tube (strong 2nd),
+  Transformer (odd, driven by the low end), Exciter (air only: nothing from partials below
+  1.5 kHz). Only the harmonics change; the bars under Color follow the flavour; older projects and
+  factory presets stay Clean. Fixed: double-clicking a Range handle sent the host a nested
+  begin-edit for the same parameter.
 - 0.2.5 (2026-10-13): **Listen modes** (Listen menu in OUTPUT): Reveal only (what Reveal lifts),
   Smooth only (what Smooth cuts), Heat only (just the harmonics). Exact split, tested: normal −
   Reveal solo + Smooth solo = the input, normal − Heat solo = the input, in Stereo, Mid/Side and

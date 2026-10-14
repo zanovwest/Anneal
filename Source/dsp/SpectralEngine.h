@@ -33,6 +33,7 @@ namespace anneal
         float eqMid        = 1.0f, eqSide = 1.0f;
         float heatMid      = 1.0f, heatSide = 1.0f;
         int listen         = listenOff;   // Listen enum; switches per frame (overlap-add crossfades it)
+        int flavour        = flavourClean;   // Flavour enum (HarmonicSynth.h); switches per frame like listen
     };
 
     // STFT host for the perceptual model and the harmonic synth.

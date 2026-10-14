@@ -622,11 +622,18 @@ void PerceptionScreen::mouseUp (const juce::MouseEvent&)
 
 void PerceptionScreen::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    switch (handleAt (e.position.x, e.position.y))
-    {
-        case Handle::lo: loAttachment->setValueAsCompleteGesture (loParam->convertFrom0to1 (loParam->getDefaultValue())); break;
-        case Handle::hi: hiAttachment->setValueAsCompleteGesture (hiParam->convertFrom0to1 (hiParam->getDefaultValue())); break;
-        case Handle::none: break;
-    }
+    // JUCE delivers down, up, down, double-click, up. The second press has already opened this
+    // handle's gesture (mouseUp closes it), so the reset belongs to that gesture instead of
+    // nesting a second one for the same parameter inside it.
+    const auto handle = handleAt (e.position.x, e.position.y);
+    if (handle == Handle::none)
+        return;
+    auto& attachment = handle == Handle::lo ? *loAttachment : *hiAttachment;
+    const auto* param = handle == Handle::lo ? loParam : hiParam;
+    const float value = param->convertFrom0to1 (param->getDefaultValue());
+    if (dragging == handle)
+        attachment.setValueAsPartOfGesture (value);
+    else
+        attachment.setValueAsCompleteGesture (value);
 }
 }

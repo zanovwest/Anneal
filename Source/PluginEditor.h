@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "ui/AnnealLookAndFeel.h"
 #include "ui/Fader.h"
+#include "ui/FlavourMenu.h"
 #include "ui/HarmonicGraph.h"
 #include "ui/Knob.h"
 #include "ui/LatencyMenu.h"
@@ -44,6 +45,7 @@ private:
     anneal::LatencyMenu latency;
     anneal::RoutingMenu stereoMode, eqTarget, heatTarget;
     anneal::ListenMenu listen;
+    anneal::FlavourMenu flavour;
 
     juce::String shownMatchText;
 };

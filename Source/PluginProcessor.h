@@ -111,6 +111,7 @@ private:
     std::atomic<float>* pEqTarget = nullptr;
     std::atomic<float>* pHeatTarget = nullptr;
     std::atomic<float>* pListen = nullptr;
+    std::atomic<float>* pFlavour = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnnealAudioProcessor)
 };

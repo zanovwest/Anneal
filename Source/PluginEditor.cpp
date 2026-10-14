@@ -57,11 +57,12 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                 "In Mid/Side mode, route Reveal, Smooth and Tilt to both components, the centre (Mid), or the sides (Side)."),
       heatTarget (p.apvts, ids::heatTarget, "Heat: ", { "Both", "Mid", "Side" },
                   "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
-      listen (p.apvts, ids::listen)
+      listen (p.apvts, ids::listen),
+      flavour (p.apvts, ids::flavour)
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
-             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen })
+             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour })
         addAndMakeVisible (c);
 
     presets.getCount = [&p] { return p.getNumPrograms(); };
@@ -91,6 +92,8 @@ void AnnealEditorContent::resized()
     // The routing menus sit on their group's title row (the same row for both).
     eqTarget.setBounds (360, routingY, 114, 26);
     heatTarget.setBounds (700, routingY, 118, 26);
+    // The saturation flavour shapes everything in HEAT, so it sits on the group's title row too.
+    flavour.setBounds (562, routingY, 122, 26);
 
     screen.setBounds (12, 50, 976, 346);
 
@@ -106,7 +109,8 @@ void AnnealEditorContent::resized()
     guard.setBounds (334, 544, 140, smallH);
 
     // HEAT: the largest ring; Color with the harmonics it produces, then Focus.
-    heat.setBounds (500, 424, heroW, heroH);
+    // The ring's top lines up with Reveal and Smooth, below the Flavour pill on the title row.
+    heat.setBounds (500, 432, heroW, heroH);
     color.setBounds (684, 428, 134, 53);
     harmonics.setBounds (690, 486, 122, 40);
     focus.setBounds (684, 536, 134, 53);

@@ -55,7 +55,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
         msPower[c].assign ((size_t) numBins, 0.0f);
         msHarmPower[c].assign ((size_t) numBins, 0.0f);
         msModel[c].prepare (sampleRate, fftSize);
-        msSynth[c].prepare (fftSize);
+        msSynth[c].prepare (fftSize, sampleRate);
         rawSpec[c].assign ((size_t) numBins * 2, 0.0f);
     }
     power.assign ((size_t) numBins, 0.0f);
@@ -66,7 +66,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
     gateCoeff  = (float) (1.0 - std::exp (-1.0 / (0.001 * sampleRate)));
 
     model.prepare (sampleRate, fftSize);
-    synth.prepare (fftSize);
+    synth.prepare (fftSize, sampleRate);
     reset();
 }
 
@@ -168,6 +168,7 @@ void SpectralEngine::smoothParameters() noexcept
     lg  (current.rangeHiHz, target.rangeHiHz);
     current.responseMs = target.responseMs;
     current.listen = target.listen;   // a switch per frame; the overlap-add fades it over one frame
+    current.flavour = target.flavour; // likewise: the harmonic stream's overlap-add crossfades it
 }
 
 void SpectralEngine::processFrame() noexcept
@@ -266,6 +267,7 @@ void SpectralEngine::processFrame() noexcept
     HeatSettings hs;
     hs.heat = current.heat;
     hs.color = current.color;
+    hs.flavour = current.flavour;
     synth.process (specPtrs, channels, power.data(), model.getBinNeed(), hs, harmPtrs, harmPower.data());
     lastPeakCount = synth.getLastPeakCount();
 
@@ -402,6 +404,7 @@ void SpectralEngine::processMidSide (const ModelSettings& settings, float blend)
         HeatSettings hs;
         hs.heat = current.heat * (c == 0 ? current.heatMid : current.heatSide);
         hs.color = current.color;
+        hs.flavour = current.flavour;
         msSynth[c].process (in, 1, msPower[c].data(), msModel[c].getBinNeed(), hs, out, msHarmPower[c].data());
         const auto* gain = msModel[c].getBinGain();
         for (int k = 0; k < numBins; ++k)
