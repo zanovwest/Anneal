@@ -21,10 +21,29 @@ input ──► dry delay (N samples) ──────────────
 | Window | periodic Hann analysis + synthesis, OLA gain 3 → scaled by 1/3 |
 | Latency | N samples: Low 21.3 ms, Normal 42.7 ms, Precise 85.3 ms at 48 kHz. Reported to the host, dry path delayed by the same amount. One engine per mode is prepared up front; a switch happens on the message thread with processing suspended, then the new latency is reported |
 | Tail | N samples |
-| Channels | mono or stereo, in = out; analysis is stereo-linked, synthesis per channel (image preserved) |
+| Channels | mono or stereo, in = out; linked Stereo (default) or independently analysed Mid/Side; mono always uses linked mono |
 | Parameter resolution | parameters are sampled once per host block, smoothed per frame (τ 40 ms) |
 
 ## Perceptual model (heuristic, model-derived — not a calibrated loudness model)
+
+### Mid/Side routing (0.2.4)
+
+After the two L/R FFTs, encode `M=(L+R)/2`, `S=(L-R)/2`. Each component gets its own model and
+harmonic synthesis, with separate EQ and Heat targets (Both / Mid / Side). EQ targeting includes
+Reveal, Smooth and Tilt; Heat targeting leaves its placement model active. Decode `L=M+S`,
+`R=M-S` before inverse FFT and overlap-add, so every audio FIFO stays L/R. A 40 ms spectral
+crossfade and smoothed routing amounts handle automation without reallocating or changing
+latency. Pre-onset harmonic guards are measured separately for Mid and Side. The existing
+latency-aligned harmonic envelope gate remains stereo-linked.
+
+All M/S storage is prepared up front; the M/S analysis runs only while that mode is active or
+fading. The linked analysis stays warm for return to Stereo. Stereo processing keeps the legacy
+signal path. Missing new parameters in older sessions restore Stereo/Both/Both, even when
+loading into a previously configured M/S instance. Factory presets do not change routing.
+
+The display publishes separate Mid and Side gains, plus measured combined L/R spectrum and
+harmonic energy. Tests compare M/S EQ against two independent mono engines, check neutral
+nulls at every latency/rate, component isolation, mono fallback, state and automation.
 
 1024 bands, uniform on the ERB-rate (Cam) scale from 20 Hz to min(20 kHz, 0.49·fs)
 (≈ 0.04 Cam spacing). Below ~150 Hz the bands are finer than the FFT bins, so

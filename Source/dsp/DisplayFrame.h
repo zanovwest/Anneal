@@ -20,10 +20,12 @@ namespace anneal
         float liftDb = 0.0f;          // strongest Reveal lift inside the range, dB (no Tilt)
         float cutDb = 0.0f;           // strongest Smooth cut inside the range, dB (<= 0)
         float heatRelDb = -200.0f;    // harmonic energy written, relative to the whole output, dB
+        bool midSide = false;        // gainDb = Mid, sideGainDb = Side when true
 
         float inDb[numBands]   {};    // input level per ERB, dBFS (signal power within +-0.5 Cam)
         float outDb[numBands]  {};    // output level per ERB, dBFS
         float gainDb[numBands] {};    // live auto-EQ gain incl. tilt and range gate, dB
         float heatDb[numBands] {};    // harmonic energy written per ERB, dBFS
+        float sideGainDb[numBands] {};
     };
 }

@@ -9,6 +9,7 @@
 #include "ui/OutputMeter.h"
 #include "ui/PerceptionScreen.h"
 #include "ui/PresetBar.h"
+#include "ui/RoutingMenu.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -40,6 +41,7 @@ private:
     anneal::Toggle match, delta, bypass;
     anneal::OutputMeter meter;
     anneal::LatencyMenu latency;
+    anneal::RoutingMenu stereoMode, eqTarget, heatTarget;
 
     juce::String shownMatchText;
 };

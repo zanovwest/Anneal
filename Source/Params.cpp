@@ -153,6 +153,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
                   return leadingNumber (l);
               })));
 
+    // Appended: existing host indices and parameter IDs stay unchanged.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::stereoMode, 1 }, "Stereo Mode",
+        juce::StringArray { "Stereo (linked)", "Mid/Side" }, 0));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::eqTarget, 1 }, "EQ Target",
+        juce::StringArray { "Both", "Mid", "Side" }, 0));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::heatTarget, 1 }, "Heat Target",
+        juce::StringArray { "Both", "Mid", "Side" }, 0));
     return layout;
 }
 }

@@ -103,7 +103,7 @@ int main (int argc, char* argv[])
     for (auto* prm : plugin->getParameters())
         names.add (prm->getName (64));
     bool haveAll = true;
-    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard" })
+    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -154,13 +154,16 @@ int main (int argc, char* argv[])
         findParam (*plugin, "Reveal")->setValueNotifyingHost (0.15f);
         findParam (*plugin, "Delta")->setValueNotifyingHost (1.0f);
         findParam (*plugin, "Guard")->setValueNotifyingHost (0.6f);
+        findParam (*plugin, "Stereo Mode")->setValueNotifyingHost (1.0f);
+        findParam (*plugin, "EQ Target")->setValueNotifyingHost (1.0f);
+        findParam (*plugin, "Heat Target")->setValueNotifyingHost (0.5f);
         juce::MemoryBlock state;
         plugin->getStateInformation (state);
 
         auto second = format.createInstanceFromDescription (desc, 48000.0, 512, error);
         second->setStateInformation (state.getData(), (int) state.getSize());
         float worst = 0.0f;
-        for (auto n : { "Heat", "Reveal", "Delta", "Guard" })
+        for (auto n : { "Heat", "Reveal", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target" })
             worst = std::max (worst, std::abs (findParam (*second, n)->getValue() - findParam (*plugin, n)->getValue()));
         check (worst < 1.0e-4f, "state restores in a second instance", "state " + juce::String ((int) state.getSize()) + " bytes, max diff " + juce::String (worst, 6));
         findParam (*plugin, "Delta")->setValueNotifyingHost (0.0f);
@@ -175,6 +178,25 @@ int main (int argc, char* argv[])
                "text at 60 %: " + (guard != nullptr ? guard->getText (0.6f, 16) : juce::String ("missing")) + ", peak " + juce::String (testsig::toDb (peakOf (out)), 1) + " dB");
         if (guard != nullptr)
             guard->setValueNotifyingHost (0.0f);
+
+        auto* mode = findParam (*plugin, "Stereo Mode");
+        auto* eq = findParam (*plugin, "EQ Target");
+        auto* heat = findParam (*plugin, "Heat Target");
+        int routingBlock = 0;
+        const bool routingOk = mode != nullptr && eq != nullptr && heat != nullptr
+            && mode->isAutomatable() && eq->isAutomatable() && heat->isAutomatable()
+            && run (*plugin, music, out, [&]
+            {
+                mode->setValueNotifyingHost ((float) ((routingBlock / 8) % 2));
+                eq->setValueNotifyingHost (0.5f * (float) ((routingBlock / 11) % 3));
+                heat->setValueNotifyingHost (0.5f * (float) ((routingBlock++ / 13) % 3));
+                return 257;
+            });
+        check (routingOk && peakOf (out) < 4.0, "M/S routing automated through VST3",
+               "finite output, peak " + juce::String (testsig::toDb (peakOf (out)), 1) + " dB");
+        if (mode != nullptr) mode->setValueNotifyingHost (0.0f);
+        if (eq != nullptr) eq->setValueNotifyingHost (0.0f);
+        if (heat != nullptr) heat->setValueNotifyingHost (0.0f);
     }
 
     // 6a. Latency mode through the host: switch to Precise, the host sees the new latency and the

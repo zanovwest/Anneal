@@ -40,6 +40,7 @@ in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve ─┐
 | HEAT | Heat | Color (even↔odd), Focus (body↔air) |
 | OUTPUT | — | Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Match (loudness), Δ (delta listen), Bypass |
+| Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
 | On the display | Range low / high handles (limits where Anneal acts) | |
 
 ## Visual direction (v3, 0.2.0): temper accents on cool graphite
@@ -95,3 +96,7 @@ occupies, which is exactly the grid the model works on. On it:
 Everything drawn comes from the processor's real per-frame data (published through
 a lock-free triple buffer). The harmonic bars next to Color are model-derived (the synth's
 own formula at −18 dBFS) and say so.
+
+In Mid/Side mode the centre and sides are analysed independently. The EQ curve is solid for Mid
+and dashed for Side, with the same straw-above / blue-below colour convention. Hover reports
+both gains. Input/output spectra and the heat lane keep showing the combined stereo energy.

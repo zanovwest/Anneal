@@ -104,6 +104,9 @@ private:
     std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pLatency = nullptr;
     std::atomic<float>* pGuard = nullptr;
+    std::atomic<float>* pStereoMode = nullptr;
+    std::atomic<float>* pEqTarget = nullptr;
+    std::atomic<float>* pHeatTarget = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnnealAudioProcessor)
 };

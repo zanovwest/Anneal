@@ -25,6 +25,9 @@ namespace anneal
         float color        = 0.35f;
         float focus        = 0.0f;
         float guard        = 0.0f;   // transient guard 0..1 (0 = off)
+        float midSide      = 0.0f;   // 0 = linked stereo, 1 = independent Mid/Side
+        float eqMid        = 1.0f, eqSide = 1.0f;
+        float heatMid      = 1.0f, heatSide = 1.0f;
     };
 
     // STFT host for the perceptual model and the harmonic synth.
@@ -54,7 +57,7 @@ namespace anneal
         int getHopSize() const noexcept        { return hop; }
         int getNumChannels() const noexcept    { return channels; }
         double getSampleRate() const noexcept  { return sampleRate; }
-        int getLastPeakCount() const noexcept  { return synth.getLastPeakCount(); }
+        int getLastPeakCount() const noexcept  { return lastPeakCount; }
         float getLastHeatGuard() const noexcept { return lastHeatGuard; }   // 1 = harmonics written in full
 
         const PerceptualModel& getModel() const noexcept { return model; }
@@ -65,6 +68,7 @@ namespace anneal
     private:
         void processFrame() noexcept;
         void smoothParameters() noexcept;
+        void processMidSide (const ModelSettings&, float blend) noexcept;
 
         double sampleRate = 48000.0;
         int fftSize = 4096, hop = 512, numBins = 2049, channels = 2, pos = 0;
@@ -83,6 +87,13 @@ namespace anneal
 
         PerceptualModel model;
         HarmonicSynth synth;
+        // Allocated up front; M/S uses the existing L/R FFTs and decodes before overlap-add.
+        PerceptualModel msModel[2];
+        HarmonicSynth msSynth[2];
+        std::vector<float> msSpec[2], msHarm[2], msPower[2], msHarmPower[2];
+        float msGuard[2] { 1.0f, 1.0f };
+        int lastPeakCount = 0;
+        bool msActive = false;
 
         EngineParams target, current;
         bool paramsPrimed = false;

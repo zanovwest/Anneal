@@ -4,6 +4,23 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 0.2.4 — 2026-10-13
+
+New
+- **Mid/Side mode**: choose Stereo or Mid/Side in the header. In Mid/Side, the centre and sides
+  have independent perceptual models. Route Reveal, Smooth and Tilt with **EQ: Both / Mid / Side**
+  and route saturation separately with **Heat: Both / Mid / Side**. For example, put Heat on Mid
+  and Reveal on Side. The display shows Mid as a solid curve and Side as a dashed curve.
+- Routing changes fade over 40 ms without changing latency. Mono buses keep linked mono processing.
+  Older sessions reopen in linked Stereo, and factory tone presets preserve routing choices.
+
+Tests: 57/57 acceptance checks, including 12 new Mid/Side checks; 14/14 built-VST3 host checks,
+including routing automation and saved routing state. 25/25 isolated installer checks. The real
+editor rendered in Stereo and Mid/Side at 100/150/200 % and minimum/maximum sizes.
+Measured at 48 kHz on this machine: Mid/Side Low 3.71 %, Normal 2.88 %, Precise 4.59 % of one core
+(Low/Precise at 64 samples, Normal at 512). Stereo remains 1.99 % Low / 1.78 % Normal / 2.98 %
+Precise at 512 samples. Independent analysis costs extra CPU; timings vary with host and machine.
+
 ## 0.2.3 — 2026-10-13
 
 Fixes

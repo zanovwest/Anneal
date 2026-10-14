@@ -148,12 +148,14 @@ void PerceptionScreen::timerCallback()
     {
         z0 = f->z0;
         dz = f->dz;
+        midSide = f->midSide;
         for (int b = 0; b < nb; ++b)
         {
             inDb[(size_t) b]   = juce::jmax (f->inDb[b], inDb[(size_t) b] - levelFallPerTick);
             outDb[(size_t) b]  = juce::jmax (f->outDb[b], outDb[(size_t) b] - levelFallPerTick);
             heatDb[(size_t) b] = juce::jmax (f->heatDb[b], heatDb[(size_t) b] - heatFallPerTick);
             gainDb[(size_t) b] = f->gainDb[b];
+            sideGainDb[(size_t) b] = f->sideGainDb[b];
         }
         activity.liftDb = juce::jmax (f->liftDb, activity.liftDb - activityFallPerTick);
         activity.cutDb = juce::jmin (f->cutDb, activity.cutDb + activityFallPerTick);
@@ -173,6 +175,7 @@ void PerceptionScreen::timerCallback()
             outDb[(size_t) b]  = juce::jmax (floorDb, outDb[(size_t) b] - levelFallPerTick);
             heatDb[(size_t) b] = juce::jmax (floorDb, heatDb[(size_t) b] - heatFallPerTick);
             gainDb[(size_t) b] *= 0.85f;
+            sideGainDb[(size_t) b] *= 0.85f;
         }
         if (idleTicks > refreshHz / 2)
             activity = {};
@@ -196,6 +199,8 @@ void PerceptionScreen::refreshNow()
         std::copy (f->outDb, f->outDb + nb, outDb.begin());
         std::copy (f->heatDb, f->heatDb + nb, heatDb.begin());
         std::copy (f->gainDb, f->gainDb + nb, gainDb.begin());
+        std::copy (f->sideGainDb, f->sideGainDb + nb, sideGainDb.begin());
+        midSide = f->midSide;
         activity = { f->liftDb, f->cutDb, f->heatRelDb, true };
         haveFrame = true;
         updateViews();
@@ -306,6 +311,33 @@ void PerceptionScreen::paintEq (juce::Graphics& g)
         g.setFont (font (14.0f));
         g.drawText ("Play some audio to see what Anneal does", lane.withY (yZero - 40.0f).withHeight (24.0f),
                     juce::Justification::centred, false);
+        return;
+    }
+
+    if (midSide)
+    {
+        // Mid is solid; Side is dashed. Both keep the lift/cut colour convention.
+        for (int c = 0; c < 2; ++c)
+        {
+            const auto& gains = c == 0 ? gainDb : sideGainDb;
+            juce::Path path;
+            for (int b = 0; b < nb; ++b)
+            {
+                const float x = xForCam (z0 + b * dz), y = eqY (gains[(size_t) b]);
+                if (b == 0) path.startNewSubPath (x, y); else path.lineTo (x, y);
+            }
+            const juce::PathStrokeType stroke (c == 0 ? 2.4f : 1.8f);
+            juce::Path dashed;
+            const float lengths[] = { 5.0f, 3.0f };
+            if (c == 1) stroke.createDashedStroke (dashed, path, lengths, 2);
+            for (int sign = 0; sign < 2; ++sign)
+            {
+                juce::Graphics::ScopedSaveState save (g);
+                g.reduceClipRegion ((sign == 0 ? lane.withBottom (yZero) : lane.withTop (yZero)).toNearestInt());
+                g.setColour (sign == 0 ? colour::straw : colour::blue);
+                if (c == 0) g.strokePath (path, stroke); else g.fillPath (dashed);
+            }
+        }
         return;
     }
 
@@ -443,7 +475,8 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
         g.setColour (colour::faint);
         g.drawText (sub, juce::Rectangle<float> (at.x + textWidth (f, t) + 8.0f, at.y, 260.0f, 14.0f), juce::Justification::centredLeft, false);
     };
-    tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ", colour::muted, "live gain over the spectrum");
+    tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ", colour::muted,
+         midSide ? "Mid solid / Side dashed" : "live gain over the spectrum");
     tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), "harmonics written, vs output");
 }
 
@@ -468,7 +501,8 @@ void PerceptionScreen::paintReadout (juce::Graphics& g)
 
     const float heatAbs = valueAtCam (heatView.data(), cam);
     const auto text = formatHz (hz)
-                    + "    EQ " + signedDb (eq, 1) + " dB"
+                    + (midSide ? "    M " + signedDb (eq, 1) + " / S " + signedDb (valueAtCam (sideGainDb.data(), cam), 1) + " dB"
+                               : "    EQ " + signedDb (eq, 1) + " dB")
                     + "    in " + signedDb (valueAtCam (inView.data(), cam), 1) + " dB"
                     + "    heat " + (heatAbs < heatAudibleDb ? juce::String ("none")
                                                              : signedDb (heatAbs - valueAtCam (outView.data(), cam), 0) + " dB");

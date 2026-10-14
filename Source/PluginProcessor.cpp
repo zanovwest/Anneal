@@ -26,6 +26,9 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pBypass   = apvts.getRawParameterValue (ids::bypass);
     pLatency  = apvts.getRawParameterValue (ids::latency);
     pGuard    = apvts.getRawParameterValue (ids::guard);
+    pStereoMode = apvts.getRawParameterValue (ids::stereoMode);
+    pEqTarget   = apvts.getRawParameterValue (ids::eqTarget);
+    pHeatTarget = apvts.getRawParameterValue (ids::heatTarget);
 
     // A usable default before the host calls prepareToPlay (e.g. state loading, editor opening).
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
@@ -159,6 +162,12 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.color        = pColor->load() * 0.01f;
     p.focus        = pFocus->load() * 0.01f;
     p.guard        = pGuard->load() * 0.01f;
+    p.midSide      = pStereoMode->load() > 0.5f ? 1.0f : 0.0f;
+    const int eq = juce::roundToInt (pEqTarget->load()), ht = juce::roundToInt (pHeatTarget->load());
+    p.eqMid = eq == 2 ? 0.0f : 1.0f;
+    p.eqSide = eq == 1 ? 0.0f : 1.0f;
+    p.heatMid = ht == 2 ? 0.0f : 1.0f;
+    p.heatSide = ht == 1 ? 0.0f : 1.0f;
     getEngine().setParameters (p);
 }
 
@@ -309,6 +318,9 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             // Check before replaceState: the APVTS fills missing parameters into the same tree.
             const bool hasLatency = tree.getChildWithProperty ("id", anneal::ids::latency).isValid();
             const bool hasGuard = tree.getChildWithProperty ("id", anneal::ids::guard).isValid();
+            const bool hasStereo = tree.getChildWithProperty ("id", anneal::ids::stereoMode).isValid();
+            const bool hasEqTarget = tree.getChildWithProperty ("id", anneal::ids::eqTarget).isValid();
+            const bool hasHeatTarget = tree.getChildWithProperty ("id", anneal::ids::heatTarget).isValid();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
@@ -325,6 +337,15 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasGuard)
                 if (auto* gp = apvts.getParameter (anneal::ids::guard))
                     gp->setValueNotifyingHost (gp->convertTo0to1 (0.0f));
+
+            // Old sessions always reopen as linked Stereo, even in an instance previously set
+            // to M/S. The routing choices are independent of factory tone presets.
+            for (auto [id, present] : { std::pair { anneal::ids::stereoMode, hasStereo },
+                                       std::pair { anneal::ids::eqTarget, hasEqTarget },
+                                       std::pair { anneal::ids::heatTarget, hasHeatTarget } })
+                if (! present)
+                    if (auto* rp = apvts.getParameter (id))
+                        rp->setValueNotifyingHost (0.0f);
 
             if (juce::MessageManager::existsAndIsCurrentThread())
                 applyLatencyModeIfChanged();

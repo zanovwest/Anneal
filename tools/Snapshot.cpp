@@ -123,6 +123,11 @@ int main (int argc, char* argv[])
           }, -1.0f, true },
         { "empty", [] (AnnealAudioProcessor&) {}, -1.0f, false },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
+        { "midside", [] (AnnealAudioProcessor& p)
+          {
+              set (p, ids::stereoMode, 1); set (p, ids::eqTarget, 2); set (p, ids::heatTarget, 1);
+              set (p, ids::reveal, 75); set (p, ids::smooth, 65); set (p, ids::heat, 70);
+          }, 3150.0f, true },
     };
 
     int failures = 0;
@@ -156,7 +161,7 @@ int main (int argc, char* argv[])
 
         const juce::String base = juce::String ("anneal_") + s.name;
         failures += shoot (*editor, outDir.getChildFile (base + "_100.png")) ? 0 : 1;
-        if (juce::String (s.name) == "default")
+        if (juce::String (s.name) == "default" || juce::String (s.name) == "midside")
         {
             failures += shoot (*editor, outDir.getChildFile (base + "_150.png"), 1.5f) ? 0 : 1;
             failures += shoot (*editor, outDir.getChildFile (base + "_200.png"), 2.0f) ? 0 : 1;

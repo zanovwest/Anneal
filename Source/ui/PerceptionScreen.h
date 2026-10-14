@@ -63,7 +63,8 @@ namespace anneal
         TripleBuffer<DisplayFrame>& source;
 
         static constexpr int nb = DisplayFrame::numBands;
-        std::array<float, nb> inDb {}, outDb {}, gainDb {}, heatDb {};
+        std::array<float, nb> inDb {}, outDb {}, gainDb {}, heatDb {}, sideGainDb {};
+        bool midSide = false;
         // What is drawn: the levels above, smoothed across bands (about +-0.25 Cam) so tonal
         // content reads as a flowing line rather than one-ERB-wide plateaus. Display only.
         std::array<float, nb> inView {}, outView {}, heatView {};

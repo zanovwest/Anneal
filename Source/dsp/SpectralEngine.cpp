@@ -50,6 +50,12 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
         harmAcc[c].assign ((size_t) fftSize, 0.0f);
         harmFifo[c].assign ((size_t) hop, 0.0f);
         alignRing[c].assign ((size_t) fftSize, 0.0f);
+        msSpec[c].assign ((size_t) numBins * 2, 0.0f);
+        msHarm[c].assign ((size_t) numBins * 2, 0.0f);
+        msPower[c].assign ((size_t) numBins, 0.0f);
+        msHarmPower[c].assign ((size_t) numBins, 0.0f);
+        msModel[c].prepare (sampleRate, fftSize);
+        msSynth[c].prepare (fftSize);
     }
     power.assign ((size_t) numBins, 0.0f);
     outPower.assign ((size_t) numBins, 0.0f);
@@ -74,6 +80,9 @@ void SpectralEngine::reset()
     gateGain = 1.0f;
     paramsPrimed = false;
     model.reset();
+    for (auto& m : msModel) m.reset();
+    msActive = false;
+    lastPeakCount = 0;
 }
 
 void SpectralEngine::process (float* const* io, int numChannels, int numSamples) noexcept
@@ -149,6 +158,11 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.color, target.color);
     lin (current.focus, target.focus);
     lin (current.guard, target.guard);
+    lin (current.midSide, target.midSide);
+    lin (current.eqMid, target.eqMid);
+    lin (current.eqSide, target.eqSide);
+    lin (current.heatMid, target.heatMid);
+    lin (current.heatSide, target.heatSide);
     lg  (current.rangeLoHz, target.rangeLoHz);
     lg  (current.rangeHiHz, target.rangeHiHz);
     current.responseMs = target.responseMs;
@@ -157,6 +171,14 @@ void SpectralEngine::smoothParameters() noexcept
 void SpectralEngine::processFrame() noexcept
 {
     smoothParameters();
+
+    // Crossfade spectra rather than changing the basis of buffered time-domain audio.
+    // The overlap-add tails and the dry path always remain L/R, including during automation.
+    const float msBlend = channels == 2 ? (current.midSide < 1.0e-4f ? 0.0f
+                                         : current.midSide > 0.9999f ? 1.0f : current.midSide) : 0.0f;
+    if (msBlend == 0.0f && msActive)
+        for (auto& m : msModel) m.reset();
+    msActive = msBlend > 0.0f;
 
     const int half = fftSize / 2, mask = fftSize - 1;
 
@@ -177,6 +199,29 @@ void SpectralEngine::processFrame() noexcept
         }
         std::fill (s + fftSize, s + 2 * fftSize, 0.0f);
         fft->performRealOnlyForwardTransform (s, true);
+    }
+
+    if (msActive)
+    {
+        // M = (L+R)/2, S = (L-R)/2: centred audio keeps its familiar drive calibration.
+        for (int k = 0; k < 2 * numBins; ++k)
+        {
+            msSpec[0][(size_t) k] = 0.5f * (spec[0][(size_t) k] + spec[1][(size_t) k]);
+            msSpec[1][(size_t) k] = 0.5f * (spec[0][(size_t) k] - spec[1][(size_t) k]);
+        }
+        double early[2] {}, late[2] {};
+        for (int n = 0; n < fftSize; ++n)
+        {
+            const float v[2] = { 0.5f * (inFifo[0][(size_t) n] + inFifo[1][(size_t) n]),
+                                 0.5f * (inFifo[0][(size_t) n] - inFifo[1][(size_t) n]) };
+            for (int c = 0; c < 2; ++c)
+            {
+                const double w = v[c] * window[(size_t) n];
+                (n < half ? early[c] : late[c]) += w * w;
+            }
+        }
+        for (int c = 0; c < 2; ++c)
+            msGuard[c] = (float) std::clamp (1.25 * (early[c] + 1.0e-12) / (late[c] + 1.0e-12), 0.0, 1.0);
     }
 
     // Transient guard: harmonics are synthesised across the whole frame, so a frame whose
@@ -214,9 +259,10 @@ void SpectralEngine::processFrame() noexcept
     hs.heat = current.heat;
     hs.color = current.color;
     synth.process (specPtrs, channels, power.data(), model.getBinNeed(), hs, harmPtrs, harmPower.data());
+    lastPeakCount = synth.getLastPeakCount();
 
     // Main path gets the auto-EQ; harmonics go to their own stream (gated in process()).
-    const bool harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && synth.getLastPeakCount() > 0;
+    bool harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && synth.getLastPeakCount() > 0;
     const float* g = model.getBinGain();
     std::fill (outPower.begin(), outPower.end(), 0.0f);
     for (int c = 0; c < channels; ++c)
@@ -239,6 +285,12 @@ void SpectralEngine::processFrame() noexcept
         for (auto& hp : harmPower)
             hp *= heatGuard * heatGuard;
 
+    if (msActive)
+    {
+        processMidSide (ms, msBlend);
+        harmonicsWritten = harmonicsWritten || lastPeakCount > 0;
+    }
+
     {
         DisplayFrame& f = displayOut->beginWrite();
         f.z0 = model.getZ0();
@@ -248,6 +300,12 @@ void SpectralEngine::processFrame() noexcept
         f.counter = ++frameCounter;
         f.liftDb = model.getMaxLiftDb();
         f.cutDb = model.getMaxCutDb();
+        f.midSide = msActive;
+        if (msActive)
+        {
+            f.liftDb = std::max (msModel[0].getMaxLiftDb(), msModel[1].getMaxLiftDb());
+            f.cutDb = std::min (msModel[0].getMaxCutDb(), msModel[1].getMaxCutDb());
+        }
         {
             double h = 0.0, o = 0.0;
             for (int k = 0; k < numBins; ++k)
@@ -261,6 +319,12 @@ void SpectralEngine::processFrame() noexcept
         model.bandLevelsDb (outPower.data(), f.outDb);
         model.bandLevelsDb (harmPower.data(), f.heatDb);
         std::copy (model.getBandGainDb(), model.getBandGainDb() + DisplayFrame::numBands, f.gainDb);
+        if (msActive)
+            for (int b = 0; b < DisplayFrame::numBands; ++b)
+            {
+                f.gainDb[b] = msModel[0].getBandGainDb()[b];
+                f.sideGainDb[b] = msModel[1].getBandGainDb()[b];
+            }
         displayOut->endWrite();
     }
 
@@ -297,6 +361,59 @@ void SpectralEngine::processFrame() noexcept
 
         float* in = inFifo[c].data();
         std::memmove (in, in + hop, sizeof (float) * (size_t) (fftSize - hop));
+    }
+}
+
+void SpectralEngine::processMidSide (const ModelSettings& settings, float blend) noexcept
+{
+    const float scale = 4.0f / (float) fftSize;
+    for (int c = 0; c < 2; ++c)
+    {
+        for (int k = 0; k < numBins; ++k)
+        {
+            const float re = msSpec[c][(size_t) 2 * k], im = msSpec[c][(size_t) 2 * k + 1];
+            msPower[c][(size_t) k] = (re * re + im * im) * scale * scale;
+        }
+        auto ms = settings;
+        const float eqAmount = c == 0 ? current.eqMid : current.eqSide;
+        ms.reveal *= eqAmount;
+        ms.smooth *= eqAmount;
+        ms.tiltDbPerOct *= eqAmount;
+        msModel[c].analyse (msPower[c].data(), ms, framesPerSecond);
+
+        const float* in[] = { msSpec[c].data() };
+        float* out[] = { msHarm[c].data() };
+        HeatSettings hs;
+        hs.heat = current.heat * (c == 0 ? current.heatMid : current.heatSide);
+        hs.color = current.color;
+        msSynth[c].process (in, 1, msPower[c].data(), msModel[c].getBinNeed(), hs, out, msHarmPower[c].data());
+        const auto* gain = msModel[c].getBinGain();
+        for (int k = 0; k < numBins; ++k)
+            for (int ri = 0; ri < 2; ++ri)
+            {
+                msSpec[c][(size_t) (2 * k + ri)] *= gain[k];
+                msHarm[c][(size_t) (2 * k + ri)] *= msGuard[c];
+            }
+    }
+    lastPeakCount = msSynth[0].getLastPeakCount() + msSynth[1].getLastPeakCount();
+    for (int k = 0; k < numBins; ++k)
+    {
+        float hEnergy = 0.0f, outEnergy = 0.0f;
+        for (int c = 0; c < 2; ++c)
+            for (int ri = 0; ri < 2; ++ri)
+            {
+                const auto i = (size_t) (2 * k + ri);
+                const float sign = c == 0 ? 1.0f : -1.0f;
+                const float msWet = msSpec[0][i] + sign * msSpec[1][i];
+                const float msHeat = msHarm[0][i] + sign * msHarm[1][i];
+                spec[c][i] += blend * (msWet - spec[c][i]);
+                harmSpec[c][i] += blend * (msHeat - harmSpec[c][i]);
+                hEnergy += harmSpec[c][i] * harmSpec[c][i];
+                const float y = spec[c][i] + harmSpec[c][i];
+                outEnergy += y * y;
+            }
+        harmPower[(size_t) k] = hEnergy * scale * scale * 0.5f;
+        outPower[(size_t) k] = outEnergy * scale * scale * 0.5f;
     }
 }
 }

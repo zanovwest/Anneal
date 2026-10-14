@@ -49,11 +49,17 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       match    (p.apvts, ids::match,  "MATCH",  colour::straw,  "Loudness match: slow K-weighted gain so you judge tone, not level (shows the gain)"),
       delta    (p.apvts, ids::delta,  "DELTA",  colour::bronze, "Delta: hear only what Anneal adds and removes"),
       bypass   (p.apvts, ids::bypass, "BYPASS", colour::text,   "Bypass (latency-compensated, click-free)"),
-      latency  (p.apvts, [&p] (int m) { return p.getLatencyMsForMode (m); }, [&p] { return p.getLatencyMs(); })
+      latency  (p.apvts, [&p] (int m) { return p.getLatencyMsForMode (m); }, [&p] { return p.getLatencyMs(); }),
+      stereoMode (p.apvts, ids::stereoMode, "", { "Stereo", "Mid/Side" },
+                  "Stereo links the EQ curve across left and right. Mid/Side analyses the centre and sides independently. Mono uses linked processing."),
+      eqTarget (p.apvts, ids::eqTarget, "EQ: ", { "Both", "Mid", "Side" },
+                "In Mid/Side mode, route Reveal, Smooth and Tilt to both components, the centre (Mid), or the sides (Side)."),
+      heatTarget (p.apvts, ids::heatTarget, "Heat: ", { "Both", "Mid", "Side" },
+                  "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side).")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
-             &mix, &output, &match, &delta, &bypass, &meter, &latency })
+             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget })
         addAndMakeVisible (c);
 
     presets.getCount = [&p] { return p.getNumPrograms(); };
@@ -68,6 +74,7 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
     presets.refresh();
     harmonics.refresh();
     updateActivity();
+    tick (0.0f);
 }
 
 void AnnealEditorContent::resized()
@@ -78,6 +85,9 @@ void AnnealEditorContent::resized()
     match.setBounds (712, 11, 100, 26);
     delta.setBounds (820, 11, 72, 26);
     bypass.setBounds (900, 11, 78, 26);
+    stereoMode.setBounds (626, 11, 80, 26);
+    eqTarget.setBounds (360, 401, 114, 26);
+    heatTarget.setBounds (700, 397, 118, 26);
 
     screen.setBounds (12, 50, 976, 346);
 
@@ -168,6 +178,12 @@ void AnnealEditorContent::tick (float dt)
     presets.refresh();
     harmonics.refresh();
     updateActivity();
+
+    const bool stereo = processor.getTotalNumInputChannels() > 1;
+    stereoMode.setEnabled (stereo);
+    const bool ms = stereo && processor.apvts.getRawParameterValue (ids::stereoMode)->load() > 0.5f;
+    eqTarget.setEnabled (ms);
+    heatTarget.setEnabled (ms);
 
     // The match gain lives in its button: you see what the comparison is compensating.
     const bool on = processor.apvts.getRawParameterValue (ids::match)->load() > 0.5f;

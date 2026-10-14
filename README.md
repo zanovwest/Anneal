@@ -52,6 +52,8 @@ Unattended update: `Anneal-<version>-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRES
 | | Delta | Listen to only what Anneal adds or removes. |
 | Display | Range handles | Drag the dashed handles to limit where Anneal acts (both EQ and heat). Double-click resets. If automation puts Range Low above Range High, Anneal works from Low to 1.5 × Low, and the display shows exactly that. |
 | Header | Latency | Low 21 ms (default), Normal 43 ms, Precise 85 ms (finest bass detail). Projects from before 0.2.0 open in Precise. |
+| Header | Stereo / Mid-Side | Stereo links the EQ across left and right. Mid/Side analyses the centre and sides independently; the display draws Mid solid and Side dashed. Routing changes fade without changing latency. Mono uses linked mono. Older sessions keep Stereo. |
+| Auto EQ / Heat | EQ target / Heat target | In Mid/Side mode choose Both, Mid (centre) or Side independently for EQ (Reveal, Smooth, Tilt) and Heat. For centre warmth with wider detail, select Heat: Mid and EQ: Side. These choices are left alone by factory presets. |
 | Header | Preset | Factory presets: click the name for the list, or step with the arrows. `*` = changed since loading it. Also in the DAW's preset menu. Guard, Match, Delta and Bypass are left alone. |
 | Header | Bypass | Latency-compensated, click-free. |
 
@@ -134,12 +136,13 @@ projects keep their settings.
 
 ## Status
 
-- **Built (0.2.3):** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
+- **Built (0.2.4):** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
+- **Mid/Side (0.2.4):** independent Mid and Side EQ/Heat with separate routing. Acceptance checks cover neutral accuracy, mono fallback, isolation, independent models, automation and old-session defaults.
 - **Tested headless (`AnnealTests`, 40/40 pass):** STFT identity in every latency mode (44.1/48/96 kHz, blocks 1–4096 and random), latency per mode and mode switching, old projects load as Precise, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects), transient guard (attacks pass Smooth in Low and Precise, sustained ring cut unchanged, no harmonics over attacks, old projects load with Guard off), display range = engine range.
-- **CPU (this machine):** at 48 kHz stereo, Low 2.4 %, Normal 2.1 %, Precise 3.4 % of one core. Measured at high priority like a DAW audio thread, the slowest 0.1 % of blocks at 64 samples take 10 % (Low) / 28 % (Precise) of the deadline.
+- **CPU (this machine, 0.2.4):** at 48 kHz / 512 samples, linked Stereo Low 1.99 %, Normal 1.78 %, Precise 2.98 % of one core. Mid/Side Low 3.71 %, Normal 2.88 %, Precise 4.59 % (Low/Precise at 64 samples, Normal at 512). Independent M/S analysis uses more CPU; the slowest 0.1 % of 64-sample blocks take 16 % (Low M/S) / 57 % (Precise M/S) of the deadline. Timings vary with the host and machine.
 - **Icon (0.2.1):** `Source/ui/Icon.h`, rendered with `AnnealSnapshot --icons resources/icon`, packed by `tools/make_ico.py` into `resources/icon/anneal.ico` (setup, Apps entry); JUCE builds the app and VST3-folder icons from `icon_512.png` / `icon_32.png`.
 - **UI (v3, 0.2.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio.
-- **Host-checked (`AnnealHostCheck`, 13/13 pass)** including latency switching through the host, Guard automated while playing, factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
+- **Host-checked (`AnnealHostCheck`, 14/14 pass on 0.2.4)** including Mid/Side routing automation and saved routing state, latency switching through the host, Guard automated while playing, factory presets as host programs and an edited preset surviving save/load. The installed copy was checked separately before this update.
 - **Setup-tested (`TestSetup.ps1`, 25/25 pass):** sandbox install, custom VST3 destination metadata, update and uninstall while another process has the DLL loaded, and later cleanup after release.
 - **Installed** for all users with `Anneal-0.2.0-Setup.exe` on 2026-10-13: VST3 in `C:\Program Files\Common Files\VST3` (FL Studio's default folder), standalone in `C:\Program Files\Anneal`, listed under Settings → Apps. Host-checked 12/12 there.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Low latency (21 ms) suits tracking; Precise (85 ms) is for mixing/mastering.

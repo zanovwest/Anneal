@@ -15,7 +15,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side, 
 Saturation flavours, Sidechain unmask, then the rest. (The icon was done by hand that day, outside
 the hourly runs.)
 
-1. **Mid/Side mode**: Stereo (linked) / Mid-Side. Heat on Mid only and Reveal on Side, or both.
 2. **Listen modes**: solo what Reveal adds, what Smooth removes, or only the harmonics.
 3. **Saturation flavours**: Tape (soft, mostly even, gentle HF roll-off), Tube (2nd-heavy),
    Transformer (odd, low end), Exciter (air only). A flavour menu next to Color.
@@ -41,6 +40,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 0.2.4 (2026-10-13): **Mid/Side mode.** Independent centre/sides analysis, separate EQ and
+  Heat routing (Both / Mid / Side), solid Mid and dashed Side curves. Routing automation keeps
+  latency, old projects keep linked Stereo, and mono falls back to linked mono. Tested with
+  57 acceptance checks, 14 built-VST3 host checks and 25 isolated installer checks.
 - 0.2.3 (2026-10-13): **Uninstall while a DAW has Anneal loaded.** Move the held DLL aside
   using the recorded install destination; a later install cleans it after release. Installer
   regression covers the held-DLL uninstall and custom folder (25/25 sandbox checks).

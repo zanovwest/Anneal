@@ -614,7 +614,7 @@ void testState()
     const std::pair<const char*, float> values[] = { { ids::reveal, 73.0f }, { ids::smooth, 12.5f }, { ids::tilt, -0.8f },
         { ids::response, 300.0f }, { ids::rangeLo, 85.0f }, { ids::rangeHi, 9000.0f }, { ids::heat, 66.0f }, { ids::color, 80.0f },
         { ids::focus, -45.0f }, { ids::mix, 70.0f }, { ids::output, -3.5f }, { ids::match, 1.0f }, { ids::delta, 1.0f },
-        { ids::guard, 55.0f } };
+        { ids::guard, 55.0f }, { ids::stereoMode, 1.0f }, { ids::eqTarget, 2.0f }, { ids::heatTarget, 1.0f } };
     for (auto [id, v] : values)
         a.set (id, v);
     juce::MemoryBlock blob;
@@ -1043,20 +1043,161 @@ void testRangeHandleDrag()
     check (shownAs (1300.0f, 18000.0f), "ordered range: low drag leaves high unchanged", "high stays at 18000 Hz");
 }
 
+void testMidSide()
+{
+    section ("Mid/Side routing, independent analysis and legacy sessions");
+    const double fs = 48000.0;
+    const int n = (int) (3 * fs);
+    auto input = testsig::silence (2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        const float mid = 0.12f * (float) std::sin (2.0 * testsig::pi * 500.0 * i / fs);
+        const float side = 0.09f * (float) std::sin (2.0 * testsig::pi * 3000.0 * i / fs);
+        input[0][(size_t) i] = mid + side;
+        input[1][(size_t) i] = mid - side;
+    }
+    auto decode = [] (const Channels& lr, int c)
+    {
+        std::vector<float> result (lr[0].size());
+        for (size_t i = 0; i < result.size(); ++i)
+            result[i] = 0.5f * (lr[0][i] + (c == 0 ? lr[1][i] : -lr[1][i]));
+        return result;
+    };
+
+    // The neutral transform must null even with impulses/noise, at every latency and rate.
+    for (int mode = 0; mode < anneal::SpectralEngine::numModes; ++mode)
+    {
+        double worst = 0.0;
+        for (double rate : { 44100.0, 48000.0, 96000.0 })
+        {
+            anneal::SpectralEngine e;
+            e.prepare (rate, 2, mode);
+            auto p = neutral(); p.midSide = 1;
+            e.setParameters (p);
+            const auto x = testsig::musicLike (rate, 0.8);
+            const auto y = runEngine (e, x, randomBlocks (1, 1000, 8));
+            worst = std::max (worst, delayedError (y, x, e.getLatencySamples()));
+        }
+        check (worst < 1.0e-6, "neutral M/S nulls at 44.1/48/96k", "mode " + juce::String (mode) + ", max error " + juce::String (worst, 9));
+    }
+
+    // Targeting EQ must leave the other component untouched, including its transient audio.
+    for (int target = 1; target <= 2; ++target)
+    {
+        Rig r; r.setNeutral(); r.set (ids::stereoMode, 1); r.set (ids::eqTarget, (float) target);
+        r.set (ids::tilt, 1); r.prepare (fs, 512);
+        const auto y = r.run (input, fixedBlocks (512));
+        const auto mid = decode (y, 0), side = decode (y, 1);
+        const int from = n - (int) fs;
+        const double midDb = toDb (testsig::toneAmplitude (mid.data() + from, (int) fs, 500, fs) / 0.12);
+        const double sideDb = toDb (testsig::toneAmplitude (side.data() + from, (int) fs, 3000, fs) / 0.09);
+        const bool ok = target == 1 ? midDb < -0.9 && midDb > -1.1 && std::abs (sideDb) < 0.05
+                                   : std::abs (midDb) < 0.05 && sideDb > 1.4 && sideDb < 1.8;
+        check (ok, target == 1 ? "EQ Mid leaves Side untouched" : "EQ Side applies Tilt only to Side",
+               "Mid " + db (midDb, 3) + ", Side " + db (sideDb, 3));
+    }
+
+    // Independent centre/sides models must agree with two separately analysed mono streams.
+    {
+        const auto x = testsig::musicLike (fs, 2.0, 11);
+        auto mid = decode (x, 0), side = decode (x, 1);
+        anneal::SpectralEngine stereo, mono[2];
+        stereo.prepare (fs, 2); auto p = neutral(); p.reveal = 0.8f; p.smooth = 0.7f; p.midSide = 1;
+        stereo.setParameters (p);
+        const auto actual = runEngine (stereo, x, fixedBlocks (256));
+        p.midSide = 0;
+        Channels expected = x;
+        for (int c = 0; c < 2; ++c)
+        {
+            mono[c].prepare (fs, 1); mono[c].setParameters (p);
+            const auto result = runEngine (mono[c], Channels { c == 0 ? mid : side }, fixedBlocks (256));
+            for (size_t i = 0; i < result[0].size(); ++i)
+                if (c == 0) expected[0][i] = expected[1][i] = result[0][i];
+                else { expected[0][i] += result[0][i]; expected[1][i] -= result[0][i]; }
+        }
+        double err = 0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < actual[c].size(); ++i) err = std::max (err, (double) std::abs (actual[c][i] - expected[c][i]));
+        check (err < 1.0e-6, "M/S EQ equals independent mono models", "max error " + juce::String (err, 9));
+    }
+
+    for (int target = 1; target <= 2; ++target)
+    {
+        Rig r; r.setNeutral(); r.set (ids::stereoMode, 1); r.set (ids::heatTarget, (float) target);
+        r.set (ids::heat, 100); r.set (ids::color, 0); r.prepare (fs, 512);
+        const auto y = r.run (input, randomBlocks (1, 1024, 5));
+        const auto mid = decode (y, 0), side = decode (y, 1);
+        const int from = n - (int) fs;
+        const double midH = toDb (testsig::toneAmplitude (mid.data() + from, (int) fs, 1000, fs) / 0.12);
+        const double sideH = toDb (testsig::toneAmplitude (side.data() + from, (int) fs, 6000, fs) / 0.09);
+        check (target == 1 ? midH > -50 && sideH < -90 : sideH > -50 && midH < -90,
+               target == 1 ? "Heat Mid adds no Side harmonics" : "Heat Side adds no Mid harmonics",
+               "Mid H2 " + db (midH) + ", Side H2 " + db (sideH));
+    }
+
+    // M/S on a mono bus is explicitly a linked mono fallback; Side targets cannot mute it.
+    {
+        Rig a (1), b (1); a.setNeutral(); b.setNeutral();
+        a.set (ids::heat, 60); b.set (ids::heat, 60);
+        b.set (ids::stereoMode, 1); b.set (ids::eqTarget, 2); b.set (ids::heatTarget, 2);
+        a.prepare (fs, 512); b.prepare (fs, 512);
+        const Channels mono { input[0] };
+        const auto x = a.run (mono, fixedBlocks (512)), y = b.run (mono, fixedBlocks (512));
+        double err = 0;
+        for (size_t i = 0; i < x[0].size(); ++i) err = std::max (err, (double) std::abs (x[0][i] - y[0][i]));
+        check (err == 0, "mono M/S falls back to linked processing", "max error " + juce::String (err, 9));
+    }
+
+    {
+        Rig r; r.set (ids::stereoMode, 1); r.set (ids::eqTarget, 2); r.set (ids::heatTarget, 1);
+        auto old = r.proc->apvts.copyState();
+        for (auto id : { ids::stereoMode, ids::eqTarget, ids::heatTarget })
+            old.removeChild (old.getChildWithProperty ("id", id), nullptr);
+        juce::MemoryBlock state; juce::AudioProcessor::copyXmlToBinary (*old.createXml(), state);
+        r.proc->setStateInformation (state.getData(), (int) state.getSize());
+        bool defaults = true;
+        for (auto id : { ids::stereoMode, ids::eqTarget, ids::heatTarget })
+            defaults = defaults && r.proc->apvts.getRawParameterValue (id)->load() == 0;
+        check (defaults, "old projects restore linked Stereo and Both", "routing reset from a previously configured M/S instance");
+        r.set (ids::stereoMode, 1); r.set (ids::eqTarget, 2); r.set (ids::heatTarget, 1);
+        r.proc->setCurrentProgram (4);
+        check (r.proc->apvts.getRawParameterValue (ids::stereoMode)->load() == 1
+               && r.proc->apvts.getRawParameterValue (ids::eqTarget)->load() == 2
+               && r.proc->apvts.getRawParameterValue (ids::heatTarget)->load() == 1,
+               "factory presets preserve M/S routing", "Mid/Side, EQ Side, Heat Mid");
+    }
+
+    {
+        Rig r; r.prepare (fs, 512);
+        int block = 0;
+        const auto y = r.run (input, [&]
+        {
+            r.set (ids::stereoMode, (float) ((block / 8) % 2));
+            r.set (ids::eqTarget, (float) ((block / 11) % 3));
+            r.set (ids::heatTarget, (float) ((block++ / 13) % 3));
+            return 257;
+        });
+        check (allFinite (y) && maxAbs (y) < 1 && r.proc->getLatencySamples() == 1024,
+               "routing automation remains finite, same latency", "peak " + db (toDb (maxAbs (y))));
+    }
+}
+
 void benchmark()
 {
     section ("18. Benchmark (Release build, this machine)");
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    struct Case { double fs; int block; int mode; };
+    struct Case { double fs; int block; int mode; int midSide = 0; };
     const char* modeNames[] = { "Low", "Normal", "Precise" };
-    for (auto [fs, block, mode] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+    for (auto [fs, block, mode, midSide] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
                                     Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
-                                    Case { 96000.0, 512, 0 } })
+                                    Case { 96000.0, 512, 0 }, Case { 48000.0, 64, 0, 1 },
+                                    Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
         r.set (ids::latency, (float) mode);
+        r.set (ids::stereoMode, (float) midSide);
         r.prepare (fs, block);
         const auto in = testsig::musicLike (fs, 20.0, 1);
         const int n = (int) in[0].size();
@@ -1082,7 +1223,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (modeNames[mode]) + " " + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;
@@ -1114,6 +1255,7 @@ int main()
     testGuard();
     testDisplayRange();
     testRangeHandleDrag();
+    testMidSide();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

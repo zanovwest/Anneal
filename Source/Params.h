@@ -21,6 +21,9 @@ namespace anneal::ids
     inline constexpr const char* bypass   = "bypass";
     inline constexpr const char* latency  = "latency";   // 0.2.0: Low / Normal / Precise (choice)
     inline constexpr const char* guard    = "guard";     // 0.2.2: transient guard, 0 = off (as before)
+    inline constexpr const char* stereoMode = "stereoMode"; // 0.2.4: linked Stereo / Mid-Side
+    inline constexpr const char* eqTarget   = "eqTarget";   // Both / Mid / Side (M/S only)
+    inline constexpr const char* heatTarget = "heatTarget";
 
     inline constexpr int stateVersion = 1;
 }
