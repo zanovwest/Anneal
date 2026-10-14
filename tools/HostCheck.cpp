@@ -103,7 +103,7 @@ int main (int argc, char* argv[])
     for (auto* prm : plugin->getParameters())
         names.add (prm->getName (64));
     bool haveAll = true;
-    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta" })
+    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -153,16 +153,28 @@ int main (int argc, char* argv[])
         findParam (*plugin, "Heat")->setValueNotifyingHost (0.9f);
         findParam (*plugin, "Reveal")->setValueNotifyingHost (0.15f);
         findParam (*plugin, "Delta")->setValueNotifyingHost (1.0f);
+        findParam (*plugin, "Guard")->setValueNotifyingHost (0.6f);
         juce::MemoryBlock state;
         plugin->getStateInformation (state);
 
         auto second = format.createInstanceFromDescription (desc, 48000.0, 512, error);
         second->setStateInformation (state.getData(), (int) state.getSize());
         float worst = 0.0f;
-        for (auto n : { "Heat", "Reveal", "Delta" })
+        for (auto n : { "Heat", "Reveal", "Delta", "Guard" })
             worst = std::max (worst, std::abs (findParam (*second, n)->getValue() - findParam (*plugin, n)->getValue()));
         check (worst < 1.0e-4f, "state restores in a second instance", "state " + juce::String ((int) state.getSize()) + " bytes, max diff " + juce::String (worst, 6));
         findParam (*plugin, "Delta")->setValueNotifyingHost (0.0f);
+
+        // Guard is automatable and processes cleanly when it is swept while playing.
+        auto* guard = findParam (*plugin, "Guard");
+        const auto music = testsig::musicLike (48000.0, 2.0, 5);
+        int block = 0;
+        const bool ok = guard != nullptr && guard->isAutomatable()
+                        && run (*plugin, music, out, [guard, &block] { guard->setValueNotifyingHost ((float) ((block++ % 20) / 19.0)); return 480; });
+        check (ok && peakOf (out) < 4.0, "Guard automatable, swept while processing",
+               "text at 60 %: " + (guard != nullptr ? guard->getText (0.6f, 16) : juce::String ("missing")) + ", peak " + juce::String (testsig::toDb (peakOf (out)), 1) + " dB");
+        if (guard != nullptr)
+            guard->setValueNotifyingHost (0.0f);
     }
 
     // 6a. Latency mode through the host: switch to Precise, the host sees the new latency and the

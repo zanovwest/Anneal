@@ -13,6 +13,7 @@ namespace anneal
         float rangeLoHz    = 20.0f;
         float rangeHiHz    = 20000.0f;
         float focus        = 0.0f;     // -1 body .. +1 air (heat placement)
+        float guard        = 0.0f;     // 0..1 transient guard (0 = off: exactly the old behaviour)
     };
 
     // ERB-rate band model. Turns a linked power spectrum into
@@ -34,6 +35,11 @@ namespace anneal
         const float* getBinNeed() const noexcept     { return binNeed.data(); }   // 0..2
         const float* getBandGainDb() const noexcept  { return gainOut.data(); }
         const float* getBandProminence() const noexcept { return prom.data(); }  // dB, last frame
+        // Transient guard: 0..1 per band, how much of an attack is happening there right now
+        // (rise of the one-ERB level over its ~150 ms average, held while the attack is inside the
+        // analysis frame, then a ~50 ms decay). Always measured.
+        const float* getBandTransient() const noexcept { return transient.data(); }
+        float getMaxTransient() const noexcept { return transientPeak; }   // inside the range
 
         // Display helper: level within one ERB around each band centre, dBFS. Real-time safe.
         void bandLevelsDb (const float* binPower, float* outDb);
@@ -57,6 +63,7 @@ namespace anneal
         double aUp = 0.0, aDn = 0.0, aUpM = 0.0, aDnM = 0.0;
         bool primed = false;
         float liftPeakDb = 0.0f, cutPeakDb = 0.0f;   // (not maxCutDb/maxBoostDb: those are the limits)
+        float transientPeak = 0.0f;
 
         // band -> bin partition (CSR)
         std::vector<int> partStart, partBin;
@@ -70,6 +77,8 @@ namespace anneal
         std::vector<float> earW, noiseSlice, noiseBox, flatNormDb;
         std::vector<float> slices, smoothed, place, context, fwd, bwd, prom, target, targetSmoothed,
                            gain, promSlow, gainOut, needOut, tmp;
+        std::vector<float> raw, fastPlace, slowPlace, transient;   // transient guard
+        std::vector<int> transientAge;                             // frames since the band's last rise
         std::vector<float> binGainDb, binGain, binNeed;
     };
 }

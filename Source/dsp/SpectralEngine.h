@@ -24,6 +24,7 @@ namespace anneal
         float heat         = 0.0f;
         float color        = 0.35f;
         float focus        = 0.0f;
+        float guard        = 0.0f;   // transient guard 0..1 (0 = off)
     };
 
     // STFT host for the perceptual model and the harmonic synth.

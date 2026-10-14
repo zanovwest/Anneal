@@ -382,10 +382,16 @@ void PerceptionScreen::paintHeat (juce::Graphics& g)
     g.strokePath (edge, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+juce::Point<float> PerceptionScreen::getShownRange() const noexcept
+{
+    return { rangeLo, effectiveRangeHi (rangeLo, rangeHi) };
+}
+
 void PerceptionScreen::paintRange (juce::Graphics& g)
 {
-    const float xLo = xForCam (erb::hzToCam (rangeLo));
-    const float xHi = xForCam (erb::hzToCam (rangeHi));
+    const auto shown = getShownRange();
+    const float xLo = xForCam (erb::hzToCam (shown.x));
+    const float xHi = xForCam (erb::hzToCam (shown.y));
 
     // Outside the range Anneal does nothing: dim it in both lanes.
     g.setColour (colour::screen.withAlpha (0.72f));
@@ -396,7 +402,7 @@ void PerceptionScreen::paintRange (juce::Graphics& g)
     }
 
     const auto f = font (11.5f);
-    const auto loText = formatHz (rangeLo), hiText = formatHz (rangeHi);
+    const auto loText = formatHz (shown.x), hiText = formatHz (shown.y);
     const float loW = textWidth (f, loText), hiW = textWidth (f, hiText);
     const bool crowded = (xHi - xLo) < loW + hiW + 40.0f;
 
@@ -486,8 +492,9 @@ PerceptionScreen::Handle PerceptionScreen::handleAt (float x, float y) const noe
 {
     if (y < plot.getY() - 24.0f || y > plot.getBottom())
         return Handle::none;
-    const float dl = std::abs (x - xForCam (erb::hzToCam (rangeLo)));
-    const float dh = std::abs (x - xForCam (erb::hzToCam (rangeHi)));
+    const auto shown = getShownRange();
+    const float dl = std::abs (x - xForCam (erb::hzToCam (shown.x)));
+    const float dh = std::abs (x - xForCam (erb::hzToCam (shown.y)));
     if (juce::jmin (dl, dh) > 7.0f)
         return Handle::none;
     return dl <= dh ? Handle::lo : Handle::hi;

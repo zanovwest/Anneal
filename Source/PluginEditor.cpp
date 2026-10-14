@@ -32,6 +32,9 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                 "Tilt: static slope around 1 kHz, applied inside the range (darker to brighter)"),
       response (p.apvts, ids::response, "Response", colour::muted,  Size::secondary, false, {},
                 "Response: how quickly the auto EQ follows the music (release; attack is 3x faster)"),
+      guard    (p.apvts, ids::guard,    "Guard",    colour::muted,  Size::secondary, false, {},
+                "Guard: lets attacks through. On drum hits and plucks the auto EQ steps back toward 0 dB and Heat "
+                "writes no harmonics over the attack, then both return. Off = as before"),
       heat     (p.apvts, ids::heat,     "Heat",     colour::bronze, Size::hero,      false, "harmonics where thin",
                 "Heat: spectral saturation; each partial grows its own 2nd-6th harmonics where the spectrum is thin"),
       mix      (p.apvts, ids::mix,      "Mix",      colour::muted,  Size::secondary, false, {},
@@ -49,7 +52,7 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       latency  (p.apvts, [&p] (int m) { return p.getLatencyMsForMode (m); }, [&p] { return p.getLatencyMs(); })
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
-             &screen, &presets, &reveal, &smooth, &tilt, &response, &heat, &color, &focus, &harmonics,
+             &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency })
         addAndMakeVisible (c);
 
@@ -85,8 +88,9 @@ void AnnealEditorContent::resized()
     // AUTO EQ: the two primary rings, their settings stacked beside them.
     reveal.setBounds (26, 432, primaryW, primaryH);
     smooth.setBounds (172, 432, primaryW, primaryH);
-    tilt.setBounds (334, 448, 140, smallH);
-    response.setBounds (334, 514, 140, smallH);
+    tilt.setBounds (334, 432, 140, smallH);
+    response.setBounds (334, 488, 140, smallH);
+    guard.setBounds (334, 544, 140, smallH);
 
     // HEAT: the largest ring; Color with the harmonics it produces, then Focus.
     heat.setBounds (500, 424, heroW, heroH);

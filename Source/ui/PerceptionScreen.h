@@ -34,6 +34,9 @@ namespace anneal
         // Snapshot/test helpers: take the newest frame as-is, and place the hover read-out.
         void refreshNow();
         void setReadoutHz (float hz);
+        // The range drawn (low, high Hz): the one the engine uses, also when automation has put
+        // Range Low above Range High.
+        juce::Point<float> getShownRange() const noexcept;
 
         // How hard Reveal / Smooth / Heat are working (from the engine's frames, with meter
         // ballistics: instant rise, 12 dB/s fall). live = audio is arriving.

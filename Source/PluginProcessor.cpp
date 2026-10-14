@@ -25,6 +25,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pDelta    = apvts.getRawParameterValue (ids::delta);
     pBypass   = apvts.getRawParameterValue (ids::bypass);
     pLatency  = apvts.getRawParameterValue (ids::latency);
+    pGuard    = apvts.getRawParameterValue (ids::guard);
 
     // A usable default before the host calls prepareToPlay (e.g. state loading, editor opening).
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
@@ -153,10 +154,11 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.tiltDbPerOct = pTilt->load();
     p.responseMs   = pResponse->load();
     p.rangeLoHz    = pRangeLo->load();
-    p.rangeHiHz    = juce::jmax (pRangeHi->load(), p.rangeLoHz * 1.5f);
+    p.rangeHiHz    = anneal::effectiveRangeHi (p.rangeLoHz, pRangeHi->load());
     p.heat         = pHeat->load() * 0.01f;
     p.color        = pColor->load() * 0.01f;
     p.focus        = pFocus->load() * 0.01f;
+    p.guard        = pGuard->load() * 0.01f;
     getEngine().setParameters (p);
 }
 
@@ -306,6 +308,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const auto tree = juce::ValueTree::fromXml (*xml);
             // Check before replaceState: the APVTS fills missing parameters into the same tree.
             const bool hasLatency = tree.getChildWithProperty ("id", anneal::ids::latency).isValid();
+            const bool hasGuard = tree.getChildWithProperty ("id", anneal::ids::guard).isValid();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
@@ -316,6 +319,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasLatency)
                 if (auto* lp = apvts.getParameter (anneal::ids::latency))
                     lp->setValueNotifyingHost (lp->convertTo0to1 ((float) anneal::SpectralEngine::precise));
+
+            // Projects saved before 0.2.2 have no Guard: off, as it was then (not whatever this
+            // instance had), so they sound exactly as before.
+            if (! hasGuard)
+                if (auto* gp = apvts.getParameter (anneal::ids::guard))
+                    gp->setValueNotifyingHost (gp->convertTo0to1 (0.0f));
 
             if (juce::MessageManager::existsAndIsCurrentThread())
                 applyLatencyModeIfChanged();

@@ -43,15 +43,16 @@ Unattended update: `Anneal-<version>-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRES
 | | **Smooth** 0–100 % | Cut for dominant bands, up to −9 dB. |
 | | Tilt ±1.5 dB/oct | Static slope around 1 kHz inside the range (darker ↔ brighter). |
 | | Response 20–500 ms | How fast the curve follows the music (release; attack is 3× faster). |
+| | Guard Off–100 % | Transient guard. On drum hits and plucks the auto EQ steps back toward 0 dB in the bands of the hit (Tilt stays) and Heat writes no harmonics over the attack, then both return. The curve also doesn't chase the hits, so nothing ducks after them. Sustained sounds are treated as before. Off (default) = as before; projects from before 0.2.2 open with it off. Type `off` or a number. |
 | Heat | **Heat** 0–100 % | Spectral saturation drive. Level-dependent like a real saturator (calibrated at −18 dBFS). |
 | | Color | Slider, even (2nd/4th/6th) ↔ odd (3rd/5th) harmonics; the bars under it show the harmonics Heat writes. |
 | | Focus | Slider, body (harmonics concentrated low) ↔ air (high). Centre = follow the model only. |
 | Output | Mix, Output | Latency-aligned dry blend, final gain. |
 | | Match | Slow (~3 s) K-weighted loudness match, so you compare tone rather than level. The measured gain is shown. |
 | | Delta | Listen to only what Anneal adds or removes. |
-| Display | Range handles | Drag the dashed handles to limit where Anneal acts (both EQ and heat). Double-click resets. |
+| Display | Range handles | Drag the dashed handles to limit where Anneal acts (both EQ and heat). Double-click resets. If automation puts Range Low above Range High, Anneal works from Low to 1.5 × Low, and the display shows exactly that. |
 | Header | Latency | Low 21 ms (default), Normal 43 ms, Precise 85 ms (finest bass detail). Projects from before 0.2.0 open in Precise. |
-| Header | Preset | Factory presets: click the name for the list, or step with the arrows. `*` = changed since loading it. Also in the DAW's preset menu. Match, Delta and Bypass are left alone. |
+| Header | Preset | Factory presets: click the name for the list, or step with the arrows. `*` = changed since loading it. Also in the DAW's preset menu. Guard, Match, Delta and Bypass are left alone. |
 | Header | Bypass | Latency-compensated, click-free. |
 
 Every knob: drag, **Ctrl-drag** for fine adjustment, **double-click** to reset, **click
@@ -124,11 +125,11 @@ projects keep their settings.
 ## Status
 
 - **Built:** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
-- **Tested headless (`AnnealTests`, 34/34 pass):** STFT identity in every latency mode (44.1/48/96 kHz, blocks 1–4096 and random), latency per mode and mode switching, old projects load as Precise, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects).
-- **CPU (this machine):** at 48 kHz stereo, Low 2.4 %, Normal 2.1 %, Precise 3.3 % of one core. Measured at high priority like a DAW audio thread, the slowest 0.1 % of blocks at 64 samples take 10 % (Low) / 28 % (Precise) of the deadline.
+- **Tested headless (`AnnealTests`, 40/40 pass):** STFT identity in every latency mode (44.1/48/96 kHz, blocks 1–4096 and random), latency per mode and mode switching, old projects load as Precise, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects), transient guard (attacks pass Smooth in Low and Precise, sustained ring cut unchanged, no harmonics over attacks, old projects load with Guard off), display range = engine range.
+- **CPU (this machine):** at 48 kHz stereo, Low 2.4 %, Normal 2.1 %, Precise 3.4 % of one core. Measured at high priority like a DAW audio thread, the slowest 0.1 % of blocks at 64 samples take 10 % (Low) / 28 % (Precise) of the deadline.
 - **Icon (0.2.1):** `Source/ui/Icon.h`, rendered with `AnnealSnapshot --icons resources/icon`, packed by `tools/make_ico.py` into `resources/icon/anneal.ico` (setup, Apps entry); JUCE builds the app and VST3-folder icons from `icon_512.png` / `icon_32.png`.
 - **UI (v3, 0.2.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio.
-- **Host-checked (`AnnealHostCheck`, 12/12 pass)** including latency switching through the host, factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
-- **Setup-tested (`TestSetup.ps1`, 17/17 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
+- **Host-checked (`AnnealHostCheck`, 13/13 pass)** including latency switching through the host, Guard automated while playing, factory presets as host programs and an edited preset surviving save/load, on the built bundle and on the installed copy.
+- **Setup-tested (`TestSetup.ps1`, 16/16 pass):** sandbox install, update while another process has the DLL loaded, uninstall.
 - **Installed** for all users with `Anneal-0.2.0-Setup.exe` on 2026-10-13: VST3 in `C:\Program Files\Common Files\VST3` (FL Studio's default folder), standalone in `C:\Program Files\Anneal`, listed under Settings → Apps. Host-checked 12/12 there.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase, listening tests. The perceptual model is a heuristic, not a calibrated loudness model. Low latency (21 ms) suits tracking; Precise (85 ms) is for mixing/mastering.

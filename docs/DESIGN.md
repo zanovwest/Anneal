@@ -36,7 +36,7 @@ in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve ─┐
 
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
-| AUTO EQ | Reveal, Smooth | Tilt, Response |
+| AUTO EQ | Reveal, Smooth | Tilt, Response, Guard (transients) |
 | HEAT | Heat | Color (even↔odd), Focus (body↔air) |
 | OUTPUT | — | Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Match (loudness), Δ (delta listen), Bypass |

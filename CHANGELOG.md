@@ -4,6 +4,32 @@ Newest first. One entry per version; the hourly update adds one (see README → 
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 0.2.2 — 2026-10-13 14:50
+
+New
+- **Guard (transient guard)**, a new knob in AUTO EQ under Response. Turn it up and drum hits,
+  plucks and other attacks come through with their punch intact: in the bands where a hit lands,
+  the auto EQ steps back toward 0 dB for the attack and Heat doesn't smear harmonics over it, then
+  both return. The EQ curve also stops chasing the hits, so nothing ducks right after them.
+  Sustained sounds are treated exactly as before. Works in every latency mode. Measured on a
+  plucked 2 kHz tone with Smooth at 100 %: the attack was cut by 6.2 dB (Low) / 8.6 dB (Precise),
+  with Guard at 100 % by 0.0 / 0.2 dB; harmonics written over the attack drop by about 10 dB.
+  Guard is Off by default, presets leave it alone, and projects saved with earlier versions open
+  with it off, so they sound exactly as before.
+
+Fixes
+- If automation pushed Range Low above Range High, Anneal worked from Low to 1.5 × Low (as
+  intended), but the display drew the handles at the raw values and dimmed the wrong part. It now
+  shows the range Anneal actually uses.
+
+Tests: DSP 40/40 (new: Guard lets attacks through in Low and Precise, a sustained ring is cut the
+same, no harmonics over attacks while a steady tone keeps them, old projects load with Guard off,
+display range = engine range), host 13/13 (new: Guard automated while playing), setup 16/16
+(0.2.1 said 17/17; it was 16 then too).
+CPU at 48 kHz stereo: Low 2.4 %, Normal 2.1 %, Precise 3.4 % of one core (Precise +0.1 %: the
+attack detector runs on every frame, so Guard can be turned up mid-song without a warm-up).
+Slowest 0.1 % of blocks at 64 samples: Low 10 %, Precise 28 % of the deadline (unchanged).
+
 ## 0.2.1 — 2026-10-13
 
 New

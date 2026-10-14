@@ -12,6 +12,7 @@ namespace
     constexpr double slopeDnDbPerCam = 16.0;   // masker above target
     constexpr float maxCutDb   = 9.0f;
     constexpr float maxBoostDb = 8.0f;
+    constexpr int idleAge = 1 << 20;   // transient age meaning "no attack in progress"
 
     // Summing amplitude-normalised Hann bins gives 3x the signal power (see ENGINE.md).
     constexpr float bandPowerScale = 1.0f / 3.0f;
@@ -89,11 +90,13 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
 
     auto alloc = [] (std::vector<float>& v, size_t n) { v.assign (n, 0.0f); };
     for (auto* v : { &earW, &noiseSlice, &noiseBox, &flatNormDb, &slices, &smoothed, &place, &context,
-                     &fwd, &bwd, &prom, &target, &targetSmoothed, &gain, &promSlow, &gainOut, &needOut, &tmp })
+                     &fwd, &bwd, &prom, &target, &targetSmoothed, &gain, &promSlow, &gainOut, &needOut, &tmp,
+                     &raw, &fastPlace, &slowPlace, &transient })
         alloc (*v, (size_t) numBands);
     for (auto* v : { &binGainDb, &binGain, &binNeed })
         alloc (*v, (size_t) numBins);
     prefix.assign ((size_t) numBands + 1, 0.0);
+    transientAge.assign ((size_t) numBands, idleAge);
 
     for (int b = 0; b < numBands; ++b)
     {
@@ -118,12 +121,13 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
 void PerceptualModel::reset()
 {
     primed = false;
-    liftPeakDb = cutPeakDb = 0.0f;
-    for (auto* v : { &smoothed, &gain, &promSlow, &prom, &gainOut, &needOut })
+    liftPeakDb = cutPeakDb = transientPeak = 0.0f;
+    for (auto* v : { &smoothed, &gain, &promSlow, &prom, &gainOut, &needOut, &slowPlace, &transient })
         std::fill (v->begin(), v->end(), 0.0f);
     std::fill (binGainDb.begin(), binGainDb.end(), 0.0f);
     std::fill (binGain.begin(), binGain.end(), 1.0f);
     std::fill (binNeed.begin(), binNeed.end(), 0.0f);
+    std::fill (transientAge.begin(), transientAge.end(), idleAge);
 }
 
 int PerceptualModel::bandForHz (double hz) const noexcept
@@ -185,11 +189,60 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     for (int b = 0; b < numBands; ++b)
     {
         const float x = slices[(size_t) b] * earW[(size_t) b] + noiseSlice[(size_t) b];
+        raw[(size_t) b] = x;
         smoothed[(size_t) b] = primed ? smoothed[(size_t) b] + aP * (x - smoothed[(size_t) b]) : x;
     }
 
     boxSum (smoothed.data(), place.data(), boxHalf, false);
     contextOf (place.data(), context.data());
+
+    // Transient guard detector: the one-ERB level of this frame (no temporal integration)
+    // against its own ~150 ms average. A rise of 4 dB starts to count, 12 dB is a full attack.
+    // Every frame that still holds the attack is written over it, so for one frame length (21 ms
+    // in Low, 85 ms in Precise) the value is held and the reference level does not climb (in a
+    // long frame the attack's level builds up over several frames); then it decays (~50 ms).
+    // Measured always (so turning Guard up mid-song needs no warm-up), applied only when Guard > 0.
+    boxSum (raw.data(), fastPlace.data(), boxHalf, false);
+    {
+        const float aLevel = 1.0f - std::exp (-1.0f / (0.150f * fps));
+        const float decay = std::exp (-1.0f / (0.050f * fps));
+        const int holdFrames = std::max (1, (int) std::lround (fftSize / sampleRate * fps));
+        for (int b = 0; b < numBands; ++b)
+        {
+            const float f = fastPlace[(size_t) b];
+            float& slow = slowPlace[(size_t) b];
+            float& tr = transient[(size_t) b];
+            int& age = transientAge[(size_t) b];   // frames since the current attack began
+            const bool inAttack = age < holdFrames;
+            float onset = 0.0f;
+            if (primed)
+            {
+                const float ratio = f / slow;   // slow > 0: it includes the internal-noise floor
+                if (ratio > 2.5118864f)          // > 4 dB
+                    onset = clamp01 ((10.0f * std::log10 (ratio) - 4.0f) / 8.0f);
+                if (! inAttack || f < slow)
+                    slow += aLevel * (f - slow);
+            }
+            else
+            {
+                slow = f;
+            }
+
+            if (onset > tr)
+            {
+                tr = onset;
+                if (! inAttack)
+                    age = 0;   // a new attack (a rise during the hold belongs to the current one)
+            }
+            else if (! inAttack)
+            {
+                tr = std::max (onset, tr * decay);
+            }
+            if (age < holdFrames)
+                ++age;
+        }
+    }
+    const bool guarded = s.guard > 0.0f;
 
     for (int b = 0; b < numBands; ++b)
     {
@@ -226,7 +279,10 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         {
             const float t = targetSmoothed[(size_t) b];
             float& g = gain[(size_t) b];
-            g += (t < g ? aFast : aSlow) * (t - g);
+            float rate = t < g ? aFast : aSlow;
+            if (guarded)   // during an attack the curve doesn't chase it (no ducking afterwards)
+                rate *= 1.0f - s.guard * transient[(size_t) b];
+            g += rate * (t - g);
             promSlow[(size_t) b] += aSlow * (prom[(size_t) b] - promSlow[(size_t) b]);
         }
     }
@@ -234,16 +290,20 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     const double zLo = erb::hzToCam (std::max (20.0f, s.rangeLoHz));
     const double zHi = std::max (zLo + 0.5, erb::hzToCam (s.rangeHiHz));
 
-    liftPeakDb = cutPeakDb = 0.0f;
+    liftPeakDb = cutPeakDb = transientPeak = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
         const double z = z0 + b * dz;
         const float rg = smoothstep ((float) ((z - (zLo - 0.25)) / 0.5))
                        * smoothstep ((float) (((zHi + 0.25) - z) / 0.5));
         const float tilt = std::clamp (s.tiltDbPerOct * (float) std::log2 (bandHz[(size_t) b] / 1000.0), -9.0f, 9.0f);
-        gainOut[(size_t) b] = rg * (gain[(size_t) b] + tilt);
-        liftPeakDb = std::max (liftPeakDb, rg * gain[(size_t) b]);
-        cutPeakDb  = std::min (cutPeakDb, rg * gain[(size_t) b]);
+        // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
+        const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
+        const float autoDb = guarded ? gain[(size_t) b] * relax : gain[(size_t) b];
+        gainOut[(size_t) b] = rg * (autoDb + tilt);
+        liftPeakDb = std::max (liftPeakDb, rg * autoDb);
+        cutPeakDb  = std::min (cutPeakDb, rg * autoDb);
+        transientPeak = std::max (transientPeak, rg * transient[(size_t) b]);
 
         const float ps = promSlow[(size_t) b];
         const float shadowed = clamp01 ((-ps - 1.0f) / 9.0f);
@@ -251,7 +311,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float need = clamp01 (0.35f + 0.65f * shadowed - 0.5f * dominant);
         const float zn = (float) b / (numBands - 1);
         const float focusW = std::clamp (1.0f + s.focus * (2.0f * zn - 1.0f), 0.0f, 2.0f);
-        needOut[(size_t) b] = rg * need * focusW;
+        needOut[(size_t) b] = guarded ? rg * need * focusW * relax : rg * need * focusW;   // no harmonics smeared over attacks
     }
 
     for (int k = 0; k < numBins; ++k)

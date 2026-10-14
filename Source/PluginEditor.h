@@ -34,7 +34,7 @@ private:
 
     AnnealAudioProcessor& processor;
 
-    anneal::Knob reveal, smooth, tilt, response, heat, mix, output;
+    anneal::Knob reveal, smooth, tilt, response, guard, heat, mix, output;
     anneal::Fader color, focus;
     anneal::HarmonicGraph harmonics;
     anneal::Toggle match, delta, bypass;

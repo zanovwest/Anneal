@@ -47,6 +47,13 @@ those bands are interpolated rather than independent measurements.
 9. Heat need = 0.35 baseline, → 1 in shadowed bands, → 0 in dominant bands;
    multiplied by Focus (body↔air) and the Range gate.
 10. Static Tilt (dB/oct around 1 kHz, ±9 dB cap) is added inside the Range.
+11. **Transient guard** (0.2.2; Guard 0 = off = exactly the steps above). Per band, the one-ERB
+    level of the frame without temporal integration is compared with its ~150 ms average: a rise
+    of 4 dB starts an attack, 12 dB is a full one (`T` 0..1). `T` is held for one frame length
+    (the attack is inside every frame of that span), during which the average does not climb,
+    then decays with ~50 ms. With Guard `g`: the auto-EQ gain (not Tilt) is scaled by `1 − g·T`,
+    its time smoothing is slowed by the same factor (the curve doesn't chase hits), and the heat
+    need is scaled by `1 − g·T` (no harmonics smeared over attacks).
 
 ## Spectral saturation
 

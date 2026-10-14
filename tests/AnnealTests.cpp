@@ -5,6 +5,7 @@
 #include "Params.h"
 #include "Presets.h"
 #include "dsp/SpectralEngine.h"
+#include "ui/PerceptionScreen.h"
 #include "TestSignals.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -552,7 +553,7 @@ void testStress()
     std::mt19937 rng (77);
     std::uniform_real_distribution<float> u (0.0f, 1.0f);
     const char* all[] = { ids::reveal, ids::smooth, ids::tilt, ids::response, ids::rangeLo, ids::rangeHi, ids::heat,
-                          ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass };
+                          ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass, ids::guard };
 
     const int n = (int) in[0].size();
     Channels out = in;
@@ -611,7 +612,8 @@ void testState()
     Rig a;
     const std::pair<const char*, float> values[] = { { ids::reveal, 73.0f }, { ids::smooth, 12.5f }, { ids::tilt, -0.8f },
         { ids::response, 300.0f }, { ids::rangeLo, 85.0f }, { ids::rangeHi, 9000.0f }, { ids::heat, 66.0f }, { ids::color, 80.0f },
-        { ids::focus, -45.0f }, { ids::mix, 70.0f }, { ids::output, -3.5f }, { ids::match, 1.0f }, { ids::delta, 1.0f } };
+        { ids::focus, -45.0f }, { ids::mix, 70.0f }, { ids::output, -3.5f }, { ids::match, 1.0f }, { ids::delta, 1.0f },
+        { ids::guard, 55.0f } };
     for (auto [id, v] : values)
         a.set (id, v);
     juce::MemoryBlock blob;
@@ -788,9 +790,202 @@ void testPresets()
     }
 }
 
+// Plucks over a quiet pink bed: a tone with a hard attack and an 80 ms decay every 400 ms.
+Channels pluckTrain (double fs, double seconds, double toneHz, std::vector<int>& onsets)
+{
+    const int n = (int) (fs * seconds);
+    Channels x = testsig::silence (2, n);
+    testsig::Pink pl (5), pr (6);
+    for (int i = 0; i < n; ++i)
+    {
+        x[0][(size_t) i] = 0.01f * pl.next();
+        x[1][(size_t) i] = 0.01f * pr.next();
+    }
+    const int period = (int) (0.4 * fs);
+    for (int t0 = (int) (0.5 * fs); t0 + period <= n; t0 += period)
+    {
+        onsets.push_back (t0);
+        for (int i = 0; i < period; ++i)
+        {
+            const double t = i / fs;
+            const float v = (float) (0.3 * std::sin (2.0 * testsig::pi * toneHz * t) * std::exp (-t / 0.08));
+            x[0][(size_t) (t0 + i)] += v;
+            x[1][(size_t) (t0 + i)] += v;
+        }
+    }
+    return x;
+}
+
+// Mean level (dB) of `hz` in out[t0 + latency + from, + len) relative to in[t0 + from, + len), over
+// every onset after the first two (the model has settled by then).
+double windowGainDb (const Channels& out, const Channels& in, const std::vector<int>& onsets, int latency,
+                     int from, int len, double hz, double fs)
+{
+    double sum = 0.0;
+    int count = 0;
+    for (size_t k = 2; k < onsets.size(); ++k)
+    {
+        const int t = onsets[k] + from;
+        const double a = testsig::toneAmplitude (out[0].data() + t + latency, len, hz, fs);
+        const double b = testsig::toneAmplitude (in[0].data() + t, len, hz, fs);
+        sum += toDb (a / b);
+        ++count;
+    }
+    return count > 0 ? sum / count : 0.0;
+}
+
+void testGuard()
+{
+    section ("15. Transient guard");
+    const double fs = 48000.0;
+    const char* modeNames[] = { "Low", "Normal", "Precise" };
+    std::vector<int> onsets;
+    const auto plucks = pluckTrain (fs, 4.0, 2000.0, onsets);
+    const int attackLen = (int) (0.015 * fs);
+
+    // Attacks: Smooth at 100 % and a fast Response cut into each pluck's attack. Guard 100 % lets
+    // the attack through (within 1 dB of the input) and cuts clearly less than Guard off.
+    for (int mode : { (int) anneal::SpectralEngine::low, (int) anneal::SpectralEngine::precise })
+    {
+        double att[2] {}, body[2] {};
+        float peakT = 0.0f;
+        for (int g = 0; g < 2; ++g)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, mode);
+            auto p = neutral();
+            p.smooth = 1.0f;
+            p.responseMs = 40.0f;
+            p.guard = (float) g;
+            e->setParameters (p);
+            const auto out = runEngine (*e, plucks, fixedBlocks (256));
+            const int L = e->getLatencySamples();
+            att[g] = windowGainDb (out, plucks, onsets, L, 0, attackLen, 2000.0, fs);
+            body[g] = windowGainDb (out, plucks, onsets, L, (int) (0.08 * fs), (int) (0.08 * fs), 2000.0, fs);
+            peakT = std::max (peakT, e->getModel().getMaxTransient());
+        }
+        info (juce::String (modeNames[mode]) + ": attack (first 15 ms) Guard off " + db (att[0], 2) + ", Guard 100 % " + db (att[1], 2)
+              + ";  body (80-160 ms) off " + db (body[0], 2) + ", 100 % " + db (body[1], 2));
+        check (std::abs (att[1]) < 1.0 && att[1] - att[0] >= 1.5,
+               (juce::String ("Guard 100 %: attacks pass Smooth, ") + modeNames[mode]).toRawUTF8(),
+               "attack " + db (att[0], 2) + " -> " + db (att[1], 2));
+    }
+
+    // Steady material is not affected: the sustained 3150 Hz ring in pink noise is cut as before.
+    {
+        Channels ringy = testsig::silence (2, (int) (4 * fs));
+        testsig::Pink pl (1), pr (2);
+        for (size_t i = 0; i < ringy[0].size(); ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * (double) i / fs);
+            ringy[0][i] = 0.03f * pl.next() + ring;
+            ringy[1][i] = 0.03f * pr.next() + ring;
+        }
+        juce::String log;
+        bool ok = true;
+        for (int mode : { (int) anneal::SpectralEngine::low, (int) anneal::SpectralEngine::precise })
+        {
+            float cut[2] {};
+            for (int g = 0; g < 2; ++g)
+            {
+                auto e = std::make_unique<anneal::SpectralEngine>();
+                e->prepare (fs, 2, mode);
+                auto p = neutral();
+                p.smooth = 1.0f;
+                p.guard = (float) g;
+                e->setParameters (p);
+                runEngine (*e, ringy, fixedBlocks (512));
+                cut[g] = bandGain (*e, 3150.0);
+            }
+            ok = ok && cut[0] <= -3.0f && std::abs (cut[1] - cut[0]) < 0.5f;
+            log << modeNames[mode] << " " << db (cut[0], 2) << " / " << db (cut[1], 2) << "  ";
+        }
+        check (ok, "Guard 100 %: sustained ring still cut the same", "3150 Hz, Guard off / 100 %: " + log);
+    }
+
+    // Heat: no harmonics smeared over the attack. The 2nd harmonic of the pluck in its first 15 ms
+    // drops clearly with Guard; a steady tone keeps its harmonics.
+    {
+        double h2[2] {}, steady[2] {};
+        for (int g = 0; g < 2; ++g)
+        {
+            auto p = neutral();
+            p.heat = 1.0f;
+            p.color = 0.0f;
+            p.guard = (float) g;
+
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            e->setParameters (p);
+            const auto out = runEngine (*e, plucks, fixedBlocks (256));
+            const int L = e->getLatencySamples();
+            double sum = 0.0;
+            int count = 0;
+            for (size_t k = 2; k < onsets.size(); ++k)
+            {
+                const float* seg = out[0].data() + onsets[k] + L;
+                sum += toDb (testsig::toneAmplitude (seg, attackLen, 4000.0, fs) / testsig::toneAmplitude (seg, attackLen, 2000.0, fs));
+                ++count;
+            }
+            h2[g] = sum / count;
+
+            auto s = std::make_unique<anneal::SpectralEngine>();
+            s->prepare (fs, 2, anneal::SpectralEngine::low);
+            s->setParameters (p);
+            const auto sout = runEngine (*s, testsig::sines (fs, (int) (3 * fs), { { 1000.0, 0.125893 } }), fixedBlocks (512));
+            const float* seg = sout[0].data() + (int) (1.5 * fs);
+            steady[g] = rel (seg, (int) fs, fs, 2000.0, testsig::toneAmplitude (seg, (int) fs, 1000.0, fs));
+        }
+        check (h2[1] - h2[0] <= -6.0 && std::abs (steady[1] - steady[0]) < 0.5,
+               "Guard 100 %: no harmonics over attacks, steady kept",
+               "2nd in the attack " + db (h2[0]) + " -> " + db (h2[1]) + ";  steady 1 kHz 2nd " + db (steady[0]) + " -> " + db (steady[1]));
+    }
+
+    // Old projects (no Guard in the state) load with Guard off, whatever the instance had.
+    {
+        Rig a;
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        if (auto* gx = xml->getChildByAttribute ("id", ids::guard))
+            xml->removeChildElement (gx, true);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig b;
+        b.set (ids::guard, 70.0f);
+        b.proc->setStateInformation (old.getData(), (int) old.getSize());
+        auto* gp = b.proc->apvts.getParameter (ids::guard);
+        const float loaded = gp->convertFrom0to1 (gp->getValue());
+        const float parsed = gp->convertFrom0to1 (gp->getValueForText ("35 %"));
+        check (loaded == 0.0f && gp->getDefaultValue() == 0.0f && gp->getCurrentValueAsText() == "Off"
+                   && gp->getValueForText ("off") == 0.0f && std::abs (parsed - 35.0f) < 0.05f,
+               "projects from before 0.2.2 load with Guard off", "Guard " + gp->getCurrentValueAsText()
+                   + "; typing 'off' -> " + juce::String (gp->getValueForText ("off"), 1) + ", '35 %' -> " + juce::String (parsed, 1));
+    }
+}
+
+void testDisplayRange()
+{
+    section ("16. The display shows the range the engine uses");
+    // Automation can put Range Low above Range High; the engine then works on Low .. 1.5 x Low.
+    Rig r;
+    r.set (ids::rangeLo, 1800.0f);
+    r.set (ids::rangeHi, 1000.0f);
+    r.prepare (48000.0, 512);
+    r.run (testsig::musicLike (48000.0, 1.0), fixedBlocks (512));
+    const auto* frame = r.proc->getDisplay().read();
+    anneal::PerceptionScreen screen (r.proc->getDisplay(), r.proc->apvts);
+    const auto shown = screen.getShownRange();
+    const bool ok = frame != nullptr && std::abs (shown.x - frame->rangeLoHz) < 1.0f
+                    && std::abs (shown.y - frame->rangeHiHz) < 0.01f * frame->rangeHiHz;
+    check (ok, "crossed Range Low/High: display = engine",
+           "engine " + juce::String (frame != nullptr ? frame->rangeLoHz : 0.0f, 0) + "-" + juce::String (frame != nullptr ? frame->rangeHiHz : 0.0f, 0)
+               + " Hz, display " + juce::String (shown.x, 0) + "-" + juce::String (shown.y, 0) + " Hz");
+}
+
 void benchmark()
 {
-    section ("15. Benchmark (Release build, this machine)");
+    section ("17. Benchmark (Release build, this machine)");
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
@@ -856,6 +1051,8 @@ int main()
     testBypassAndMono();
     testPreEcho();
     testPresets();
+    testGuard();
+    testDisplayRange();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

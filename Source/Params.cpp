@@ -136,6 +136,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         juce::StringArray { "Low", "Normal", "Precise" }, 0,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
+    // Transient guard. 0 % = off, which is how every earlier version behaved (and what projects
+    // saved before 0.2.2 load with, see AnnealAudioProcessor::setStateInformation).
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::guard, 1 }, "Guard",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 0.0f,
+        Attr().withLabel ("%")
+              .withStringFromValueFunction ([] (float v, int)
+              {
+                  return v < 0.5f ? juce::String ("Off") : juce::String (juce::roundToInt (v)) + " %";
+              })
+              .withValueFromStringFunction ([] (const juce::String& t)
+              {
+                  const auto l = t.toLowerCase();
+                  if (! l.containsAnyOf ("0123456789"))
+                      return l.contains ("off") ? 0.0f : 100.0f;
+                  return leadingNumber (l);
+              })));
+
     return layout;
 }
 }

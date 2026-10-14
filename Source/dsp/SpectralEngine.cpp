@@ -148,6 +148,7 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.heat, target.heat);
     lin (current.color, target.color);
     lin (current.focus, target.focus);
+    lin (current.guard, target.guard);
     lg  (current.rangeLoHz, target.rangeLoHz);
     lg  (current.rangeHiHz, target.rangeHiHz);
     current.responseMs = target.responseMs;
@@ -204,6 +205,7 @@ void SpectralEngine::processFrame() noexcept
     ms.rangeLoHz = current.rangeLoHz;
     ms.rangeHiHz = current.rangeHiHz;
     ms.focus = current.focus;
+    ms.guard = current.guard;
     model.analyse (power.data(), ms, framesPerSecond);
 
     const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
