@@ -1,0 +1,217 @@
+# PARKED: GitHub only runs workflows from .github/workflows/. Pushing a file there needs a GitHub
+# token with the "workflow" scope, which the gh login on the build PC doesn't have yet. Once it does
+# (gh auth refresh -h github.com -s workflow), move this file to .github/workflows/platforms.yml.
+name: Platforms
+
+# Builds Anneal for macOS (one universal binary: Apple Silicon + Intel) and Linux, and the CLAP
+# format for Windows. The Windows VST3 setup itself is built and tested on the author's PC
+# (build.ps1), so it isn't rebuilt here.
+#
+# Runs by hand (Actions > Platforms > Run workflow) and for every published x.y.0 release.
+# Patch releases (x.y.1, x.y.2, ...) are skipped: on a private repository macOS minutes count 10x.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to attach the builds to (blank = keep them as workflow artifacts only)
+        required: false
+        default: ""
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          if [ "$EVENT" = "release" ]; then
+            tag="$RELEASE_TAG"
+            if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.0$ ]]; then go=true; else go=false; fi
+          else
+            tag="$INPUT_TAG"; go=true
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "event $EVENT, tag '$tag', build: $go"
+
+  macos:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (universal arm64 + x86_64, CLAP on)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DANNEAL_CLAP=ON
+
+      - name: Build VST3, AU, CLAP, Standalone and the test tools
+        run: cmake --build build --config Release --parallel --target Anneal_VST3 Anneal_AU Anneal_CLAP Anneal_Standalone AnnealTests AnnealHostCheck
+
+      - name: Every binary has both architectures
+        run: |
+          A=build/Anneal_artefacts/Release
+          for bin in "$A/VST3/Anneal.vst3/Contents/MacOS/Anneal" "$A/AU/Anneal.component/Contents/MacOS/Anneal" \
+                     "$A/CLAP/Anneal.clap/Contents/MacOS/Anneal" "$A/Standalone/Anneal.app/Contents/MacOS/Anneal"; do
+            archs=$(lipo -archs "$bin")
+            echo "$bin: $archs"
+            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::$bin is not universal"; exit 1; }
+          done
+
+      - name: Ad-hoc sign (Apple Silicon only runs signed code; this is not a Developer ID signature)
+        run: |
+          A=build/Anneal_artefacts/Release
+          for b in "$A/VST3/Anneal.vst3" "$A/AU/Anneal.component" "$A/CLAP/Anneal.clap" "$A/Standalone/Anneal.app"; do
+            codesign --force --deep --sign - "$b"
+            codesign --verify --deep --strict "$b"
+          done
+
+      - name: Acceptance tests
+        run: build/AnnealTests_artefacts/Release/AnnealTests
+
+      - name: Host check on the built VST3
+        run: build/AnnealHostCheck_artefacts/Release/AnnealHostCheck build/Anneal_artefacts/Release/VST3/Anneal.vst3
+
+      - name: CLAP check (create, ports, latency, process)
+        run: python3 tools/ClapCheck.py build/Anneal_artefacts/Release/CLAP/Anneal.clap/Contents/MacOS/Anneal
+
+      - name: Validate the AU with auval (what Logic Pro runs)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R build/Anneal_artefacts/Release/AU/Anneal.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -a | grep -i qulc || true
+          auval -strict -v aufx Anl1 Qulc
+
+      - name: Package
+        id: pkg
+        run: |
+          V=$(sed -nE 's/^project\(Anneal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          D="Anneal-$V-macOS"
+          A=build/Anneal_artefacts/Release
+          mkdir "$D"
+          cp -R "$A/VST3/Anneal.vst3" "$A/AU/Anneal.component" "$A/CLAP/Anneal.clap" "$A/Standalone/Anneal.app" "$D/"
+          sed "s/@VERSION@/$V/g" packaging/macos/INSTALL.txt > "$D/INSTALL.txt"
+          cp packaging/macos/install.sh "$D/install.sh"
+          chmod +x "$D/install.sh"
+          ditto -c -k --sequesterRsrc --keepParent "$D" "$D.zip"
+          echo "file=$D.zip" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anneal-macOS
+          path: ${{ steps.pkg.outputs.file }}
+
+      - name: Attach to the release
+        if: needs.gate.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.gate.outputs.tag }}
+        run: gh release upload "$TAG" "${{ steps.pkg.outputs.file }}" --clobber
+
+  linux:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Packages JUCE needs (ALSA, FreeType, fontconfig, X11 headers) and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+            xvfb
+
+      - name: Configure (CLAP on)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DANNEAL_CLAP=ON
+
+      - name: Build VST3, LV2, CLAP, Standalone and the test tools
+        run: cmake --build build --config Release --parallel --target Anneal_VST3 Anneal_LV2 Anneal_CLAP Anneal_Standalone AnnealTests AnnealHostCheck
+
+      - name: Acceptance tests
+        run: xvfb-run -a build/AnnealTests_artefacts/Release/AnnealTests
+
+      - name: Host check on the built VST3
+        run: xvfb-run -a build/AnnealHostCheck_artefacts/Release/AnnealHostCheck build/Anneal_artefacts/Release/VST3/Anneal.vst3
+
+      - name: CLAP check (create, ports, latency, process)
+        run: xvfb-run -a python3 tools/ClapCheck.py build/Anneal_artefacts/Release/CLAP/Anneal.clap
+
+      - name: Package
+        id: pkg
+        run: |
+          V=$(sed -nE 's/^project\(Anneal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          D="Anneal-$V-Linux-x86_64"
+          A=build/Anneal_artefacts/Release
+          mkdir "$D"
+          cp -R "$A/VST3/Anneal.vst3" "$A/LV2/Anneal.lv2" "$A/CLAP/Anneal.clap" "$A/Standalone/Anneal" "$D/"
+          sed "s/@VERSION@/$V/g" packaging/linux/INSTALL.txt > "$D/INSTALL.txt"
+          cp packaging/linux/install.sh "$D/install.sh"
+          chmod +x "$D/install.sh"
+          tar -czf "$D.tar.gz" "$D"
+          echo "file=$D.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anneal-Linux
+          path: ${{ steps.pkg.outputs.file }}
+
+      - name: Attach to the release
+        if: needs.gate.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.gate.outputs.tag }}
+        run: gh release upload "$TAG" "${{ steps.pkg.outputs.file }}" --clobber
+
+  windows-clap:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (CLAP on)
+        run: cmake -S . -B build -A x64 -DANNEAL_CLAP=ON
+
+      - name: Build CLAP
+        run: cmake --build build --config Release --parallel --target Anneal_CLAP
+
+      - name: CLAP check (create, ports, latency, process)
+        run: python tools/ClapCheck.py build/Anneal_artefacts/Release/CLAP/Anneal.clap
+
+      - name: Package
+        id: pkg
+        shell: bash
+        run: |
+          V=$(sed -nE 's/^project\(Anneal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          D="Anneal-$V-Windows-CLAP"
+          mkdir "$D"
+          cp build/Anneal_artefacts/Release/CLAP/Anneal.clap "$D/"
+          sed "s/@VERSION@/$V/g" packaging/windows/INSTALL-CLAP.txt > "$D/INSTALL.txt"
+          7z a "$D.zip" "$D" > /dev/null
+          echo "file=$D.zip" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anneal-Windows-CLAP
+          path: ${{ steps.pkg.outputs.file }}
+
+      - name: Attach to the release
+        if: needs.gate.outputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.gate.outputs.tag }}
+        run: gh release upload "$TAG" "${{ steps.pkg.outputs.file }}" --clobber

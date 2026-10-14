@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
-project(Anneal VERSION 3.0.1 LANGUAGES C CXX)
+
+# macOS: 10.15 or later. Pass -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" for a universal build
+# (Apple Silicon + Intel), as .github/workflows/platforms.yml does.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
+
+project(Anneal VERSION 3.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -71,12 +76,25 @@ endif()
 option(ANNEAL_COPY_AFTER_BUILD "Copy the VST3 into ANNEAL_VST3_COPY_DIR after building" OFF)
 set(ANNEAL_VST3_COPY_DIR "$ENV{LOCALAPPDATA}/Programs/Common/VST3" CACHE PATH "Where to copy the VST3 when ANNEAL_COPY_AFTER_BUILD is ON")
 
+# Formats per platform. Windows: VST3 + Standalone (the setup). macOS: also AU, for Logic Pro,
+# GarageBand and MainStage. Linux: also LV2, for Ardour and other LV2 hosts. CLAP is optional on
+# every platform (ANNEAL_CLAP, below). AAX (Pro Tools) needs Avid's SDK and PACE signing, so it
+# isn't built here.
+if(APPLE)
+    set(anneal_formats VST3 AU Standalone)
+elseif(UNIX)
+    set(anneal_formats VST3 LV2 Standalone)
+else()
+    set(anneal_formats VST3 Standalone)
+endif()
+
 juce_add_plugin(Anneal
     COMPANY_NAME "Qulic"
     PLUGIN_MANUFACTURER_CODE Qulc
     PLUGIN_CODE Anl1
-    FORMATS VST3 Standalone
+    FORMATS ${anneal_formats}
     PRODUCT_NAME "Anneal"
+    LV2URI "urn:qulic:anneal"
     BUNDLE_ID "com.qulic.anneal"
     # App icon (standalone .exe) and the VST3 bundle's folder icon (Plugin.ico + desktop.ini).
     # Rendered from Source/ui/Icon.h: AnnealSnapshot --icons resources/icon
@@ -98,6 +116,24 @@ target_link_libraries(Anneal
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# CLAP (Bitwig, Reaper, FL Studio 2024+, ...), through clap-juce-extensions, pinned to a commit.
+# Off by default because it downloads that library; the platforms workflow turns it on.
+option(ANNEAL_CLAP "Also build Anneal.clap (fetches clap-juce-extensions)" OFF)
+if(ANNEAL_CLAP)
+    if(CMAKE_VERSION VERSION_LESS 3.28)
+        message(FATAL_ERROR "ANNEAL_CLAP needs CMake 3.28 or newer")
+    endif()
+    include(FetchContent)
+    FetchContent_Declare(clap_juce_extensions
+        GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+        GIT_TAG 55525c9858d4b25687be7759a5e0f70eccef218e   # main, 2026-09-12
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(clap_juce_extensions)
+    clap_juce_extensions_plugin(TARGET Anneal
+        CLAP_ID "com.qulic.anneal"
+        CLAP_FEATURES audio-effect equalizer distortion stereo)
+endif()
 
 # ---------------------------------------------------------------------------
 # Headless DSP/processor acceptance tests + benchmark.

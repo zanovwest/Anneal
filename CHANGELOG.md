@@ -4,6 +4,48 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 3.1.0 — 2026-10-13 23:06
+
+New
+- **CLAP for Windows**: `Anneal-3.1.0-Windows-CLAP.zip` on the release, for Bitwig, Reaper,
+  FL Studio 2024+ and other CLAP hosts. Same sound, controls, sidechain input and latency as the
+  VST3. Copy `Anneal.clap` into `C:\Program Files\Common Files\CLAP` (or
+  `%LOCALAPPDATA%\Programs\Common\CLAP` just for you). Checked with a small CLAP host
+  (`tools/ClapCheck.py`, 10/10):
+  - ports: Input and Sidechain in, stereo Output;
+  - 25 parameters;
+  - latency 1091 samples at 48 kHz, the same as the VST3;
+  - 2 s of audio processed cleanly.
+
+  Not tried inside a DAW yet.
+- **macOS (Apple Silicon and Intel) and Linux, prepared, not built yet.** The project now targets:
+  - on macOS, one universal binary (arm64 + x86_64) with AU (Logic Pro, GarageBand, MainStage),
+    VST3, CLAP and the standalone app, for macOS 10.15 or later;
+  - on Linux, VST3, LV2, CLAP and the standalone app.
+
+  The interface uses Helvetica Neue on macOS and the system sans on Linux. A GitHub Actions
+  workflow builds them, tests them (acceptance tests, host check, CLAP check, `auval -strict`,
+  a both-architectures check) and packages them with an install script. It isn't running yet:
+  GitHub needs one extra permission on the build PC's login first (see "Turning on the macOS and
+  Linux builds" in docs/DISTRIBUTION.md). Until then there are no macOS or Linux downloads, and
+  that code hasn't been compiled for those systems.
+- **docs/DISTRIBUTION.md**:
+  - which DAW uses which format;
+  - what Pro Tools (AAX) and notarized macOS builds need;
+  - a ready-to-paste KVR listing;
+  - notes on Plugin Alliance and on licences before a public release.
+
+The Windows VST3 is unchanged: same sound and look (all editor snapshots are byte-identical to
+3.0.1's).
+
+Tests: 93/93 acceptance checks, 17/17 host checks on the built VST3, 25/25 isolated installer
+checks, ClapCheck 10/10 on the Windows CLAP, and file version 3.1.0 on the VST3 and the app.
+CPU at 48 kHz on this machine: Stereo Low 2.0 %, Normal 1.8 %, Precise 2.7 % of one core; Mid/Side
+Low 3.7 % (64), Normal 3.1 % (512), Precise 4.4 % (64). The DSP code is the same as 3.0.0's, so
+3.0.0's higher figures (2.5 / 2.1 / 3.4 %) were the machine's load at the time, not a slowdown.
+Slowest 0.1 % of 64-sample blocks: Stereo Low 10 %, Precise 24 %; Mid/Side Low 17 %, Precise 37 %
+of the deadline.
+
 ## 3.0.1 — 2026-10-13 22:54
 
 Fixes

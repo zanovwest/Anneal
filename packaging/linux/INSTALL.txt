@@ -1,0 +1,16 @@
+Anneal @VERSION@ for Linux (x86_64)
+===================================
+
+  Anneal.vst3    VST3: Bitwig, Reaper, Ardour, Renoise, ...
+  Anneal.lv2     LV2: Ardour, Carla, Qtractor, ...
+  Anneal.clap    CLAP: Bitwig, Reaper, ...
+  Anneal         standalone app (JACK or ALSA)
+
+Install for your user:  bash install.sh
+That copies them to ~/.vst3, ~/.lv2, ~/.clap and ~/.local/bin, the folders hosts scan by
+default. Then restart your DAW.
+
+Built on Ubuntu 24.04. It needs the usual desktop libraries: ALSA, FreeType, fontconfig, X11.
+
+Uninstall: delete ~/.vst3/Anneal.vst3, ~/.lv2/Anneal.lv2, ~/.clap/Anneal.clap and
+~/.local/bin/Anneal.

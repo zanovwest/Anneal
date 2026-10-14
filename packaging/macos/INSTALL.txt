@@ -1,0 +1,34 @@
+Anneal @VERSION@ for macOS
+==========================
+
+One universal build for Apple Silicon (M1 and later) and Intel Macs, macOS 10.15 or later.
+
+  Anneal.component   Audio Unit: Logic Pro, GarageBand, MainStage, Ableton Live, ...
+  Anneal.vst3        VST3: Ableton Live, Cubase, Studio One, Reaper, Bitwig, FL Studio, ...
+  Anneal.clap        CLAP: Bitwig, Reaper, FL Studio 2024 and later, ...
+  Anneal.app         standalone app
+
+Easiest: open Terminal, type "bash " (with a space), drag install.sh from this folder into the
+window, and press Return. It copies everything into your user folders:
+
+  ~/Library/Audio/Plug-Ins/Components/Anneal.component
+  ~/Library/Audio/Plug-Ins/VST3/Anneal.vst3
+  ~/Library/Audio/Plug-Ins/CLAP/Anneal.clap
+  ~/Applications/Anneal.app
+
+Then restart your DAW. Logic Pro scans new Audio Units on its next start. If Anneal is listed
+as failed, use Logic Pro > Settings > Plug-in Manager > Reset & Rescan Selection.
+
+Why the script: this build is not yet signed with an Apple Developer ID or notarized by Apple.
+macOS marks downloaded files as "quarantined", and blocks quarantined plug-ins that aren't
+notarized. install.sh removes that mark from the copies it installs (xattr -dr
+com.apple.quarantine), the way you would by hand. It changes nothing else.
+
+By hand instead: copy the four items into the folders above, then run
+  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Anneal.component \
+    ~/Library/Audio/Plug-Ins/VST3/Anneal.vst3 ~/Library/Audio/Plug-Ins/CLAP/Anneal.clap \
+    ~/Applications/Anneal.app
+
+Pro Tools needs AAX, which isn't built yet.
+
+Uninstall: delete those four items.

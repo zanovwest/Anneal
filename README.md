@@ -1,7 +1,7 @@
 # Anneal
 
-A VST3 effect for Windows: an **automatic perceptual EQ** combined with a **spectral
-saturator**. Think "saturating EQ" (SweetEQ-style colour) steered by a hearing model
+An audio effect (VST3, AU, CLAP, LV2) for Windows, macOS (Apple Silicon and Intel) and Linux:
+an **automatic perceptual EQ** combined with a **spectral saturator**. Think "saturating EQ" (SweetEQ-style colour) steered by a hearing model
 (Gullfoss-style Recover/Tame behaviour), with the saturation itself done in the FFT
 domain so it never aliases and never intermodulates.
 
@@ -14,7 +14,8 @@ domain so it never aliases and never intermodulates.
   **Freeze** holds the curve as a static EQ; **Ceiling** keeps the output under a true-peak limit.
 
 Design brief: [docs/DESIGN.md](docs/DESIGN.md) · Engine plan and test criteria: [docs/ENGINE.md](docs/ENGINE.md) ·
-What's next: [docs/ROADMAP.md](docs/ROADMAP.md) · What changed: [CHANGELOG.md](CHANGELOG.md)
+What's next: [docs/ROADMAP.md](docs/ROADMAP.md) · What changed: [CHANGELOG.md](CHANGELOG.md) ·
+Platforms, DAWs, KVR: [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)
 
 ## Install
 
@@ -36,6 +37,23 @@ Anneal). Updates can be installed while FL Studio is open, even with Anneal load
 version the next time it loads the plugin. Don't keep both installs: FL would list Anneal twice.
 
 Unattended update: `Anneal-<version>-Setup.exe /CURRENTUSER /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
+
+**macOS** (10.15 or later; one universal build for Apple Silicon and Intel): download
+`Anneal-<version>-macOS.zip`. It has the AU (Logic Pro, GarageBand), VST3, CLAP and the standalone
+app. Run `bash install.sh` from the unzipped folder: it copies them into
+`~/Library/Audio/Plug-Ins` and `~/Applications`. These builds aren't notarized by Apple yet, so the
+script also removes macOS's download quarantine from the installed copies; `INSTALL.txt` explains
+how to do it by hand.
+
+**Linux** (x86_64): `Anneal-<version>-Linux-x86_64.tar.gz` has the VST3, LV2, CLAP and the
+standalone app; `bash install.sh` puts them in `~/.vst3`, `~/.lv2`, `~/.clap` and `~/.local/bin`.
+
+**CLAP on Windows**: `Anneal-<version>-Windows-CLAP.zip`, for Bitwig, Reaper and FL Studio 2024+
+(the VST3 from the setup works there too).
+
+The macOS, Linux and CLAP files come from a GitHub Actions workflow (`packaging/ci/platforms.yml`)
+that builds and tests them for every x.y.0 release. It's waiting to be switched on: see "Turning
+on the macOS and Linux builds" in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md). Pro Tools (AAX) isn't supported yet; see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 ## Controls
 
@@ -70,6 +88,11 @@ Every knob: drag, **Ctrl-drag** for fine adjustment, **double-click** to reset, 
 the value** to type one (units such as `2.5k`, `Body 40`, `odd` are understood).
 
 ## Build (Windows, x64)
+
+(macOS and Linux: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` and
+`cmake --build build --parallel`; add `"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"` for a universal Mac
+build and `-DANNEAL_CLAP=ON` for CLAP. The exact steps, Linux packages and checks are in
+`packaging/ci/platforms.yml`.)
 
 Requirements: Visual Studio 2022 or 2026 with the C++ workload, CMake ≥ 3.22.
 JUCE 8.0.4 is taken from a local git checkout of exactly that tag when one is found (on this
@@ -145,13 +168,13 @@ projects keep their settings.
 
 ## Status
 
-- **Built (3.0.1):** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4. `build.ps1` checks that the DLL's Windows file version matches (it said 0.2.1 until 3.0.1).
+- **Built (3.1.0):** Windows: Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4. `build.ps1` checks that the DLL's Windows file version matches (it said 0.2.1 until 3.0.1). Windows CLAP (3.1.0): built here and checked with `tools/ClapCheck.py` (10/10: ports, 25 parameters, latency, audio). macOS (universal arm64 + x86_64: AU, VST3, CLAP, Standalone) and Linux (VST3, LV2, CLAP, Standalone): set up in `packaging/ci/platforms.yml`, not compiled yet; the workflow waits for GitHub's workflow permission.
 - **Sidechain, Freeze, Ceiling, Undo (3.0):** Make room ducks a 2 kHz key's band −9.0 dB and leaves 300 Hz / 8 kHz at 0.0 dB (also through the built VST3's sidechain bus); Unmask lifts +5.6 dB; a silent key changes nothing. Freeze keeps a −9.0 dB cut after the music changes. The Ceiling holds the true peak (independent 8× meter) between −0.01 and +0.10 dB of 0.0 / −0.3 / −1.0 dBTP on a sine at fs/4 and on music 12 dB over; Off is bit-exact. Undo/redo restores edits and treats a preset as one step.
 - **Saturation flavours (0.2.6):** Clean / Tape / Tube / Transformer / Exciter, measured on steady tones: Tube's 2nd +3.5 dB over Clean and 25 dB over its 3rd; Tape's 5th −17 dB, its 2nd at 9 kHz −6 dB but at 1 kHz unchanged; Transformer's 3rd 17 dB over its 2nd at 60 Hz, 37 dB below Clean at 2 kHz; Exciter writes nothing for a 300 Hz partial (−174 dB) and +6 dB at 8 kHz for a 4 kHz one, also in Mid/Side. Flavours leave the EQ path identical (< 1e-7) and switch click-free.
 - **Listen modes (0.2.5):** Reveal only / Smooth only / Heat only. The solos split the processing exactly (normal − Reveal solo + Smooth solo = input; normal − Heat solo = input) in Stereo, Mid/Side, Low and Precise; switching while playing adds no clicks; Match holds; the display keeps showing the full result.
 - **Mid/Side (0.2.4):** independent Mid and Side EQ/Heat with separate routing. Acceptance checks cover neutral accuracy, mono fallback, isolation, independent models, automation and old-session defaults.
 - **Tested headless (`AnnealTests`, 93/93 pass):** STFT identity in every latency mode (44.1/48/96 kHz, blocks 1–4096 and random), latency per mode and mode switching, old projects load as Precise, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects), transient guard (attacks pass Smooth in Low and Precise, sustained ring cut unchanged, no harmonics over attacks, old projects load with Guard off), display range = engine range, range-handle drags (and a double-click reset as one host gesture), Mid/Side, Listen modes, saturation flavours, sidechain (Make room, Unmask, silent key, the processor's bus), Freeze, true-peak Ceiling, undo/redo, older projects with the 3.0 controls off, and the editor layout (no overlapping controls, routing and Flavour menus on the title row).
-- **CPU (build machine, 3.0.0, Ceiling and Sidechain off):** at 48 kHz, Stereo Low 2.5 %, Normal 2.1 %, Precise 3.4 % of one core; Mid/Side Low 4.6 % (64), Normal 3.5 % (512), Precise 5.3 % (64). Above 0.2.6's run but close to 0.2.5's; not measured side by side, so unconfirmed. Ceiling-on and Sidechain-on CPU not benchmarked yet.
+- **CPU (build machine, 3.1.0, Ceiling and Sidechain off):** at 48 kHz, Stereo Low 2.0 %, Normal 1.8 %, Precise 2.7 % of one core; Mid/Side Low 3.7 % (64), Normal 3.1 % (512), Precise 4.4 % (64). Same DSP as 3.0.0, whose 2.5 / 2.1 / 3.4 % were taken on a busier machine. Ceiling-on and Sidechain-on CPU not benchmarked yet.
 - **CPU (build machine, 0.2.6):** at 48 kHz / 512 samples, linked Stereo Low 1.9 %, Normal 1.7 %, Precise 2.7 % of one core. Mid/Side Low 3.6 %, Normal 2.9 %, Precise 4.3 % (Low/Precise at 64 samples, Normal at 512). Independent M/S analysis uses more CPU; the slowest 0.1 % of 64-sample blocks take 10 % / 22 % (Low / Precise Stereo) and 16 % / 35 % (Low / Precise M/S) of the deadline. Tape (the flavour with per-bin work) measures the same as Clean; Listen modes cost a little extra only while one is on. 0.2.5 measured 2.4 / 2.1 / 3.4 % an hour earlier on a busier machine; timings vary with load, host and machine.
 - **Icon (0.2.1):** `Source/ui/Icon.h`, rendered with `AnnealSnapshot --icons resources/icon`, packed by `tools/make_ico.py` into `resources/icon/anneal.ico` (setup, Apps entry); JUCE builds the app and VST3-folder icons from `icon_512.png` / `icon_32.png`.
 - **UI (v3, 0.2.0; 1160 × 640 since 3.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio, with a sidechain key and frozen.

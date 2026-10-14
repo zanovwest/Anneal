@@ -34,20 +34,39 @@ namespace anneal::theme
     }
 
     // Segoe UI ships with every Windows; its figures are tabular, so changing values don't jitter.
-    // The wordmark alone uses Bahnschrift Light. JUCE falls back to the default sans elsewhere.
+    // The wordmark alone uses Bahnschrift Light. macOS uses Helvetica Neue (also tabular figures;
+    // it has no Semibold, Medium stands in) with Thin for the wordmark; Linux the default sans.
+   #if JUCE_WINDOWS
+    inline juce::FontOptions uiFace (const juce::String& style, float height) { return juce::FontOptions ("Segoe UI", style, height); }
+    inline juce::FontOptions wordmarkFace (float height)                      { return juce::FontOptions ("Bahnschrift", "Light", height); }
+   #elif JUCE_MAC
+    inline juce::FontOptions uiFace (const juce::String& style, float height)
+    {
+        return juce::FontOptions ("Helvetica Neue", style == "Semibold" ? juce::String ("Medium") : style, height);
+    }
+    inline juce::FontOptions wordmarkFace (float height) { return juce::FontOptions ("Helvetica Neue", "Thin", height); }
+   #else
+    inline juce::FontOptions uiFace (const juce::String& style, float height)
+    {
+        const auto s = style == "Semibold" ? juce::String ("Bold") : style == "Light" ? juce::String ("Regular") : style;
+        return juce::FontOptions (juce::Font::getDefaultSansSerifFontName(), s, height);
+    }
+    inline juce::FontOptions wordmarkFace (float height) { return uiFace ("Regular", height); }
+   #endif
+
     inline juce::Font font (float height, const juce::String& style = "Regular")
     {
-        return juce::Font (juce::FontOptions ("Segoe UI", style, height));
+        return juce::Font (uiFace (style, height));
     }
 
     inline juce::Font caps (float height, const juce::String& style = "Semibold")
     {
-        return juce::Font (juce::FontOptions ("Segoe UI", style, height).withKerningFactor (0.09f));
+        return juce::Font (uiFace (style, height).withKerningFactor (0.09f));
     }
 
     inline juce::Font wordmarkFont (float height)
     {
-        return juce::Font (juce::FontOptions ("Bahnschrift", "Light", height).withKerningFactor (0.42f));
+        return juce::Font (wordmarkFace (height).withKerningFactor (0.42f));
     }
 
     inline float advanceOf (const juce::Font& f, const juce::String& s)

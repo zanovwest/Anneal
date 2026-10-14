@@ -1,0 +1,11 @@
+Anneal @VERSION@ - CLAP for Windows (x64)
+=========================================
+
+Most Windows DAWs load Anneal's VST3, which Anneal-@VERSION@-Setup.exe installs. This CLAP
+version is for hosts that prefer CLAP: Bitwig, Reaper, FL Studio 2024 and later, ...
+
+Copy Anneal.clap into one of these:
+  C:\Program Files\Common Files\CLAP        (all users; needs administrator rights)
+  %LOCALAPPDATA%\Programs\Common\CLAP       (just you)
+
+Then rescan plug-ins in your DAW. Uninstall: delete Anneal.clap.

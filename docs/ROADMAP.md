@@ -34,6 +34,18 @@ The user asked for a major 4.0 on 2026-10-14. These belong to that run; hourly u
    for the EQ and Heat separately.
 3. **Keyboard shortcuts** for Undo/Redo (Ctrl+Z / Ctrl+Shift+Z) where the host passes keys through.
 
+## Waiting on the user
+
+These need the user's own accounts or decisions. Hourly updates don't take them.
+
+- **Switch on the macOS / Linux / CLAP workflow**: the gh login needs the `workflow` scope
+  (`gh auth refresh -h github.com -s workflow`), then `packaging/ci/platforms.yml` moves to
+  `.github/workflows/`.
+- **Pro Tools (AAX)**: Avid developer account and AAX SDK, plus PACE signing (iLok).
+- **Notarized macOS builds**: Apple Developer Program membership (Developer ID certificate).
+- **Public downloads, KVR listing, Plugin Alliance**: making releases public, and licence choices
+  (JUCE, VST3). See docs/DISTRIBUTION.md.
+
 ## Not wanted
 
 The user said no to these on 2026-10-13. Don't add them.
@@ -43,6 +55,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 3.1.0 (2026-10-13): **CLAP for Windows** (zip on the release, ClapCheck 10/10); macOS universal
+  (AU / VST3 / CLAP) and Linux (VST3 / LV2 / CLAP) build setup, workflow and install scripts (not
+  running yet, see above); platform fonts; docs/DISTRIBUTION.md (DAW matrix, KVR kit).
+- 3.0.1 (2026-10-13): fixed the DLL's Windows file version (said 0.2.1 since 0.2.1); `build.ps1`
+  now checks it.
 - 3.0.0 (2026-10-13): **Sidechain** Make room / Unmask with Amount and a violet key line;
   **Freeze**; true-peak **Ceiling** (Off / 0.0 / −0.3 / −1.0 dBTP, 4× detection, 1.25 ms look-ahead,
   always in the latency); **Undo/Redo** in the header; 1160 × 640 layout with a SIDECHAIN group;
