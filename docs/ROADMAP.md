@@ -1,6 +1,6 @@
 # Anneal roadmap
 
-Every hourly update does two things:
+Every versioned update does two things:
 
 1. **Bug pass.** It looks for real bugs (code review, the tests, the benchmark, the rendered UI) and
    fixes every one it can prove with a test.
@@ -41,10 +41,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
-- Unreleased (2026-10-13): **Uninstall while a DAW has Anneal loaded.** Move the held DLL aside
+- 0.2.3 (2026-10-13): **Uninstall while a DAW has Anneal loaded.** Move the held DLL aside
   using the recorded install destination; a later install cleans it after release. Installer
   regression covers the held-DLL uninstall and custom folder (25/25 sandbox checks).
-- Unreleased (2026-10-13): **Range handles after crossed automation.** Dragging Low starts from
+- 0.2.3 (2026-10-13): **Range handles after crossed automation.** Dragging Low starts from
   the displayed range and preserves the displayed High limit; a click without dragging leaves
   the parameters alone. Five interaction regression checks added (45/45 acceptance checks).
 - 0.2.2 (2026-10-13): **Transient guard** (Guard, in AUTO EQ): attacks pass the auto EQ and get no

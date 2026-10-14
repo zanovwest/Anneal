@@ -1,10 +1,10 @@
 # Changelog
 
-Newest first. One entry per version; the hourly update adds one (see README → Hourly updates).
+Newest first. Each completed, tested update gets a versioned entry (see README → Minute updates).
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
-## Unreleased
+## 0.2.3 — 2026-10-13
 
 Fixes
 - Uninstalling while a DAW has Anneal loaded now moves the locked DLL aside before removing the

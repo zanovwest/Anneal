@@ -107,6 +107,16 @@ after 5 minutes ("waiting for approval") instead of hanging. `-Setup -Test` also
 setup with its own AppId: it installs into a sandbox without admin rights, updates while another
 process has the plugin DLL loaded (as a DAW would), and uninstalls, without touching a real install.
 
+## Minute updates
+
+The Codex task **Anneal feature updates** returns to the same chat every minute and continues
+the next bug fix or roadmap feature. Each completed, tested update advances the patch version:
+0.2.3, then 0.2.4, 0.2.5, and so on. The version in CMake, the changelog entry, and the roadmap
+completion record agree. Work can span several scheduled runs while implementation and tests
+finish; a version advances when the change is ready to publish. Auto Heat and A/B compare are
+excluded. The task publishes tested source updates to GitHub; installing the new build is a
+separate action.
+
 ## Hourly updates
 
 A scheduled Claude task ("Anneal hourly update" in the Claude desktop app's scheduled tasks) works on
@@ -124,7 +134,7 @@ projects keep their settings.
 
 ## Status
 
-- **Built:** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
+- **Built (0.2.3):** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
 - **Tested headless (`AnnealTests`, 40/40 pass):** STFT identity in every latency mode (44.1/48/96 kHz, blocks 1–4096 and random), latency per mode and mode switching, old projects load as Precise, bit-exact Mix 0 %, even/odd harmonics, no aliasing (≈ −160 dB vs −34 dB for a naive tanh), no IMD (≈ −170 dB), Smooth/Reveal/Range/Tilt behaviour, block-size invariance, 30 s automation stress, re-prepare at 44.1–192 kHz, state round trip and malformed state, bypass, reset (no old audio afterwards), mono, harmonic pre-echo −122 dB, factory presets (values, playback, edited-preset save/load, older projects), transient guard (attacks pass Smooth in Low and Precise, sustained ring cut unchanged, no harmonics over attacks, old projects load with Guard off), display range = engine range.
 - **CPU (this machine):** at 48 kHz stereo, Low 2.4 %, Normal 2.1 %, Precise 3.4 % of one core. Measured at high priority like a DAW audio thread, the slowest 0.1 % of blocks at 64 samples take 10 % (Low) / 28 % (Precise) of the deadline.
 - **Icon (0.2.1):** `Source/ui/Icon.h`, rendered with `AnnealSnapshot --icons resources/icon`, packed by `tools/make_ico.py` into `resources/icon/anneal.ico` (setup, Apps entry); JUCE builds the app and VST3-folder icons from `icon_512.png` / `icon_32.png`.
