@@ -4,6 +4,19 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 3.0.1 — 2026-10-13 22:54
+
+Fixes
+- The plug-in file's Windows version (Explorer → Properties → Details, and what some plug-in
+  managers show) said **0.2.1** in every release since 0.2.1, including 3.0.0. The plug-in itself
+  always reported the right version to the DAW. JUCE only rewrote that version stamp when the icon
+  changed. The build now refreshes it whenever the version changes, and `build.ps1` refuses to
+  continue if the VST3's or the standalone app's file version differs from the release version.
+  Sound, controls and projects are unchanged.
+
+Tests: 93/93 acceptance checks, 17/17 host checks on the built VST3, 25/25 isolated installer
+checks, plus the new file-version check (failed on the 3.0.0 build: 0.2.1; passes on 3.0.1).
+
 ## 3.0.0 — 2026-10-13 19:05
 
 The first major update. Anneal can now listen to another track, hold its curve, and keep its

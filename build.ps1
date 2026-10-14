@@ -109,6 +109,18 @@ if ((Invoke-Logged "cmake" $buildArgs) -ne 0) { Write-Log "Build failed. Log: $l
 
 $vst3 = Join-Path $buildDir "Anneal_artefacts\$Configuration\VST3\Anneal.vst3"
 Write-Log "VST3: $vst3"
+
+# The DLL's Windows file version must be this build's version (3.0.0 shipped saying 0.2.1;
+# see the version-resource note in CMakeLists.txt).
+$version = ([regex]::Match((Get-Content (Join-Path $root "CMakeLists.txt") -Raw), 'project\(Anneal VERSION ([0-9.]+)')).Groups[1].Value
+foreach ($bin in @((Join-Path $vst3 "Contents\x86_64-win\Anneal.vst3"),
+                   (Join-Path $buildDir "Anneal_artefacts\$Configuration\Standalone\Anneal.exe"))) {
+    $fileVersion = (Get-Item $bin).VersionInfo.FileVersion
+    if ($fileVersion -ne $version) {
+        Write-Log "$bin has file version '$fileVersion', expected '$version'." "ERROR"; exit 1
+    }
+}
+Write-Log "File version $version on the VST3 and the standalone app."
 Write-Log "Standalone: $(Join-Path $buildDir "Anneal_artefacts\$Configuration\Standalone\Anneal.exe")"
 
 if ($Test) {

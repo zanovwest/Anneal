@@ -145,7 +145,7 @@ projects keep their settings.
 
 ## Status
 
-- **Built (3.0.0):** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4.
+- **Built (3.0.1):** Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4. `build.ps1` checks that the DLL's Windows file version matches (it said 0.2.1 until 3.0.1).
 - **Sidechain, Freeze, Ceiling, Undo (3.0):** Make room ducks a 2 kHz key's band −9.0 dB and leaves 300 Hz / 8 kHz at 0.0 dB (also through the built VST3's sidechain bus); Unmask lifts +5.6 dB; a silent key changes nothing. Freeze keeps a −9.0 dB cut after the music changes. The Ceiling holds the true peak (independent 8× meter) between −0.01 and +0.10 dB of 0.0 / −0.3 / −1.0 dBTP on a sine at fs/4 and on music 12 dB over; Off is bit-exact. Undo/redo restores edits and treats a preset as one step.
 - **Saturation flavours (0.2.6):** Clean / Tape / Tube / Transformer / Exciter, measured on steady tones: Tube's 2nd +3.5 dB over Clean and 25 dB over its 3rd; Tape's 5th −17 dB, its 2nd at 9 kHz −6 dB but at 1 kHz unchanged; Transformer's 3rd 17 dB over its 2nd at 60 Hz, 37 dB below Clean at 2 kHz; Exciter writes nothing for a 300 Hz partial (−174 dB) and +6 dB at 8 kHz for a 4 kHz one, also in Mid/Side. Flavours leave the EQ path identical (< 1e-7) and switch click-free.
 - **Listen modes (0.2.5):** Reveal only / Smooth only / Heat only. The solos split the processing exactly (normal − Reveal solo + Smooth solo = input; normal − Heat solo = input) in Stereo, Mid/Side, Low and Precise; switching while playing adds no clicks; Match holds; the display keeps showing the full result.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Anneal VERSION 3.0.0 LANGUAGES C CXX)
+project(Anneal VERSION 3.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,6 +49,22 @@ target_compile_definitions(AnnealCore INTERFACE
 target_link_libraries(AnnealCore INTERFACE
     juce::juce_audio_utils
     juce::juce_dsp)
+
+# ---------------------------------------------------------------------------
+# JUCE writes the Windows version resource (the DLL's File version in Explorer) only when the
+# icon changes, so after a version bump it kept the old number: 3.0.0 shipped saying 0.2.1.
+# A stale copy is removed here, at configure time (a version bump edits this file, so CMake
+# re-configures), and the build then writes it again from the current version.
+# build.ps1 checks the built DLL's file version.
+set(anneal_rc "${CMAKE_CURRENT_BINARY_DIR}/Anneal_artefacts/JuceLibraryCode/Anneal_resources.rc")
+if(EXISTS "${anneal_rc}")
+    file(READ "${anneal_rc}" anneal_rc_text)
+    string(REPLACE "." "," anneal_rc_version "${PROJECT_VERSION}")
+    if(NOT anneal_rc_text MATCHES "FILEVERSION +${anneal_rc_version},0")
+        message(STATUS "Anneal: version resource is stale, regenerating it for ${PROJECT_VERSION}")
+        file(REMOVE "${anneal_rc}")
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # The plugin. Not copied into any system/user plugin folder by default.
