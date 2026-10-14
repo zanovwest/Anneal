@@ -26,7 +26,7 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
 ## Reserved for 4.0
 
-The user asked for a major 4.0 on 2026-10-14. These belong to that run; hourly updates don't take them.
+The user asked for a major 4.0 on 2026-10-14. These belong to that run; daily updates don't take them.
 
 1. **Reference match**: learn a reference's long-term ERB spectrum (from the sidechain key, or an
    audio file dropped on the display) and steer the auto EQ toward it, with a Match amount.
@@ -36,7 +36,7 @@ The user asked for a major 4.0 on 2026-10-14. These belong to that run; hourly u
 
 ## Waiting on the user
 
-These need the user's own accounts or decisions. Hourly updates don't take them.
+These need the user's own accounts or decisions. Daily updates don't take them.
 
 - **Public downloads, KVR listing, Plugin Alliance**: making releases public, and licence choices
   (JUCE, VST3). See docs/DISTRIBUTION.md. The user will do KVR later (2026-10-13).

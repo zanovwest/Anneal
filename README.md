@@ -151,17 +151,25 @@ finish; a version advances when the change is ready to publish. Auto Heat and A/
 excluded. The task publishes tested source updates to GitHub; installing the new build is a
 separate action.
 
-## Hourly updates
+## Daily updates
 
-A scheduled Claude task ("Anneal hourly update" in the Claude desktop app's scheduled tasks) works on
-Anneal every hour, day and night. Each run fixes the bugs it finds and adds one new feature or
-mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not
-wanted*). It bumps the version and runs `.\build.ps1 -Test -Snapshot -Setup`. Only when everything
-passes does it add a [CHANGELOG.md](CHANGELOG.md) entry, commit, push, publish the setup as a GitHub
-release, and install it into **Program Files**. That needs your approval: Windows' administrator
-prompt waits on screen until you click Yes. If you're away, the prompt keeps waiting, later updates
-don't add more prompts, and the one Yes installs the newest build. The task never approves or works
-around the prompt itself.
+A scheduled Claude task ("Anneal daily update" in the Claude desktop app's scheduled tasks) works on
+Anneal once a day at 10 AM HST. It ran hourly until 2026-10-13, when the user switched it to daily
+starting after 4.0.0. Each run fixes the bugs it finds and adds one new feature or mode, usually the
+next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not wanted* or *Not now*).
+Missed days are caught up together, up to five. It bumps the version and runs
+`.\build.ps1 -Test -Snapshot -Setup`. Only when everything passes does it:
+- add a [CHANGELOG.md](CHANGELOG.md) entry;
+- commit and push;
+- publish the setup as a GitHub release;
+- install it into **Program Files**.
+
+The install needs your approval: Windows' administrator prompt waits on screen until you click Yes.
+If you're away, the prompt keeps waiting, later updates don't add more prompts, and the one Yes
+installs the newest build. The task never approves or works around the prompt itself.
+
+The major 4.0.0 comes from its own task ("Anneal 4.0 update") on 2026-10-14, retried every two
+hours that day until it's released; the daily update waits for it.
 
 Parameter IDs, plugin codes and saved-state compatibility never change, so existing FL Studio
 projects keep their settings.
