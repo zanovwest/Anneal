@@ -2,6 +2,7 @@
 // Exit code = number of failed checks.
 
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 #include "Params.h"
 #include "Presets.h"
 #include "dsp/SpectralEngine.h"
@@ -614,7 +615,8 @@ void testState()
     const std::pair<const char*, float> values[] = { { ids::reveal, 73.0f }, { ids::smooth, 12.5f }, { ids::tilt, -0.8f },
         { ids::response, 300.0f }, { ids::rangeLo, 85.0f }, { ids::rangeHi, 9000.0f }, { ids::heat, 66.0f }, { ids::color, 80.0f },
         { ids::focus, -45.0f }, { ids::mix, 70.0f }, { ids::output, -3.5f }, { ids::match, 1.0f }, { ids::delta, 1.0f },
-        { ids::guard, 55.0f }, { ids::stereoMode, 1.0f }, { ids::eqTarget, 2.0f }, { ids::heatTarget, 1.0f } };
+        { ids::guard, 55.0f }, { ids::stereoMode, 1.0f }, { ids::eqTarget, 2.0f }, { ids::heatTarget, 1.0f },
+        { ids::listen, 2.0f } };
     for (auto [id, v] : values)
         a.set (id, v);
     juce::MemoryBlock blob;
@@ -1182,6 +1184,224 @@ void testMidSide()
     }
 }
 
+void testListen()
+{
+    section ("Listen modes: Reveal only / Smooth only / Heat only");
+    const double fs = 48000.0;
+    const auto music = testsig::musicLike (fs, 3.0, 7);
+
+    // Listen choices: 0 Off, 1 Reveal only, 2 Smooth only, 3 Heat only. One processor per mode, same settings and input (the engine is deterministic).
+    auto runModes = [fs] (const std::function<void (Rig&)>& configure, std::initializer_list<int> modes,
+                          const Channels& in, int& latency)
+    {
+        std::vector<Channels> outs;
+        for (int m : modes)
+        {
+            Rig r;
+            r.setNeutral();
+            configure (r);
+            r.set (ids::listen, (float) m);
+            r.prepare (fs, 512);
+            outs.push_back (r.run (in, fixedBlocks (512)));
+            latency = r.proc->getLatencySamples();
+        }
+        return outs;
+    };
+    // max | normal - revealSolo + smoothSolo - delayed dry |: zero by construction when Tilt is 0
+    // (normal = X*A, Reveal solo = X*max(A-1,0), Smooth solo = X*max(1-A,0)).
+    auto eqIdentity = [] (const std::vector<Channels>& o, const Channels& in, int latency)
+    {
+        double m = 0.0;
+        for (size_t c = 0; c < in.size(); ++c)
+            for (size_t i = (size_t) latency; i < in[c].size(); ++i)
+                m = std::max (m, (double) std::abs (o[0][c][i] - o[1][c][i] + o[2][c][i] - in[c][i - (size_t) latency]));
+        return m;
+    };
+    auto level = [] (const Channels& x, int from) { return toDb (maxAbs (x, from)); };
+
+    // Reveal and Smooth solos split the auto EQ exactly: in Stereo (Low and Precise) and Mid/Side.
+    for (auto [lm, ms] : { std::pair { 0, 0 }, std::pair { 2, 0 }, std::pair { 0, 1 } })
+    {
+        const int latencyMode = lm, midSide = ms;
+        int latency = 0;
+        const auto o = runModes ([=] (Rig& r)
+        {
+            r.set (ids::reveal, 100); r.set (ids::smooth, 100);
+            r.set (ids::latency, (float) latencyMode); r.set (ids::stereoMode, (float) midSide);
+        }, { 0, 1, 2 }, music, latency);
+        const double err = eqIdentity (o, music, latency);
+        const double rv = level (o[1], latency), sm = level (o[2], latency);
+        const juce::String name = juce::String ("normal - Reveal solo + Smooth solo = input, ")
+                                + (latencyMode == 0 ? "Low" : "Precise") + (midSide ? " M/S" : "");
+        check (err < 1.0e-4 && rv > -50.0 && sm > -50.0, name.toRawUTF8(),
+               "max err " + juce::String (err, 9) + "; solo peaks Reveal " + db (rv) + ", Smooth " + db (sm));
+    }
+
+    // Heat only = exactly the harmonics: normal - solo = input, and the solo has no fundamental.
+    {
+        const auto tone = testsig::sines (fs, (int) (3 * fs), { { 1000.0, 0.125893 } });
+        int latency = 0;
+        const auto o = runModes ([] (Rig& r) { r.set (ids::heat, 100); r.set (ids::color, 0); }, { 0, 3 }, tone, latency);
+        double err = 0.0;
+        for (size_t c = 0; c < tone.size(); ++c)
+            for (size_t i = (size_t) latency; i < tone[c].size(); ++i)
+                err = std::max (err, (double) std::abs (o[0][c][i] - o[1][c][i] - tone[c][i - (size_t) latency]));
+        const float* seg = o[1][0].data() + (int) (1.5 * fs);
+        const double fund = rel (seg, (int) fs, fs, 1000.0, 0.125893), h2 = rel (seg, (int) fs, fs, 2000.0, 0.125893);
+        check (err < 1.0e-4 && fund < -80.0 && h2 > -40.0, "Heat only: just the harmonics",
+               "normal - solo vs input max err " + juce::String (err, 9) + "; solo 1 kHz " + db (fund) + ", 2 kHz " + db (h2));
+    }
+
+    // Solos follow Mix (what that part contributes at this Mix), and Bypass still wins.
+    {
+        int latency = 0;
+        const auto full = runModes ([] (Rig& r) { r.set (ids::smooth, 100); }, { 2 }, music, latency);
+        const auto half = runModes ([] (Rig& r) { r.set (ids::smooth, 100); r.set (ids::mix, 50); }, { 2 }, music, latency);
+        double err = 0.0;
+        for (size_t c = 0; c < music.size(); ++c)
+            for (size_t i = 0; i < music[c].size(); ++i)
+                err = std::max (err, (double) std::abs (half[0][c][i] - 0.5f * full[0][c][i]));
+        const auto byp = runModes ([] (Rig& r) { r.set (ids::heat, 100); r.set (ids::bypass, 1); }, { 3 }, music, latency);
+        const double bypErr = delayedError (byp[0], music, latency);
+        check (err < 1.0e-6 && bypErr < 1.0e-6, "solo scales with Mix, Bypass overrides it",
+               "Mix 50 % vs half of 100 %: " + juce::String (err, 9) + "; bypass vs dry " + juce::String (bypErr, 9));
+    }
+
+    // The loudness match does not chase the (quieter) solo: it holds while one is heard.
+    {
+        Rig r;
+        r.set (ids::smooth, 100); r.set (ids::match, 1); r.set (ids::listen, 2);
+        r.prepare (fs, 512);
+        r.run (testsig::musicLike (fs, 5.0, 3), fixedBlocks (512));
+        const float held = r.proc->getMatchGainDb();
+        r.set (ids::listen, 0);
+        r.run (testsig::musicLike (fs, 8.0, 3), fixedBlocks (512));
+        const float after = r.proc->getMatchGainDb();
+        Rig ref;
+        ref.set (ids::smooth, 100); ref.set (ids::match, 1);
+        ref.prepare (fs, 512);
+        ref.run (testsig::musicLike (fs, 8.0, 3), fixedBlocks (512));
+        check (std::abs (held) < 0.1f && std::abs (after - ref.proc->getMatchGainDb()) < 1.0f,
+               "Match holds while soloing, resumes after",
+               "while soloing " + db (held, 2) + ", after " + db (after, 2) + " (never soloed " + db (ref.proc->getMatchGainDb(), 2) + ")");
+    }
+
+    // Switching listen modes while playing doesn't click: no sample step larger than steady playback has.
+    {
+        const auto tone = testsig::sines (fs, (int) (4 * fs), { { 1000.0, 0.25 }, { 3150.0, 0.05 } });
+        auto maxStep = [] (const Channels& x, int from)
+        {
+            double m = 0.0;
+            for (auto& ch : x)
+                for (size_t i = (size_t) from + 1; i < ch.size(); ++i)
+                    m = std::max (m, (double) std::abs (ch[i] - ch[i - 1]));
+            return m;
+        };
+        auto setUp = [] (Rig& r) { r.set (ids::heat, 60); r.set (ids::reveal, 60); r.set (ids::smooth, 60); };
+        int latency = 0;
+        double steady = 0.0;
+        for (const auto& o : runModes (setUp, { 0, 1, 2, 3 }, tone, latency))
+            steady = std::max (steady, maxStep (o, latency + 4096));
+
+        Rig r;
+        r.setNeutral();
+        setUp (r);
+        r.prepare (fs, 512);
+        int block = 0;
+        const auto y = r.run (tone, [&r, &block] { r.set (ids::listen, (float) ((block++ / 7) % 4)); return 512; });
+        const double switching = maxStep (y, latency + 4096);
+        check (allFinite (y) && switching <= 1.1 * steady, "listen modes switch without clicks",
+               "largest sample step " + juce::String (switching, 5) + " (steady playback " + juce::String (steady, 5) + ")");
+    }
+
+    // The display and the knobs' read-outs keep showing the full processing while soloing.
+    {
+        auto lastFrame = [fs] (int mode, anneal::DisplayFrame& out)
+        {
+            Rig r;
+            r.set (ids::smooth, 100); r.set (ids::listen, (float) mode);
+            r.prepare (fs, 512);
+            r.run (testsig::musicLike (fs, 2.0), fixedBlocks (512));
+            if (const auto* f = r.proc->getDisplay().read())
+                out = *f;
+        };
+        auto a = std::make_unique<anneal::DisplayFrame>(), b = std::make_unique<anneal::DisplayFrame>();
+        lastFrame (0, *a);
+        lastFrame (2, *b);
+        float worst = std::abs (a->cutDb - b->cutDb) + std::abs (a->heatRelDb - b->heatRelDb);
+        for (int i = 0; i < anneal::DisplayFrame::numBands; ++i)
+            worst = std::max ({ worst, std::abs (a->outDb[i] - b->outDb[i]), std::abs (a->gainDb[i] - b->gainDb[i]) });
+        check (a->counter > 0 && worst < 1.0e-3f, "display shows the full result while soloing",
+               "cutting " + db (b->cutDb) + " in both; max difference " + juce::String (worst, 6) + " dB");
+    }
+
+    // Old projects (no Listen in the state) open hearing everything; typed values are understood.
+    {
+        Rig a;
+        auto old = a.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::listen), nullptr);
+        juce::MemoryBlock state;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), state);
+        Rig b;
+        b.set (ids::listen, 3);
+        b.proc->setStateInformation (state.getData(), (int) state.getSize());
+        auto* lp = b.proc->apvts.getParameter (ids::listen);
+        auto typed = [lp] (const char* t) { return juce::roundToInt (lp->convertFrom0to1 (lp->getValueForText (t))); };
+        const bool parsed = typed ("reveal") == 1 && typed ("Smooth only") == 2 && typed ("harmonics") == 3
+                         && typed ("heat") == 3 && typed ("off") == 0 && typed ("2") == 2;
+        check (lp->getValue() == 0.0f && lp->getDefaultValue() == 0.0f && parsed,
+               "projects from before 0.2.5 open with Listen off", "Listen " + lp->getCurrentValueAsText()
+                   + "; 'reveal' -> " + lp->getText (lp->getValueForText ("reveal"), 32) + ", 'heat' -> " + lp->getText (lp->getValueForText ("heat"), 32));
+    }
+}
+
+void testEditorLayout()
+{
+    section ("Editor layout");
+    Rig r;
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    if (editor == nullptr)
+    {
+        check (false, "editor opens", "no AnnealEditor");
+        return;
+    }
+    auto& content = editor->getContent();
+
+    juce::String clash;
+    const int n = content.getNumChildComponents();
+    for (int i = 0; i < n; ++i)
+        for (int j = i + 1; j < n; ++j)
+        {
+            const auto* a = content.getChildComponent (i);
+            const auto* b = content.getChildComponent (j);
+            if (a->isVisible() && b->isVisible() && a->getBounds().intersects (b->getBounds()))
+                clash << a->getBounds().toString() << " / " << b->getBounds().toString() << "  ";
+        }
+    check (clash.isEmpty(), "no two controls overlap", clash.isEmpty() ? juce::String (n) + " controls" : clash);
+
+    // The EQ and Heat routing menus sit on the group title row (408..423), both at the same height.
+    std::vector<juce::Component*> routing;
+    anneal::ListenMenu* listen = nullptr;
+    for (auto* c : content.getChildren())
+    {
+        if (auto* m = dynamic_cast<anneal::RoutingMenu*> (c); m != nullptr && m->getTooltip().startsWith ("In Mid/Side mode"))
+            routing.push_back (c);
+        if (auto* l = dynamic_cast<anneal::ListenMenu*> (c))
+            listen = l;
+    }
+    juce::String where;
+    for (auto* c : routing)
+        where << "y " << c->getY() << " (centre " << juce::String (c->getBounds().toFloat().getCentreY(), 1) << ")  ";
+    check (routing.size() == 2 && routing[0]->getY() == routing[1]->getY()
+               && std::abs (routing[0]->getBounds().toFloat().getCentreY() - 415.5f) <= 1.0f,
+           "EQ and Heat routing menus share the title row", where);
+
+    r.set (ids::listen, 2);
+    check (listen != nullptr && listen->getChoice() == 2 && anneal::ListenMenu::pillText (2) == "Smooth only",
+           "Listen menu follows the parameter", listen != nullptr ? anneal::ListenMenu::pillText (listen->getChoice()) : juce::String ("missing"));
+}
+
 void benchmark()
 {
     section ("18. Benchmark (Release build, this machine)");
@@ -1256,6 +1476,8 @@ int main()
     testDisplayRange();
     testRangeHandleDrag();
     testMidSide();
+    testListen();
+    testEditorLayout();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

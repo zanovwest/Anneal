@@ -36,6 +36,17 @@ float parseHz (const juce::String& text)
     return lower.containsChar ('k') ? v * 1000.0f : v;
 }
 
+int parseListen (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim();
+    if (l.containsAnyOf ("0123456789"))
+        return juce::jlimit (0, 3, l.getIntValue());
+    if (l.contains ("rev") || l.contains ("lift"))                        return 1;
+    if (l.contains ("smo") || l.contains ("cut"))                         return 2;
+    if (l.contains ("harm") || l.contains ("heat") || l.contains ("sat")) return 3;
+    return 0;
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -160,6 +171,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         juce::StringArray { "Both", "Mid", "Side" }, 0));
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::heatTarget, 1 }, "Heat Target",
         juce::StringArray { "Both", "Mid", "Side" }, 0));
+
+    // Listen (solo one part of what Anneal does). Off is how every earlier version sounded, and
+    // what projects saved before 0.2.5 load with (AnnealAudioProcessor::setStateInformation).
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::listen, 1 }, "Listen",
+        juce::StringArray { "Off", "Reveal only", "Smooth only", "Heat only" }, 0,
+        juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
+        {
+            return parseListen (t);
+        })));
     return layout;
 }
 }

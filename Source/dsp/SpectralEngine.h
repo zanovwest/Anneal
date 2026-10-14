@@ -13,6 +13,10 @@
 
 namespace anneal
 {
+    // Listen (solo) modes. Off is the normal output; the others replace the engine's output with
+    // one part of what it does: what Reveal lifts, what Smooth cuts, or only the harmonics.
+    enum Listen { listenOff = 0, listenReveal = 1, listenSmooth = 2, listenHarmonics = 3 };
+
     struct EngineParams
     {
         float reveal       = 0.0f;
@@ -28,6 +32,7 @@ namespace anneal
         float midSide      = 0.0f;   // 0 = linked stereo, 1 = independent Mid/Side
         float eqMid        = 1.0f, eqSide = 1.0f;
         float heatMid      = 1.0f, heatSide = 1.0f;
+        int listen         = listenOff;   // Listen enum; switches per frame (overlap-add crossfades it)
     };
 
     // STFT host for the perceptual model and the harmonic synth.
@@ -69,6 +74,7 @@ namespace anneal
         void processFrame() noexcept;
         void smoothParameters() noexcept;
         void processMidSide (const ModelSettings&, float blend) noexcept;
+        void applyListen (float msBlend) noexcept;
 
         double sampleRate = 48000.0;
         int fftSize = 4096, hop = 512, numBins = 2049, channels = 2, pos = 0;
@@ -82,6 +88,7 @@ namespace anneal
         // latency-aligned input used by the envelope gate.
         std::vector<float> harmSpec[maxChannels], harmAcc[maxChannels], harmFifo[maxChannels], alignRing[maxChannels];
         std::vector<float> power, outPower, harmPower;
+        std::vector<float> rawSpec[maxChannels];   // this frame's spectrum before the EQ (listen modes)
         int ringPos = 0;
         float envIn = 0.0f, envHarm = 0.0f, gateGain = 1.0f, envRelease = 0.0f, gateCoeff = 0.0f;
 

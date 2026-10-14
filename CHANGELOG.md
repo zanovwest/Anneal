@@ -4,6 +4,41 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 0.2.5 — 2026-10-13 18:01
+
+New
+- **Listen modes**: a new **Listen** menu at the top of OUTPUT lets you hear one part of what
+  Anneal does on its own:
+  - **Reveal only**: just what Reveal lifts out of the masking shadow.
+  - **Smooth only**: just what Smooth takes away from the bands that poke out.
+  - **Heat only**: just the harmonics Heat writes, with no dry signal.
+
+  The menu lights up in that part's colour, the display says what you're hearing, and Delta dims
+  while a solo is on (the solo overrides it). The EQ curve and the knobs' live read-outs keep
+  showing the full processing. The solos are exact: the normal output minus the Reveal solo plus
+  the Smooth solo gives back your input, and so does the normal output minus the Heat solo. Tilt
+  is a static slope, so it is in none of them. Solos follow Mix and Output, Bypass still wins, and
+  Match holds its gain while you listen, so turning a solo off doesn't jump in level. Switching
+  while playing is click-free in every latency mode, in Stereo and Mid/Side. Listen is a host
+  parameter too (you can type `reveal`, `smooth`, `heat` or `off`). It defaults to Off, presets
+  leave it alone, and projects from earlier versions open with it off, so they sound the same.
+
+Fixes
+- The "Heat:" routing menu (Mid/Side) sat 4 px higher than the "EQ:" menu. Both now line up with
+  the group titles. A new layout check also makes sure no two controls overlap.
+
+Tests: 69/69 acceptance checks (12 new: the exact Reveal/Smooth split in Low, Precise and Mid/Side;
+Heat only = just the harmonics; Mix/Bypass with a solo; Match holding; click-free switching; the
+display while soloing; older projects and typed values; no overlapping controls; routing menus on
+the title row; the Listen menu following the parameter). 15/15 host checks on the built VST3 (new:
+Listen through VST3). 25/25 isolated installer checks. Editor rendered at 100/150/200 % and at
+minimum/maximum size, plus two new Listen snapshots.
+CPU at 48 kHz on this machine, unchanged from 0.2.4 measured side by side: Stereo Low 2.4 %, Normal
+2.1 %, Precise 3.4 % of one core (512 samples); Mid/Side Low 4.6 % (64), Normal 3.4 % (512),
+Precise 5.3 % (64). Slowest 0.1 % of 64-sample blocks: Stereo Low 10 %, Precise 29 %; Mid/Side
+Low 19 %, Precise 43 % of the deadline. 0.2.4's own figures were measured on a different machine.
+A solo costs a little extra only while it is on.
+
 ## 0.2.4 — 2026-10-13
 
 New

@@ -77,7 +77,10 @@ private:
     juce::AudioBuffer<float> dryRing, dryBlock;
     int dryPos = 0, ringLength = 0, chunkCapacity = 0, preparedChannels = 2;
 
-    juce::SmoothedValue<float> mixSmoothed, outputSmoothed, deltaSmoothed, bypassSmoothed;
+    juce::SmoothedValue<float> mixSmoothed, outputSmoothed, deltaSmoothed, bypassSmoothed, listenSmoothed;
+    // While a listen mode is on (and for two frame lengths after, until the engine's output is
+    // normal again) the wet signal is a solo, so the loudness match keeps its last gain.
+    int matchHold = 0;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> matchSmoothed;
 
     // Last preset chosen (saved in the state, so a host restoring its program number after the
@@ -107,6 +110,7 @@ private:
     std::atomic<float>* pStereoMode = nullptr;
     std::atomic<float>* pEqTarget = nullptr;
     std::atomic<float>* pHeatTarget = nullptr;
+    std::atomic<float>* pListen = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnnealAudioProcessor)
 };

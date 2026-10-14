@@ -32,6 +32,10 @@ namespace anneal
         void analyse (const float* binPower, const ModelSettings& settings, float framesPerSecond);
 
         const float* getBinGain() const noexcept     { return binGain.data(); }   // linear
+        // Listen modes: the same per-bin gain without Tilt (Reveal/Smooth only), so that
+        // getBinGain() = auto gain x tilt gain. Computed on request after analyse(); real-time safe.
+        void computeAutoGain() noexcept;
+        const float* getBinAutoGain() const noexcept { return binAutoGain.data(); }   // linear
         const float* getBinNeed() const noexcept     { return binNeed.data(); }   // 0..2
         const float* getBandGainDb() const noexcept  { return gainOut.data(); }
         const float* getBandProminence() const noexcept { return prom.data(); }  // dB, last frame
@@ -80,5 +84,9 @@ namespace anneal
         std::vector<float> raw, fastPlace, slowPlace, transient;   // transient guard
         std::vector<int> transientAge;                             // frames since the band's last rise
         std::vector<float> binGainDb, binGain, binNeed;
+        std::vector<float> autoOut, binAutoDb, binAutoGain;        // listen modes (no Tilt)
+
+        // Band dB values -> smoothed linear per-bin gain (the band->bin step of analyse()).
+        void bandsToBinGain (const float* bandDb, float* binDb, float* linear) noexcept;
     };
 }

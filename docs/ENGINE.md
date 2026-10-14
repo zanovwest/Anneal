@@ -24,6 +24,27 @@ input ──► dry delay (N samples) ──────────────
 | Channels | mono or stereo, in = out; linked Stereo (default) or independently analysed Mid/Side; mono always uses linked mono |
 | Parameter resolution | parameters are sampled once per host block, smoothed per frame (τ 40 ms) |
 
+### Listen modes (0.2.5)
+
+Per frame, after the display data is published (so the display shows the full processing), the
+engine can replace what it outputs with one part of it. With `X` the frame's spectrum before the
+EQ and `A` the auto-EQ gain without Tilt (`PerceptualModel::computeAutoGain`, the same band→bin
+steps as the full curve, so `binGain = A × tilt gain` exactly):
+
+| Listen | Main path | Harmonic stream |
+|---|---|---|
+| Reveal only | `X·max(A−1, 0)`: what the lift adds | not written (its tail fades out) |
+| Smooth only | `X·max(1−A, 0)`: what the cut takes away, in phase | not written |
+| Heat only | 0 (its tail fades out) | as normal, gated as normal |
+
+In Mid/Side each component uses its own model's `A` (an untargeted component has none), decoded to
+L/R and blended with the stereo version exactly like the main path. With Tilt at 0:
+normal − Reveal solo + Smooth solo = `X`, and normal − Heat solo = `X` (tested to < 1e-4). A
+switch happens on a frame boundary; overlap-add crossfades it over one frame. The processor plays
+the solo as `mix × match × wet × output` (fading 30 ms between it and the normal mix), Bypass
+still wins, and the loudness-match measurement holds while a solo plays and for two frame lengths
+after, so Match never chases the quieter solo.
+
 ## Perceptual model (heuristic, model-derived — not a calibrated loudness model)
 
 ### Mid/Side routing (0.2.4)

@@ -10,6 +10,7 @@ namespace
 {
     // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> OUTPUT.
     constexpr int titleY = 408, dividerTop = 414, dividerBottom = 604;
+    constexpr int routingY = 402;   // 26 px pills centred on the 15 px title row
     constexpr int dividerX[] = { 490, 832 };
 
     juce::String minus() { return juce::String::fromUTF8 ("\xe2\x88\x92"); }
@@ -55,11 +56,12 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       eqTarget (p.apvts, ids::eqTarget, "EQ: ", { "Both", "Mid", "Side" },
                 "In Mid/Side mode, route Reveal, Smooth and Tilt to both components, the centre (Mid), or the sides (Side)."),
       heatTarget (p.apvts, ids::heatTarget, "Heat: ", { "Both", "Mid", "Side" },
-                  "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side).")
+                  "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
+      listen (p.apvts, ids::listen)
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
-             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget })
+             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen })
         addAndMakeVisible (c);
 
     presets.getCount = [&p] { return p.getNumPrograms(); };
@@ -86,8 +88,9 @@ void AnnealEditorContent::resized()
     delta.setBounds (820, 11, 72, 26);
     bypass.setBounds (900, 11, 78, 26);
     stereoMode.setBounds (626, 11, 80, 26);
-    eqTarget.setBounds (360, 401, 114, 26);
-    heatTarget.setBounds (700, 397, 118, 26);
+    // The routing menus sit on their group's title row (the same row for both).
+    eqTarget.setBounds (360, routingY, 114, 26);
+    heatTarget.setBounds (700, routingY, 118, 26);
 
     screen.setBounds (12, 50, 976, 346);
 
@@ -108,9 +111,10 @@ void AnnealEditorContent::resized()
     harmonics.setBounds (690, 486, 122, 40);
     focus.setBounds (684, 536, 134, 53);
 
-    // OUTPUT
-    mix.setBounds (846, 448, 100, smallH);
-    output.setBounds (846, 514, 100, smallH);
+    // OUTPUT: what you hear (Listen), then Mix and Output.
+    listen.setBounds (844, 430, 102, 26);
+    mix.setBounds (846, 468, 100, smallH);
+    output.setBounds (846, 528, 100, smallH);
     meter.setBounds (950, 424, 34, 176);
 }
 
@@ -184,6 +188,9 @@ void AnnealEditorContent::tick (float dt)
     const bool ms = stereo && processor.apvts.getRawParameterValue (ids::stereoMode)->load() > 0.5f;
     eqTarget.setEnabled (ms);
     heatTarget.setEnabled (ms);
+
+    // A listen solo replaces what Delta would play, so Delta steps back while one is on.
+    delta.setAlpha (listen.getChoice() > 0 ? 0.4f : 1.0f);
 
     // The match gain lives in its button: you see what the comparison is compensating.
     const bool on = processor.apvts.getRawParameterValue (ids::match)->load() > 0.5f;

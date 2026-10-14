@@ -11,11 +11,10 @@ Add ideas anywhere in the list and reorder freely. Never add anything listed und
 
 ## Next up
 
-Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side, Listen modes,
-Saturation flavours, Sidechain unmask, then the rest. (The icon was done by hand that day, outside
-the hourly runs.)
+Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (0.2.4), Listen
+modes (0.2.5), Saturation flavours, Sidechain unmask, then the rest. (The icon was done by hand that
+day, outside the hourly runs.)
 
-2. **Listen modes**: solo what Reveal adds, what Smooth removes, or only the harmonics.
 3. **Saturation flavours**: Tape (soft, mostly even, gentle HF roll-off), Tube (2nd-heavy),
    Transformer (odd, low end), Exciter (air only). A flavour menu next to Color.
 4. **Sidechain unmask mode**: lift what a sidechain key masks, or dip the bands the key needs.
@@ -40,6 +39,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 0.2.5 (2026-10-13): **Listen modes** (Listen menu in OUTPUT): Reveal only (what Reveal lifts),
+  Smooth only (what Smooth cuts), Heat only (just the harmonics). Exact split, tested: normal −
+  Reveal solo + Smooth solo = the input, normal − Heat solo = the input, in Stereo, Mid/Side and
+  every latency mode. Match holds while soloing; old projects open with Listen off. Fixed: the
+  Heat routing menu sat 4 px above the EQ routing menu.
 - 0.2.4 (2026-10-13): **Mid/Side mode.** Independent centre/sides analysis, separate EQ and
   Heat routing (Both / Mid / Side), solid Mid and dashed Side curves. Routing automation keeps
   latency, old projects keep linked Stereo, and mono falls back to linked mono. Tested with

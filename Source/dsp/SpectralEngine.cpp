@@ -56,6 +56,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
         msHarmPower[c].assign ((size_t) numBins, 0.0f);
         msModel[c].prepare (sampleRate, fftSize);
         msSynth[c].prepare (fftSize);
+        rawSpec[c].assign ((size_t) numBins * 2, 0.0f);
     }
     power.assign ((size_t) numBins, 0.0f);
     outPower.assign ((size_t) numBins, 0.0f);
@@ -166,6 +167,7 @@ void SpectralEngine::smoothParameters() noexcept
     lg  (current.rangeLoHz, target.rangeLoHz);
     lg  (current.rangeHiHz, target.rangeHiHz);
     current.responseMs = target.responseMs;
+    current.listen = target.listen;   // a switch per frame; the overlap-add fades it over one frame
 }
 
 void SpectralEngine::processFrame() noexcept
@@ -200,6 +202,12 @@ void SpectralEngine::processFrame() noexcept
         std::fill (s + fftSize, s + 2 * fftSize, 0.0f);
         fft->performRealOnlyForwardTransform (s, true);
     }
+
+    // Listening to Reveal or Smooth needs this frame's spectrum before the EQ.
+    const bool listenEq = current.listen == listenReveal || current.listen == listenSmooth;
+    if (listenEq)
+        for (int c = 0; c < channels; ++c)
+            std::copy (spec[c].begin(), spec[c].begin() + 2 * numBins, rawSpec[c].begin());
 
     if (msActive)
     {
@@ -328,7 +336,15 @@ void SpectralEngine::processFrame() noexcept
         displayOut->endWrite();
     }
 
-    auto synthesise = [this, half, mask] (float* s, float* acc, float* fifo)
+    // Listen modes change only what is heard; the display above shows the full processing.
+    if (current.listen != listenOff)
+    {
+        applyListen (msBlend);
+        if (listenEq)
+            harmonicsWritten = false;   // the harmonic stream's overlap-add tail just fades out
+    }
+
+    auto synthesise =[this, half, mask] (float* s, float* acc, float* fifo)
     {
         fft->performRealOnlyInverseTransform (s);   // JUCE scales the inverse by 1/N
         for (int i = 0; i < fftSize; ++i)
@@ -414,6 +430,62 @@ void SpectralEngine::processMidSide (const ModelSettings& settings, float blend)
             }
         harmPower[(size_t) k] = hEnergy * scale * scale * 0.5f;
         outPower[(size_t) k] = outEnergy * scale * scale * 0.5f;
+    }
+}
+
+void SpectralEngine::applyListen (float msBlend) noexcept
+{
+    if (current.listen == listenHarmonics)
+    {
+        // Only the harmonic stream: the main path writes nothing (its overlap-add tail fades out).
+        for (int c = 0; c < channels; ++c)
+            std::fill (spec[c].begin(), spec[c].begin() + 2 * numBins, 0.0f);
+        return;
+    }
+
+    // With A = the auto-EQ gain without Tilt, the normal output is X*A*Tilt. Reveal solo:
+    // X*(A-1) where the EQ lifts; Smooth solo: X*(1-A) where it cuts (the part taken away, in
+    // phase). With Tilt at 0, normal - Reveal solo = X and normal + Smooth solo = X.
+    const bool reveal = current.listen == listenReveal;
+    auto part = [reveal] (float a) noexcept { return reveal ? std::max (a - 1.0f, 0.0f) : std::max (1.0f - a, 0.0f); };
+
+    model.computeAutoGain();
+    const float* a = model.getBinAutoGain();
+    for (int c = 0; c < channels; ++c)
+    {
+        float* s = spec[c].data();
+        const float* x = rawSpec[c].data();
+        for (int k = 0; k < numBins; ++k)
+        {
+            const float w = part (a[k]);
+            s[2 * k]     = w * x[2 * k];
+            s[2 * k + 1] = w * x[2 * k + 1];
+        }
+    }
+
+    if (msBlend > 0.0f)
+    {
+        // Mid/Side: each component's own lift or cut, decoded to L/R and blended like the main path.
+        msModel[0].computeAutoGain();
+        msModel[1].computeAutoGain();
+        const float* am = msModel[0].getBinAutoGain();
+        const float* as = msModel[1].getBinAutoGain();
+        float* l = spec[0].data();
+        float* r = spec[1].data();
+        const float* xl = rawSpec[0].data();
+        const float* xr = rawSpec[1].data();
+        for (int k = 0; k < numBins; ++k)
+        {
+            const float wm = part (am[k]), ws = part (as[k]);
+            for (int ri = 0; ri < 2; ++ri)
+            {
+                const int i = 2 * k + ri;
+                const float m = 0.5f * (xl[i] + xr[i]) * wm;
+                const float s = 0.5f * (xl[i] - xr[i]) * ws;
+                l[i] += msBlend * (m + s - l[i]);
+                r[i] += msBlend * (m - s - r[i]);
+            }
+        }
     }
 }
 }

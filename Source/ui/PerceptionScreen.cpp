@@ -67,6 +67,9 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
     hiAttachment = std::make_unique<juce::ParameterAttachment> (*hiParam, [this] (float v) { rangeHi = v; repaint(); }, state.undoManager);
     loAttachment->sendInitialUpdate();
     hiAttachment->sendInitialUpdate();
+    listenAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::listen),
+        [this] (float v) { listenMode = juce::jlimit (0, 3, juce::roundToInt (v)); repaint(); }, state.undoManager);
+    listenAttachment->sendInitialUpdate();
 
     setTooltip ("Drag a range handle to limit where Anneal acts; double-click a handle to reset it. "
                 "Horizontal axis: ERB-rate scale (equal steps of the ear's frequency resolution).");
@@ -242,6 +245,7 @@ void PerceptionScreen::paint (juce::Graphics& g)
     paintHeat (g);
     paintRange (g);
     paintLegend (g);
+    paintListen (g);
     paintReadout (g);
 }
 
@@ -478,6 +482,34 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ", colour::muted,
          midSide ? "Mid solid / Side dashed" : "live gain over the spectrum");
     tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), "harmonics written, vs output");
+}
+
+void PerceptionScreen::paintListen (juce::Graphics& g)
+{
+    if (listenMode == 0)
+        return;
+
+    // A pill in the solo's role colour: the curve still shows the full processing, the pill says
+    // that only one part of it is being heard.
+    const juce::Colour role = listenMode == 1 ? colour::straw : listenMode == 2 ? colour::blue : colour::bronze;
+    const juce::String title = listenMode == 1 ? "REVEAL ONLY" : listenMode == 2 ? "SMOOTH ONLY" : "HEAT ONLY";
+    const juce::String sub = listenMode == 1 ? "hearing what Reveal lifts"
+                           : listenMode == 2 ? "hearing what Smooth cuts" : "hearing only the harmonics";
+    const auto tf = caps (11.0f), sf = font (11.0f);
+    const float tw = textWidth (tf, title), sw = textWidth (sf, sub);
+    const float w = tw + sw + 30.0f, h = 20.0f;
+    const auto box = juce::Rectangle<float> (mainLane.getRight() - 10.0f - w, mainLane.getY() + 5.0f, w, h);
+
+    g.setColour (role.withAlpha (0.14f));
+    g.fillRoundedRectangle (box, h * 0.5f);
+    g.setColour (role.withAlpha (0.8f));
+    g.drawRoundedRectangle (box.reduced (0.5f), h * 0.5f, 1.0f);
+    g.setFont (tf);
+    g.setColour (role.brighter (0.3f));
+    g.drawText (title, box.withTrimmedLeft (11.0f).withWidth (tw + 2.0f), juce::Justification::centredLeft, false);
+    g.setFont (sf);
+    g.setColour (colour::muted);
+    g.drawText (sub, box.withTrimmedLeft (19.0f + tw).withWidth (sw + 2.0f), juce::Justification::centredLeft, false);
 }
 
 void PerceptionScreen::paintReadout (juce::Graphics& g)

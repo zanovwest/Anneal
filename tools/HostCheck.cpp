@@ -103,7 +103,7 @@ int main (int argc, char* argv[])
     for (auto* prm : plugin->getParameters())
         names.add (prm->getName (64));
     bool haveAll = true;
-    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target" })
+    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -157,16 +157,18 @@ int main (int argc, char* argv[])
         findParam (*plugin, "Stereo Mode")->setValueNotifyingHost (1.0f);
         findParam (*plugin, "EQ Target")->setValueNotifyingHost (1.0f);
         findParam (*plugin, "Heat Target")->setValueNotifyingHost (0.5f);
+        findParam (*plugin, "Listen")->setValueNotifyingHost (1.0f / 3.0f);
         juce::MemoryBlock state;
         plugin->getStateInformation (state);
 
         auto second = format.createInstanceFromDescription (desc, 48000.0, 512, error);
         second->setStateInformation (state.getData(), (int) state.getSize());
         float worst = 0.0f;
-        for (auto n : { "Heat", "Reveal", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target" })
+        for (auto n : { "Heat", "Reveal", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen" })
             worst = std::max (worst, std::abs (findParam (*second, n)->getValue() - findParam (*plugin, n)->getValue()));
         check (worst < 1.0e-4f, "state restores in a second instance", "state " + juce::String ((int) state.getSize()) + " bytes, max diff " + juce::String (worst, 6));
         findParam (*plugin, "Delta")->setValueNotifyingHost (0.0f);
+        findParam (*plugin, "Listen")->setValueNotifyingHost (0.0f);
 
         // Guard is automatable and processes cleanly when it is swept while playing.
         auto* guard = findParam (*plugin, "Guard");
@@ -197,6 +199,38 @@ int main (int argc, char* argv[])
         if (mode != nullptr) mode->setValueNotifyingHost (0.0f);
         if (eq != nullptr) eq->setValueNotifyingHost (0.0f);
         if (heat != nullptr) heat->setValueNotifyingHost (0.0f);
+
+        // Listen through VST3: "Heat only" with Heat at 0 is silence (only harmonics are heard),
+        // Off brings the full signal back, and sweeping all modes while playing stays clean.
+        auto* listen = findParam (*plugin, "Listen");
+        auto* heatAmount = findParam (*plugin, "Heat");
+        bool listenOk = listen != nullptr && heatAmount != nullptr && listen->isAutomatable();
+        double soloPeak = 1.0, offPeak = 0.0, sweepPeak = 0.0;
+        juce::String texts;
+        if (listenOk)
+        {
+            heatAmount->setValueNotifyingHost (0.0f);
+            listen->setValueNotifyingHost (1.0f);
+            run (*plugin, music, out, [] { return 512; });
+            soloPeak = 0.0;
+            for (auto& ch : out)
+                for (size_t i = out[0].size() / 2; i < ch.size(); ++i)
+                    soloPeak = std::max (soloPeak, (double) std::abs (ch[i]));
+            listen->setValueNotifyingHost (0.0f);
+            run (*plugin, music, out, [] { return 512; });
+            offPeak = peakOf (out);
+            heatAmount->setValueNotifyingHost (0.5f);
+            int listenBlock = 0;
+            listenOk = run (*plugin, music, out, [&] { listen->setValueNotifyingHost ((float) ((listenBlock++ / 5) % 4) / 3.0f); return 300; });
+            sweepPeak = peakOf (out);
+            for (float v : { 0.0f, 1.0f / 3.0f, 2.0f / 3.0f, 1.0f })
+                texts << listen->getText (v, 32) << (v < 1.0f ? ", " : "");
+            listenOk = listenOk && std::abs (listen->getValueForText ("reveal") - 1.0f / 3.0f) < 1.0e-4f;
+            listen->setValueNotifyingHost (0.0f);
+        }
+        check (listenOk && testsig::toDb (soloPeak) < -90.0 && testsig::toDb (offPeak) > -20.0 && sweepPeak < 4.0,
+               "Listen modes through VST3", texts + "; Heat-only solo at Heat 0: " + juce::String (testsig::toDb (soloPeak), 1)
+                   + " dB, Off: " + juce::String (testsig::toDb (offPeak), 1) + " dB, sweep peak " + juce::String (testsig::toDb (sweepPeak), 1) + " dB");
     }
 
     // 6a. Latency mode through the host: switch to Precise, the host sees the new latency and the

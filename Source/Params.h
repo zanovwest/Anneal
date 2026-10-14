@@ -24,6 +24,7 @@ namespace anneal::ids
     inline constexpr const char* stereoMode = "stereoMode"; // 0.2.4: linked Stereo / Mid-Side
     inline constexpr const char* eqTarget   = "eqTarget";   // Both / Mid / Side (M/S only)
     inline constexpr const char* heatTarget = "heatTarget";
+    inline constexpr const char* listen     = "listen";     // 0.2.5: Off / Reveal / Smooth / Heat only (solo)
 
     inline constexpr int stateVersion = 1;
 }
@@ -42,4 +43,5 @@ namespace anneal
     // Text helpers shared by parameters and the display (exposed for tests).
     juce::String formatHz (float hz);
     float parseHz (const juce::String& text);
+    int parseListen (const juce::String& text);   // "reveal", "smooth", "harmonics"/"heat", "off" or 0-3
 }

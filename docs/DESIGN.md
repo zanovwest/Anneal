@@ -38,7 +38,7 @@ in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve ─┐
 |---|---|---|
 | AUTO EQ | Reveal, Smooth | Tilt, Response, Guard (transients) |
 | HEAT | Heat | Color (even↔odd), Focus (body↔air) |
-| OUTPUT | — | Mix, Output |
+| OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
 | On the display | Range low / high handles (limits where Anneal acts) | |
@@ -96,6 +96,13 @@ occupies, which is exactly the grid the model works on. On it:
 Everything drawn comes from the processor's real per-frame data (published through
 a lock-free triple buffer). The harmonic bars next to Color are model-derived (the synth's
 own formula at −18 dBFS) and say so.
+
+**Listen (0.2.5).** A pill menu at the top of OUTPUT solos one part of the processing. Off it is a
+plain raised pill ("Listen: off"); on, it is tinted in that part's role colour (straw = Reveal only,
+blue = Smooth only, bronze = Heat only), Delta dims (the solo overrides it), and the display shows
+a matching pill at the top right of the EQ lane ("REVEAL ONLY · hearing what Reveal lifts"). The
+curves and the knobs' live lines keep showing the full processing, so you can see the whole
+picture while hearing one part of it.
 
 In Mid/Side mode the centre and sides are analysed independently. The EQ curve is solid for Mid
 and dashed for Side, with the same straw-above / blue-below colour convention. Hover reports

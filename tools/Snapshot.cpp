@@ -128,6 +128,14 @@ int main (int argc, char* argv[])
               set (p, ids::stereoMode, 1); set (p, ids::eqTarget, 2); set (p, ids::heatTarget, 1);
               set (p, ids::reveal, 75); set (p, ids::smooth, 65); set (p, ids::heat, 70);
           }, 3150.0f, true },
+        { "listen", [] (AnnealAudioProcessor& p)
+          {
+              set (p, ids::reveal, 75); set (p, ids::listen, 1);
+          }, -1.0f, true },
+        { "listen_heat", [] (AnnealAudioProcessor& p)
+          {
+              set (p, ids::heat, 70); set (p, ids::listen, 3);
+          }, -1.0f, true },
     };
 
     int failures = 0;

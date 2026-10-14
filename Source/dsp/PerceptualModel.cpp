@@ -91,9 +91,9 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
     auto alloc = [] (std::vector<float>& v, size_t n) { v.assign (n, 0.0f); };
     for (auto* v : { &earW, &noiseSlice, &noiseBox, &flatNormDb, &slices, &smoothed, &place, &context,
                      &fwd, &bwd, &prom, &target, &targetSmoothed, &gain, &promSlow, &gainOut, &needOut, &tmp,
-                     &raw, &fastPlace, &slowPlace, &transient })
+                     &raw, &fastPlace, &slowPlace, &transient, &autoOut })
         alloc (*v, (size_t) numBands);
-    for (auto* v : { &binGainDb, &binGain, &binNeed })
+    for (auto* v : { &binGainDb, &binGain, &binNeed, &binAutoDb, &binAutoGain })
         alloc (*v, (size_t) numBins);
     prefix.assign ((size_t) numBands + 1, 0.0);
     transientAge.assign ((size_t) numBands, idleAge);
@@ -122,10 +122,12 @@ void PerceptualModel::reset()
 {
     primed = false;
     liftPeakDb = cutPeakDb = transientPeak = 0.0f;
-    for (auto* v : { &smoothed, &gain, &promSlow, &prom, &gainOut, &needOut, &slowPlace, &transient })
+    for (auto* v : { &smoothed, &gain, &promSlow, &prom, &gainOut, &needOut, &slowPlace, &transient, &autoOut })
         std::fill (v->begin(), v->end(), 0.0f);
     std::fill (binGainDb.begin(), binGainDb.end(), 0.0f);
     std::fill (binGain.begin(), binGain.end(), 1.0f);
+    std::fill (binAutoDb.begin(), binAutoDb.end(), 0.0f);
+    std::fill (binAutoGain.begin(), binAutoGain.end(), 1.0f);
     std::fill (binNeed.begin(), binNeed.end(), 0.0f);
     std::fill (transientAge.begin(), transientAge.end(), idleAge);
 }
@@ -301,6 +303,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
         const float autoDb = guarded ? gain[(size_t) b] * relax : gain[(size_t) b];
         gainOut[(size_t) b] = rg * (autoDb + tilt);
+        autoOut[(size_t) b] = rg * autoDb;
         liftPeakDb = std::max (liftPeakDb, rg * autoDb);
         cutPeakDb  = std::min (cutPeakDb, rg * autoDb);
         transientPeak = std::max (transientPeak, rg * transient[(size_t) b]);
@@ -318,17 +321,33 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     {
         const int i = binBand[(size_t) k];
         const float f = binFrac[(size_t) k], e = binEdge[(size_t) k];
-        binGainDb[(size_t) k] = e * (gainOut[(size_t) i] + f * (gainOut[(size_t) i + 1] - gainOut[(size_t) i]));
-        binNeed[(size_t) k]   = e * (needOut[(size_t) i] + f * (needOut[(size_t) i + 1] - needOut[(size_t) i]));
+        binNeed[(size_t) k] = e * (needOut[(size_t) i] + f * (needOut[(size_t) i + 1] - needOut[(size_t) i]));
+    }
+    bandsToBinGain (gainOut.data(), binGainDb.data(), binGain.data());
+}
+
+void PerceptualModel::bandsToBinGain (const float* bandDb, float* binDb, float* linear) noexcept
+{
+    for (int k = 0; k < numBins; ++k)
+    {
+        const int i = binBand[(size_t) k];
+        const float f = binFrac[(size_t) k], e = binEdge[(size_t) k];
+        binDb[k] = e * (bandDb[i] + f * (bandDb[i + 1] - bandDb[i]));
     }
 
     // Light smoothing across bins keeps the per-frame filter short (less circular time-aliasing).
     for (int k = 0; k < numBins; ++k)
     {
-        auto at = [this] (int i) { return binGainDb[(size_t) std::clamp (i, 0, numBins - 1)]; };
+        auto at = [this, binDb] (int i) { return binDb[std::clamp (i, 0, numBins - 1)]; };
         const float sm = (at (k - 2) + 2.0f * at (k - 1) + 3.0f * at (k) + 2.0f * at (k + 1) + at (k + 2)) / 9.0f;
-        binGain[(size_t) k] = std::pow (10.0f, sm / 20.0f);
+        linear[k] = std::pow (10.0f, sm / 20.0f);
     }
+}
+
+void PerceptualModel::computeAutoGain() noexcept
+{
+    // Same steps as the full curve, so with Tilt at 0 both gains are bit-identical.
+    bandsToBinGain (autoOut.data(), binAutoDb.data(), binAutoGain.data());
 }
 
 void PerceptualModel::bandLevelsDb (const float* binPower, float* outDb)

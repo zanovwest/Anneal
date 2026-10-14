@@ -6,6 +6,7 @@
 #include "ui/HarmonicGraph.h"
 #include "ui/Knob.h"
 #include "ui/LatencyMenu.h"
+#include "ui/ListenMenu.h"
 #include "ui/OutputMeter.h"
 #include "ui/PerceptionScreen.h"
 #include "ui/PresetBar.h"
@@ -42,6 +43,7 @@ private:
     anneal::OutputMeter meter;
     anneal::LatencyMenu latency;
     anneal::RoutingMenu stereoMode, eqTarget, heatTarget;
+    anneal::ListenMenu listen;
 
     juce::String shownMatchText;
 };

@@ -59,6 +59,7 @@ namespace anneal
         void paintRange (juce::Graphics&);
         void paintReadout (juce::Graphics&);
         void paintLegend (juce::Graphics&);
+        void paintListen (juce::Graphics&);   // what a Listen solo is playing (top right)
 
         TripleBuffer<DisplayFrame>& source;
 
@@ -76,7 +77,8 @@ namespace anneal
         juce::Rectangle<float> plot, mainLane, heatLane;
         Activity activity;
 
-        std::unique_ptr<juce::ParameterAttachment> loAttachment, hiAttachment;
+        std::unique_ptr<juce::ParameterAttachment> loAttachment, hiAttachment, listenAttachment;
+        int listenMode = 0;
         juce::RangedAudioParameter* loParam = nullptr;
         juce::RangedAudioParameter* hiParam = nullptr;
         float rangeLo = 30.0f, rangeHi = 18000.0f;

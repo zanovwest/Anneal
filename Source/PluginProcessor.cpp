@@ -29,6 +29,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pStereoMode = apvts.getRawParameterValue (ids::stereoMode);
     pEqTarget   = apvts.getRawParameterValue (ids::eqTarget);
     pHeatTarget = apvts.getRawParameterValue (ids::heatTarget);
+    pListen     = apvts.getRawParameterValue (ids::listen);
 
     // A usable default before the host calls prepareToPlay (e.g. state loading, editor opening).
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
@@ -103,12 +104,14 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 
     match.prepare (sampleRate);
 
-    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed })
+    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed, &listenSmoothed })
         s->reset (sampleRate, 0.03);
     mixSmoothed.setCurrentAndTargetValue (pMix->load() * 0.01f);
     outputSmoothed.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (pOutput->load()));
     deltaSmoothed.setCurrentAndTargetValue (pDelta->load() > 0.5f ? 1.0f : 0.0f);
     bypassSmoothed.setCurrentAndTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
+    listenSmoothed.setCurrentAndTargetValue (pListen->load() > 0.5f ? 1.0f : 0.0f);
+    matchHold = 0;
     matchSmoothed.reset (sampleRate, 0.5);
     matchSmoothed.setCurrentAndTargetValue (1.0f);
 
@@ -126,8 +129,9 @@ void AnnealAudioProcessor::reset()
     dryRing.clear();
     dryBlock.clear();
     dryPos = 0;
-    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed })
+    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed, &listenSmoothed })
         s->setCurrentAndTargetValue (s->getTargetValue());
+    matchHold = 0;
     outputPeak[0] = outputPeak[1] = 0.0f;
 }
 
@@ -168,6 +172,7 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.eqSide = eq == 1 ? 0.0f : 1.0f;
     p.heatMid = ht == 2 ? 0.0f : 1.0f;
     p.heatSide = ht == 1 ? 0.0f : 1.0f;
+    p.listen = juce::jlimit (0, 3, juce::roundToInt (pListen->load()));
     getEngine().setParameters (p);
 }
 
@@ -190,6 +195,10 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     deltaSmoothed.setTargetValue (pDelta->load() > 0.5f ? 1.0f : 0.0f);
     bypassSmoothed.setTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
     const bool matchOn = pMatch->load() > 0.5f;
+    const bool listenOn = pListen->load() > 0.5f;
+    listenSmoothed.setTargetValue (listenOn ? 1.0f : 0.0f);
+    if (listenOn)
+        matchHold = 2 * getEngine().getFftSize();
 
     float peak[2] = { 0.0f, 0.0f };
 
@@ -220,19 +229,29 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         float* wet[2] = { buffer.getWritePointer (0, start), nch > 1 ? buffer.getWritePointer (1, start) : nullptr };
         getEngine().process (wet, nch, len);
 
-        // 3. Loudness match (always measured, applied only when enabled).
-        const float* dryPtrs[2] = { dryBlock.getReadPointer (0), dryBlock.getReadPointer (nch > 1 ? 1 : 0) };
-        const float* wetPtrs[2] = { wet[0], nch > 1 ? wet[1] : wet[0] };
-        const float target = match.process (dryPtrs, wetPtrs, nch, len);
+        // 3. Loudness match (always measured, applied only when enabled). A listen solo is not
+        //    the wet signal, so the measurement holds while one is heard.
+        float target = match.getGain();
+        if (matchHold > 0)
+        {
+            matchHold = juce::jmax (0, matchHold - len);
+        }
+        else
+        {
+            const float* dryPtrs[2] = { dryBlock.getReadPointer (0), dryBlock.getReadPointer (nch > 1 ? 1 : 0) };
+            const float* wetPtrs[2] = { wet[0], nch > 1 ? wet[1] : wet[0] };
+            target = match.process (dryPtrs, wetPtrs, nch, len);
+        }
         matchSmoothed.setTargetValue (matchOn ? target : 1.0f);
 
-        // 4. Mix / delta / output / bypass.
+        // 4. Mix / delta / listen / output / bypass.
         for (int i = 0; i < len; ++i)
         {
             const float mg = matchSmoothed.getNextValue();
             const float mx = mixSmoothed.getNextValue();
             const float og = outputSmoothed.getNextValue();
             const float dl = deltaSmoothed.getNextValue();
+            const float ls = listenSmoothed.getNextValue();
             const float bp = bypassSmoothed.getNextValue();
 
             for (int c = 0; c < nch; ++c)
@@ -241,7 +260,9 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 const float diff = mx * (wet[c][i] * mg - dry);
                 const float normal = dry + diff;
                 const float y = (normal + dl * (diff - normal)) * og;
-                const float out = y + bp * (dry - y);
+                // Listen: the engine's solo alone, scaled like the wet signal it is part of.
+                const float heard = y + ls * (mx * mg * wet[c][i] * og - y);
+                const float out = heard + bp * (dry - heard);
                 wet[c][i] = out;
                 peak[c] = juce::jmax (peak[c], std::abs (out));
             }
@@ -321,6 +342,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasStereo = tree.getChildWithProperty ("id", anneal::ids::stereoMode).isValid();
             const bool hasEqTarget = tree.getChildWithProperty ("id", anneal::ids::eqTarget).isValid();
             const bool hasHeatTarget = tree.getChildWithProperty ("id", anneal::ids::heatTarget).isValid();
+            const bool hasListen = tree.getChildWithProperty ("id", anneal::ids::listen).isValid();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
@@ -346,6 +368,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
                 if (! present)
                     if (auto* rp = apvts.getParameter (id))
                         rp->setValueNotifyingHost (0.0f);
+
+            // Projects saved before 0.2.5 have no Listen: they open hearing the full result, not
+            // whatever solo this instance was on.
+            if (! hasListen)
+                if (auto* lp = apvts.getParameter (anneal::ids::listen))
+                    lp->setValueNotifyingHost (0.0f);
 
             if (juce::MessageManager::existsAndIsCurrentThread())
                 applyLatencyModeIfChanged();
