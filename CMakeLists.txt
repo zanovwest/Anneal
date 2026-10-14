@@ -30,6 +30,8 @@ endif()
 add_library(AnnealCore INTERFACE)
 target_sources(AnnealCore INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/PerceptualModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/Reference.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/ReferenceAnalyser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/HarmonicSynth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/SpectralEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/LoudnessMatch.cpp
@@ -50,7 +52,9 @@ target_include_directories(AnnealCore INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/Sour
 target_compile_definitions(AnnealCore INTERFACE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_VST3_CAN_REPLACE_VST2=0)
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    # 4.0 reference files: JUCE's own MP3 decoder (portable; no OS codecs are used).
+    JUCE_USE_MP3AUDIOFORMAT=1)
 target_link_libraries(AnnealCore INTERFACE
     juce::juce_audio_utils
     juce::juce_dsp)
@@ -139,6 +143,8 @@ endif()
 # Headless DSP/processor acceptance tests + benchmark.
 juce_add_console_app(AnnealTests PRODUCT_NAME "AnnealTests")
 target_sources(AnnealTests PRIVATE tests/AnnealTests.cpp)
+# The reference-file test runs the message loop while the "audio thread" keeps processing.
+target_compile_definitions(AnnealTests PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1)
 target_link_libraries(AnnealTests
     PRIVATE
         AnnealCore

@@ -59,6 +59,16 @@ int parseFlavour (const juce::String& text)
     return 0;
 }
 
+int parseReference (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim();
+    if (l.containsAnyOf ("0123456789"))
+        return juce::jlimit (0, 2, l.getIntValue());
+    if (l.contains ("learn") || l.contains ("key")) return 1;
+    if (l.contains ("match") || l.contains ("ref"))  return 2;
+    return 0;
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -210,6 +220,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (percent (ids::scAmount, "Sidechain Amount", 50.0f));
     layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::ceiling, 1 }, "Ceiling",
         juce::StringArray { "Off", "0.0 dBTP", "-0.3 dBTP", "-1.0 dBTP" }, 0));
+
+    // 4.0 Reference match. Off (the default, and what older projects load with) leaves the auto EQ
+    // exactly as before; Learn key listens to the sidechain; Match steers toward the reference.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::refMode, 1 }, "Reference",
+        juce::StringArray { "Off", "Learn key", "Match" }, 0,
+        juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
+        {
+            return parseReference (t);
+        })));
+    layout.add (percent (ids::refAmount, "Reference Amount", 50.0f));
     return layout;
 }
 }

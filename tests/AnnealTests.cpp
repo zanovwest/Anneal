@@ -5,6 +5,7 @@
 #include "PluginEditor.h"
 #include "Params.h"
 #include "Presets.h"
+#include "dsp/ReferenceAnalyser.h"
 #include "dsp/SpectralEngine.h"
 #include "dsp/TruePeakLimiter.h"
 #include "dsp/ErbScale.h"
@@ -12,6 +13,7 @@
 #include "TestSignals.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include <chrono>
 #include <cstdio>
@@ -2095,6 +2097,465 @@ void testFixes40()
     }
 }
 
+//==============================================================================
+// 4.0: Reference match and Paint.
+
+// +gainDb high shelf at `hz` (RBJ, Q 0.707) on every channel.
+Channels highShelf (const Channels& in, double fs, double hz, float gainDb)
+{
+    auto out = in;
+    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (fs, (float) hz, 0.7071f, juce::Decibels::decibelsToGain (gainDb));
+    for (auto& ch : out)
+    {
+        juce::dsp::IIR::Filter<float> f (coeffs);
+        for (auto& s : ch)
+            s = f.processSample (s);
+    }
+    return out;
+}
+
+// Average power (dB) between lo and hi Hz over [from, from + n) of channel 0 (Hann, 8192, 50 %).
+double bandPowerDb (const Channels& x, int from, int n, double fs, double lo, double hi)
+{
+    constexpr int order = 13, size = 1 << order;
+    juce::dsp::FFT fft (order);
+    std::vector<float> buf ((size_t) size * 2);
+    double sum = 0.0;
+    int frames = 0;
+    for (int pos = from; pos + size <= from + n; pos += size / 2, ++frames)
+    {
+        for (int i = 0; i < size; ++i)
+            buf[(size_t) i] = x[0][(size_t) (pos + i)] * (float) (0.5 - 0.5 * std::cos (2.0 * testsig::pi * i / size));
+        std::fill (buf.begin() + size, buf.end(), 0.0f);
+        fft.performFrequencyOnlyForwardTransform (buf.data());
+        for (int k = (int) std::ceil (lo * size / fs); k <= (int) std::floor (hi * size / fs); ++k)
+            sum += (double) buf[(size_t) k] * buf[(size_t) k];
+    }
+    return 10.0 * std::log10 (std::max (sum / std::max (1, frames), 1.0e-30));
+}
+
+// Treble (4.5-12 kHz) against body (200-2000 Hz), dB.
+double tilt (const Channels& x, int from, int n, double fs)
+{
+    return bandPowerDb (x, from, n, fs, 4500.0, 12000.0) - bandPowerDb (x, from, n, fs, 200.0, 2000.0);
+}
+
+anneal::ReferenceCurve analyse (const Channels& x, double fs)
+{
+    anneal::ReferenceAnalyser a (fs);
+    const float* ptrs[2] = { x[0].data(), x[1].data() };
+    a.push (ptrs, 2, (int) x[0].size());
+    return a.finish();
+}
+
+double maxDiff (const Channels& a, const Channels& b)
+{
+    double m = 0.0;
+    for (size_t c = 0; c < a.size(); ++c)
+        for (size_t i = 0; i < a[c].size(); ++i)
+            m = std::max (m, (double) std::abs (a[c][i] - b[c][i]));
+    return m;
+}
+
+// Paint 0 % over [loHz, hiHz] in one curve.
+anneal::PaintCurves paintedOut (bool eq, double loHz, double hiHz)
+{
+    anneal::PaintCurves p;
+    for (int i = 0; i < anneal::PaintCurves::numPoints; ++i)
+    {
+        const double z = anneal::refgrid::camAt (i, anneal::PaintCurves::numPoints);
+        if (z >= anneal::erb::hzToCam (loHz) && z <= anneal::erb::hzToCam (hiHz))
+            (eq ? p.eq : p.heat)[i] = 0.0f;
+    }
+    return p;
+}
+
+void testReference()
+{
+    section ("27. Reference match (4.0)");
+    const double fs = 48000.0;
+    const auto flat = pinkNoise (fs, 8.0, 0.03f, 41);
+    const auto bright = highShelf (pinkNoise (fs, 8.0, 0.03f, 51), fs, 4000.0, 6.0f);   // the main: +6 dB above 4 kHz
+    const auto reference = analyse (flat, fs);
+    const int n = (int) bright[0].size();
+
+    {
+        // Off, Learn key with no key, and Match at Amount 0 are bit-identical to no reference at all.
+        const auto music = testsig::musicLike (fs, 3.0);
+        Rig plain;
+        plain.prepare (fs, 512);
+        const auto expected = plain.run (music, fixedBlocks (512));
+        juce::String log;
+        bool ok = reference.valid;
+        for (auto [mode, amount] : { std::pair { 0.0f, 100.0f }, std::pair { 1.0f, 100.0f }, std::pair { 2.0f, 0.0f } })
+        {
+            Rig r;
+            r.proc->setReference (reference, "flat");
+            r.set (ids::refMode, mode);
+            r.set (ids::refAmount, amount);
+            r.prepare (fs, 512);
+            const double d = maxDiff (r.run (music, fixedBlocks (512)), expected);
+            ok = ok && d == 0.0;
+            log << (mode == 0 ? "Off " : mode == 1 ? "Learn " : "Match 0 % ") << juce::String (d, 12) << "  ";
+        }
+        check (ok, "Reference Off / Learn / Amount 0 = identical output", log);
+    }
+
+    {
+        // Match at 100 % moves the bright main at least 3 dB toward the flat reference, without overshooting.
+        juce::String log;
+        bool ok = true;
+        for (int ms : { 0, 1 })
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::stereoMode, (float) ms);
+            r.set (ids::refMode, 2.0f);
+            r.set (ids::refAmount, 100.0f);
+            r.proc->setReference (reference, "flat");
+            r.prepare (fs, 512);
+            const auto out = r.run (bright, fixedBlocks (512));
+            const int lat = r.proc->getLatencySamples();
+            const int from = n / 2, len = n / 2 - lat - 8192;
+            const double tIn = tilt (bright, from, len, fs), tRef = tilt (flat, from, len, fs);
+            const double tOut = tilt (out, from + lat, len, fs);
+            const double moved = tIn - tOut;
+            ok = ok && moved >= 3.0 && tOut >= tRef - 1.5;
+            log << (ms ? "M/S" : "Stereo") << ": main " << juce::String (tIn - tRef, 1) << " dB brighter, moved "
+                << juce::String (moved, 1) << " dB (EQ 8 kHz " << db (bandGain (r.proc->getEngine(), 8000.0))
+                << ", 500 Hz " << db (bandGain (r.proc->getEngine(), 500.0)) << ")  ";
+        }
+        check (ok, "Match 100 %: +6 dB shelf moves >= 3 dB toward a flat reference", log);
+    }
+
+    {
+        // Learn key through the processor's sidechain bus: the learned curve equals the key's own
+        // analysis; then Match uses it. Choosing Learn key with a silent key keeps the reference.
+        Rig r;
+        juce::AudioProcessor::BusesLayout l;
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.outputBuses.add (juce::AudioChannelSet::stereo());
+        r.proc->setBusesLayout (l);
+        r.setNeutral();
+        r.set (ids::latency, 2.0f);   // Precise: bass detail close to the file analysis
+        r.prepare (fs, 512);
+        auto runWithKey = [&r] (const Channels& main, const Channels* key)
+        {
+            const int len = (int) main[0].size();
+            Channels out = main;
+            juce::AudioBuffer<float> buf (4, 512);
+            juce::MidiBuffer midi;
+            for (int pos = 0; pos + 512 <= len; pos += 512)
+            {
+                for (int c = 0; c < 2; ++c)
+                {
+                    buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                    if (key != nullptr) buf.copyFrom (c + 2, 0, (*key)[(size_t) c].data() + pos, 512);
+                    else                buf.clear (c + 2, 0, 512);
+                }
+                r.proc->processBlock (buf, midi);
+                for (int c = 0; c < 2; ++c)
+                    std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + 512, out[(size_t) c].data() + pos);
+            }
+            return out;
+        };
+        anneal::ReferenceCurve marker;
+        marker.valid = true;
+        std::fill (marker.db, marker.db + anneal::ReferenceCurve::numPoints, -3.0f);
+        r.proc->setReference (marker, "marker");
+        r.set (ids::refMode, 1.0f);   // Learn key, nothing playing on the key
+        runWithKey (bright, nullptr);
+        const auto kept = r.proc->getReference();
+        const bool keptOld = kept.name == "marker" && kept.curve.db[500] == -3.0f;
+
+        runWithKey (bright, &flat);   // the key plays: learn it
+        r.set (ids::refMode, 0.0f);
+        runWithKey (testsig::silence (2, 4096), nullptr);
+        const auto learned = r.proc->getReference();
+        // Same shape as the file analysis of the same noise (its overall offset may differ by how
+        // the bass is resolved in the normalisation window).
+        double worst = 0.0, offset = 0.0;
+        int count = 0;
+        for (int pass = 0; pass < 2; ++pass)
+            for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+            {
+                const double hz = anneal::erb::camToHz (anneal::refgrid::camAt (i, anneal::ReferenceCurve::numPoints));
+                if (hz < 200.0 || hz > 16000.0)
+                    continue;
+                const double d = learned.curve.db[i] - reference.db[i];
+                if (pass == 0) { offset += d; ++count; }
+                else           worst = std::max (worst, std::abs (d - offset / count));
+            }
+
+        r.set (ids::refMode, 2.0f);
+        r.set (ids::refAmount, 100.0f);
+        const auto out = runWithKey (bright, nullptr);
+        const int lat = r.proc->getLatencySamples(), from = n / 2, len = n / 2 - lat - 8192;
+        const double moved = tilt (bright, from, len, fs) - tilt (out, from + lat, len, fs);
+        check (keptOld && learned.curve.valid && learned.name == "sidechain key" && worst < 1.0 && moved >= 3.0,
+               "Learn key learns the key's spectrum, Match then uses it",
+               juce::String (keptOld ? "silent key kept the old reference; " : "OLD REFERENCE LOST; ")
+                   + "learned vs file analysis, 200 Hz-16 kHz: max " + db (worst, 2) + "; matched " + db (moved));
+    }
+
+    {
+        // A reference file dropped on the display is decoded and analysed on another thread while
+        // the audio thread keeps processing; it arrives without blocking it, and Reference
+        // switches to Match. WAV, FLAC and AIFF (MP3 uses JUCE's decoder, like these).
+        const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AnnealTests-reference");
+        dir.createDirectory();
+        const double fileRate = 44100.0;
+        const auto fileAudio = pinkNoise (fileRate, 4.0, 0.05f, 61);
+        const auto direct = analyse (fileAudio, fileRate);
+        juce::String log;
+        bool ok = direct.valid;
+        for (auto* ext : { "wav", "flac", "aiff" })
+        {
+            const auto file = dir.getChildFile (juce::String ("ref.") + ext);
+            file.deleteFile();
+            {
+                std::unique_ptr<juce::AudioFormat> format;
+                if (juce::String (ext) == "wav")       format = std::make_unique<juce::WavAudioFormat>();
+                else if (juce::String (ext) == "flac") format = std::make_unique<juce::FlacAudioFormat>();
+                else                                   format = std::make_unique<juce::AiffAudioFormat>();
+                auto stream = file.createOutputStream();
+                std::unique_ptr<juce::AudioFormatWriter> writer (format->createWriterFor (stream.get(), fileRate, 2, 24, {}, 0));
+                if (writer != nullptr)
+                {
+                    stream.release();
+                    const float* ptrs[2] = { fileAudio[0].data(), fileAudio[1].data() };
+                    writer->writeFromFloatArrays (ptrs, 2, (int) fileAudio[0].size());
+                }
+            }
+
+            Rig r;
+            r.prepare (fs, 256);
+            const bool accepted = AnnealAudioProcessor::canLoadReferenceFile (file);
+            r.proc->loadReferenceFile (file);
+            const auto music = testsig::musicLike (fs, 0.5);
+            int blocks = 0;
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            while ((r.proc->isAnalysingReference() || r.proc->apvts.getRawParameterValue (ids::refMode)->load() < 1.5f)
+                   && juce::Time::getMillisecondCounterHiRes() - t0 < 30000.0)
+            {
+                r.run (music, fixedBlocks (256));   // the "audio thread" keeps going meanwhile
+                blocks += (int) music[0].size() / 256;
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+            }
+            r.run (music, fixedBlocks (256));
+            const auto got = r.proc->getReference();
+            double worst = 0.0;
+            for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+                worst = std::max (worst, (double) std::abs (got.curve.db[i] - direct.db[i]));
+            const bool fine = accepted && got.curve.valid && got.name == file.getFileName() && worst < 0.05
+                              && r.proc->getLastAnalysisThread() != nullptr
+                              && r.proc->getLastAnalysisThread() != juce::Thread::getCurrentThreadId()
+                              && r.proc->getEngine().getModel().hasReference()
+                              && r.proc->apvts.getRawParameterValue (ids::refMode)->load() > 1.5f;
+            ok = ok && fine;
+            log << ext << (fine ? "" : "!") << " (" << blocks << " blocks meanwhile, max " << juce::String (worst, 3) << " dB)  ";
+        }
+
+        // Not audio: nothing changes, and the reason is kept for the display.
+        const auto junk = dir.getChildFile ("junk.wav");
+        junk.replaceWithText ("not audio");
+        Rig r;
+        r.proc->setReference (direct, "kept");
+        r.proc->loadReferenceFile (junk);
+        for (int i = 0; i < 400 && r.proc->isAnalysingReference(); ++i)
+            juce::Thread::sleep (5);
+        const bool junkOk = r.proc->getReference().name == "kept" && r.proc->getReferenceError().contains ("junk.wav")
+                            && AnnealAudioProcessor::canLoadReferenceFile (dir.getChildFile ("x.mp3")) == false   // doesn't exist
+                            && ! AnnealAudioProcessor::canLoadReferenceFile (dir.getChildFile ("ref.txt"));
+        dir.deleteRecursively();
+        check (ok && junkOk, "dropped file analysed off the audio thread", log + (junkOk ? "; junk ignored" : "; JUNK NOT HANDLED"));
+    }
+
+    {
+        // Freeze holds the match like the rest of the curve.
+        Rig r;
+        r.setNeutral();
+        r.set (ids::refMode, 2.0f);
+        r.set (ids::refAmount, 100.0f);
+        r.proc->setReference (reference, "flat");
+        r.prepare (fs, 512);
+        r.run (bright, fixedBlocks (512));
+        const float matched = bandGain (r.proc->getEngine(), 8000.0);
+        r.set (ids::freeze, 1.0f);
+        r.run (pinkNoise (fs, 0.2, 0.03f, 3), fixedBlocks (512));
+        const float held0 = bandGain (r.proc->getEngine(), 8000.0);
+        r.proc->setReference (analyse (bright, fs), "bright");   // now nothing to match ...
+        r.run (pinkNoise (fs, 2.0, 0.03f, 5), fixedBlocks (512));
+        const float held = bandGain (r.proc->getEngine(), 8000.0);
+        check (matched <= -2.0f && std::abs (held - held0) < 0.05f, "Freeze holds the match",
+               "8 kHz matched " + db (matched) + ", frozen " + db (held0) + " -> " + db (held) + " after the reference changed");
+    }
+}
+
+void testPaint()
+{
+    section ("28. Paint (4.0)");
+    const double fs = 48000.0;
+    const auto music = testsig::musicLike (fs, 3.0);
+
+    {
+        // All 100 % is bit-identical to no paint, also after painting and erasing again.
+        Rig plain, painted;
+        plain.prepare (fs, 512);
+        painted.proc->setPaint (paintedOut (true, 300.0, 900.0));
+        painted.proc->setPaint (anneal::PaintCurves());
+        painted.prepare (fs, 512);
+        const double d = maxDiff (painted.run (music, fixedBlocks (512)), plain.run (music, fixedBlocks (512)));
+        check (d == 0.0, "Paint at 100 % everywhere = identical output", "max diff " + juce::String (d, 12));
+    }
+
+    {
+        // EQ paint 0 % over 2-5 kHz: the 3150 Hz Smooth cut is gone; outside, Smooth still works.
+        const int n = (int) (3 * fs);
+        Channels ringy = testsig::silence (2, n);
+        testsig::Pink pl (1), pr (2);
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) (std::sin (2.0 * testsig::pi * 3150.0 * i / fs) + std::sin (2.0 * testsig::pi * 800.0 * i / fs));
+            ringy[0][(size_t) i] = 0.03f * pl.next() + ring;
+            ringy[1][(size_t) i] = 0.03f * pr.next() + ring;
+        }
+        float g3150[2] {}, g800[2] {};
+        for (int painted : { 0, 1 })
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::smooth, 100.0f);
+            if (painted)
+                r.proc->setPaint (paintedOut (true, 2000.0, 5000.0));
+            r.prepare (fs, 512);
+            r.run (ringy, fixedBlocks (512));
+            g3150[painted] = bandGain (r.proc->getEngine(), 3150.0);
+            g800[painted] = bandGain (r.proc->getEngine(), 800.0);
+        }
+        check (g3150[0] <= -3.0f && std::abs (g3150[1]) < 0.05f && g800[1] <= -3.0f && std::abs (g800[1] - g800[0]) < 0.05f,
+               "EQ paint 0 % over 2-5 kHz removes the 3150 Hz cut",
+               "3150 Hz " + db (g3150[0]) + " -> " + db (g3150[1]) + ", 800 Hz " + db (g800[0]) + " -> " + db (g800[1]));
+    }
+
+    {
+        // Heat paint 0 % over 2-5 kHz: a 1.5 kHz tone's 2nd and 3rd (3 / 4.5 kHz) are gone, its 4th
+        // (6 kHz) stays. Listen: Heat only, so only harmonics are heard.
+        const auto tone = testsig::sines (fs, (int) (2 * fs), { { 1500.0, 0.25 } });
+        double h[2][3] {};
+        for (int painted : { 0, 1 })
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::heat, 100.0f);
+            r.set (ids::color, 50.0f);
+            r.set (ids::listen, 3.0f);
+            if (painted)
+                r.proc->setPaint (paintedOut (false, 2000.0, 5000.0));
+            r.prepare (fs, 512);
+            const auto out = r.run (tone, fixedBlocks (512));
+            const int from = (int) fs, len = (int) (0.8 * fs);
+            int k = 0;
+            for (double f : { 3000.0, 4500.0, 6000.0 })
+                h[painted][k++] = toDb (testsig::toneAmplitude (out[0].data() + from, len, f, fs) / 0.25);
+        }
+        check (h[0][0] > -60.0 && h[0][1] > -60.0 && h[1][0] < -100.0 && h[1][1] < -100.0 && std::abs (h[1][2] - h[0][2]) < 0.5,
+               "Heat paint 0 % over 2-5 kHz removes the harmonics there",
+               "3 kHz " + db (h[0][0]) + " -> " + db (h[1][0]) + ", 4.5 kHz " + db (h[0][1]) + " -> " + db (h[1][1])
+                   + ", 6 kHz " + db (h[0][2]) + " -> " + db (h[1][2]));
+    }
+
+    {
+        // A stroke is one undo step; redo brings it back.
+        Rig r;
+        r.proc->beginPaintStroke();
+        auto p = r.proc->getPaint();
+        for (int i = 20; i < 30; ++i)
+        {
+            p.eq[i] = 0.25f;
+            r.proc->setPaint (p);   // the drag paints point by point
+        }
+        r.proc->endPaintStroke();
+        const bool painted = r.proc->getPaint().eq[25] == 0.25f;
+        r.proc->undo();
+        const bool undone = r.proc->getPaint().isDefault() && ! r.proc->canUndo();
+        r.proc->redo();
+        const bool redone = r.proc->getPaint() == p;
+        check (painted && undone && redone, "a paint stroke is one undo step",
+               juce::String (painted ? "painted" : "NOT PAINTED") + ", " + (undone ? "undone in one step" : "UNDO WRONG") + ", "
+                   + (redone ? "redone" : "REDO WRONG"));
+    }
+}
+
+void testReferenceState()
+{
+    section ("29. Reference and Paint in saved projects (4.0)");
+    anneal::ReferenceCurve curve;
+    curve.valid = true;
+    for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+        curve.db[i] = -20.0f + 0.037f * (float) i;
+    auto paint = paintedOut (true, 300.0, 600.0);
+    paint.heat[40] = 0.375f;
+
+    Rig a;
+    a.proc->setReference (curve, juce::String::fromUTF8 ("Mix \xe2\x80\x94 final.wav"));
+    a.proc->setPaint (paint);
+    a.set (ids::refMode, 2.0f);
+    a.set (ids::refAmount, 80.0f);
+    juce::MemoryBlock blob;
+    a.proc->getStateInformation (blob);
+
+    Rig b;
+    b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+    const auto got = b.proc->getReference();
+    float worst = 0.0f, worstPaint = 0.0f;
+    for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+        worst = std::max (worst, std::abs (got.curve.db[i] - curve.db[i]));
+    const auto gotPaint = b.proc->getPaint();
+    for (int i = 0; i < anneal::PaintCurves::numPoints; ++i)
+        worstPaint = std::max ({ worstPaint, std::abs (gotPaint.eq[i] - paint.eq[i]), std::abs (gotPaint.heat[i] - paint.heat[i]) });
+    auto v = [] (Rig& r, const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+    auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    const bool versioned = xml != nullptr && (int) xml->getIntAttribute ("stateVersion") == 2;
+    check (got.curve.valid && worst == 0.0f && got.name == juce::String::fromUTF8 ("Mix \xe2\x80\x94 final.wav") && worstPaint < 1.0e-4f
+               && v (b, ids::refMode) == 2.0f && std::abs (v (b, ids::refAmount) - 80.0f) < 0.05f && versioned,
+           "state round trip: reference, paint, mode and amount",
+           "reference max diff " + juce::String (worst, 6) + ", paint " + juce::String (worstPaint, 6) + ", state "
+               + juce::String ((int) blob.getSize()) + " bytes" + (versioned ? ", stateVersion 2" : ", WRONG VERSION"));
+
+    // A 3.x project (stateVersion 1, none of the 4.0 data) into an instance with a reference, paint
+    // and Match: the reference empty, no paint, Reference Off.
+    for (auto id : { ids::refMode, ids::refAmount })
+        if (auto* e = xml->getChildByAttribute ("id", id))
+            xml->removeChildElement (e, true);
+    while (auto* e = xml->getChildByName ("Reference")) xml->removeChildElement (e, true);
+    while (auto* e = xml->getChildByName ("Paint"))     xml->removeChildElement (e, true);
+    xml->setAttribute ("stateVersion", 1);
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary (*xml, old);
+    b.proc->setStateInformation (old.getData(), (int) old.getSize());
+    const bool cleared = ! b.proc->getReference().curve.valid && b.proc->getPaint().isDefault() && v (b, ids::refMode) == 0.0f
+                         && std::abs (v (b, ids::refAmount) - 50.0f) < 0.05f;
+
+    // A malformed reference (wrong size) loads as none; the saved state stays without it.
+    auto bad = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    if (auto* e = bad->getChildByName ("Reference"))
+        e->setAttribute ("db", "12.abc");
+    juce::MemoryBlock badBlob;
+    juce::AudioProcessor::copyXmlToBinary (*bad, badBlob);
+    Rig c;
+    c.proc->setStateInformation (badBlob.getData(), (int) badBlob.getSize());
+    const bool badIgnored = ! c.proc->getReference().curve.valid && c.proc->getPaint() == gotPaint;
+    juce::MemoryBlock resaved;
+    c.proc->getStateInformation (resaved);
+    auto resavedXml = juce::AudioProcessor::getXmlFromBinary (resaved.getData(), (int) resaved.getSize());
+    const bool oneEach = resavedXml != nullptr && resavedXml->getChildByName ("Reference") == nullptr
+                         && resavedXml->getNumChildElements() > 0;
+    check (cleared && badIgnored && oneEach, "older projects load with no reference, no paint, Reference Off",
+           juce::String (cleared ? "3.x state cleared it" : "3.x STATE KEPT 4.0 DATA") + ", " + (badIgnored ? "malformed reference ignored" : "MALFORMED ACCEPTED"));
+}
+
 void testOldProjects30()
 {
     section ("25. Projects from before 3.0");
@@ -2150,6 +2611,9 @@ int main()
     testUndo();
     testOldProjects30();
     testFixes40();
+    testReference();
+    testPaint();
+    testReferenceState();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

@@ -30,8 +30,12 @@ namespace anneal::ids
     inline constexpr const char* scMode     = "scMode";     // 3.0: sidechain Off / Make room / Unmask
     inline constexpr const char* scAmount   = "scAmount";   // 3.0: sidechain amount, %
     inline constexpr const char* ceiling    = "ceiling";    // 3.0: true-peak ceiling Off / 0.0 / -0.3 / -1.0 dBTP
+    inline constexpr const char* refMode    = "refMode";    // 4.0: reference Off / Learn key / Match
+    inline constexpr const char* refAmount  = "refAmount";  // 4.0: how far Match steers, %
 
-    inline constexpr int stateVersion = 1;
+    // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
+    // states have neither and load with the reference empty and no paint.
+    inline constexpr int stateVersion = 2;
 }
 
 namespace anneal
@@ -50,6 +54,7 @@ namespace anneal
     float parseHz (const juce::String& text);
     int parseListen (const juce::String& text);   // "reveal", "smooth", "harmonics"/"heat", "off" or 0-3
     int parseFlavour (const juce::String& text);  // "clean", "tape", "tube", "transformer", "exciter" or 0-4
+    int parseReference (const juce::String& text); // "off", "learn"/"key", "match" or 0-2
 
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };

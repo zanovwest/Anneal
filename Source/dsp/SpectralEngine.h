@@ -37,6 +37,8 @@ namespace anneal
         bool freeze        = false;          // hold the auto-EQ curve
         int scMode         = 0;              // sidechain: 0 off, 1 make room, 2 unmask
         float scAmount     = 0.5f;
+        int refMode        = refOff;         // 4.0 reference: off / learn the key / match
+        float refAmount    = 0.5f;
     };
 
     // STFT host for the perceptual model and the harmonic synth.
@@ -80,6 +82,17 @@ namespace anneal
         // Several engines (one per latency mode) can publish into one shared display buffer.
         void setDisplayTarget (TripleBuffer<DisplayFrame>* shared) noexcept { displayOut = shared != nullptr ? shared : &display; }
 
+        // 4.0 Reference match and Paint (audio thread, or while processing is suspended). Both are
+        // kept across prepare() and reset(). A reference from outside (a file, a project) drops
+        // the frames of a learn in progress; with curve.holdLearning, Learn key learns again only
+        // once it is chosen again.
+        void setReference (const ReferenceCurve& curve) noexcept;
+        void setPaint (const PaintCurves& paint) noexcept;
+        // Where a reference learned from the key is published (a few times a second while learning).
+        // Learning starts over with the first key frame after Reference changes to Learn key.
+        void setLearnTarget (TripleBuffer<ReferenceCurve>* out) noexcept { learnOut = out; }
+        float getLearnedSeconds() const noexcept { return (float) model.getLearnedFrames() / framesPerSecond; }
+
     private:
         void processFrame() noexcept;
         void smoothParameters() noexcept;
@@ -119,5 +132,12 @@ namespace anneal
         TripleBuffer<DisplayFrame> display;
         TripleBuffer<DisplayFrame>* displayOut = &display;
         std::uint32_t frameCounter = 0;
+
+        void applyReference (const ReferenceCurve& curve) noexcept;
+        TripleBuffer<ReferenceCurve>* learnOut = nullptr;
+        ReferenceCurve learnScratch;
+        bool learnFresh = true, learnHeld = false;
+        int learnTick = 0;
+        unsigned int refEpoch = 0;
     };
 }

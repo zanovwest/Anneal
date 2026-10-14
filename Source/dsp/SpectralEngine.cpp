@@ -90,6 +90,28 @@ void SpectralEngine::reset (bool keepCurve)
     lastPeakCount = 0;
 }
 
+void SpectralEngine::setReference (const ReferenceCurve& curve) noexcept
+{
+    applyReference (curve);
+    refEpoch = curve.epoch;
+    learnFresh = true;
+    learnHeld = curve.holdLearning;
+}
+
+void SpectralEngine::applyReference (const ReferenceCurve& curve) noexcept
+{
+    model.setReference (curve);
+    for (auto& m : msModel)
+        m.setReference (curve);
+}
+
+void SpectralEngine::setPaint (const PaintCurves& paint) noexcept
+{
+    model.setPaint (paint);
+    for (auto& m : msModel)
+        m.setPaint (paint);
+}
+
 void SpectralEngine::adoptCurveFrom (const SpectralEngine& other) noexcept
 {
     model.copyCurveFrom (other.model);
@@ -196,8 +218,10 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.heatMid, target.heatMid);
     lin (current.heatSide, target.heatSide);
     lin (current.scAmount, target.scAmount);
+    lin (current.refAmount, target.refAmount);
     current.freeze = target.freeze;
     current.scMode = target.scMode;
+    current.refMode = target.refMode;
     lg  (current.rangeLoHz, target.rangeLoHz);
     lg  (current.rangeHiHz, target.rangeHiHz);
     current.responseMs = target.responseMs;
@@ -278,10 +302,13 @@ void SpectralEngine::processFrame() noexcept
     const float ampScale = 4.0f / (float) fftSize;
     const float powScale = ampScale * ampScale / (float) channels;
 
-    // Sidechain key: only transformed when a sidechain mode is on (no cost otherwise).
+    // Sidechain key: only transformed when a sidechain mode is on or a reference is being learned
+    // from it (no cost otherwise).
+    const bool learning = current.refMode == refLearn;
     const float* keyPtr = nullptr;
     bool keyHasSignal = false;
-    if (current.scMode != 0)
+    double keyTotal = 0.0;
+    if (current.scMode != 0 || learning)
     {
         float* s = keySpec.data();
         for (int i = 0; i < fftSize; ++i)
@@ -299,7 +326,46 @@ void SpectralEngine::processFrame() noexcept
             total += keyPower[(size_t) k];
         }
         keyHasSignal = total > 1.0e-12;
-        keyPtr = keyPower.data();
+        keyTotal = total;
+        if (current.scMode != 0)
+            keyPtr = keyPower.data();
+    }
+
+    // 4.0 Learn key: the key's long-term spectrum, from every frame in which it plays (above
+    // -90 dBFS). A new learn starts with the first such frame after Learn key is chosen, so choosing
+    // it with nothing routed keeps the reference there was.
+    auto publishLearned = [this]
+    {
+        model.getLearnedCurve (learnScratch);
+        learnScratch.epoch = refEpoch;
+        applyReference (learnScratch);   // Match uses it as soon as it is chosen
+        if (learnOut != nullptr)
+        {
+            learnOut->beginWrite() = learnScratch;
+            learnOut->endWrite();
+        }
+    };
+    if (! learning)
+    {
+        if (! learnFresh && ! learnHeld && model.getLearnedFrames() > 0)
+            publishLearned();   // the frames since the last publish
+        learnFresh = true;
+        learnHeld = false;
+    }
+    else if (! learnHeld && keyTotal > 1.0e-9)
+    {
+        if (learnFresh)
+        {
+            model.clearLearned();
+            learnFresh = false;
+            learnTick = 0;
+        }
+        model.learnKey (keyPower.data());
+        if (learnTick-- <= 0)   // about four times a second
+        {
+            learnTick = std::max (1, (int) (framesPerSecond / 4.0f));
+            publishLearned();
+        }
     }
     for (int k = 0; k < numBins; ++k)
     {
@@ -321,6 +387,8 @@ void SpectralEngine::processFrame() noexcept
     ms.freeze = current.freeze;
     ms.scMode = current.scMode;
     ms.scAmount = current.scAmount;
+    ms.refMode = current.refMode;
+    ms.refAmount = current.refAmount;
     model.analyse (power.data(), ms, framesPerSecond, keyPtr);
 
     const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
@@ -377,6 +445,10 @@ void SpectralEngine::processFrame() noexcept
                                  ? msModel[0].getSidechainPeakDb() : msModel[1].getSidechainPeakDb())
                           : model.getSidechainPeakDb();
         f.frozen = current.freeze;
+        f.refMode = current.refMode;
+        f.refValid = model.hasReference();
+        f.refSeconds = getLearnedSeconds();
+        f.matchDb = model.getMatchPeakDb();
         if (keyHasSignal)
             model.bandLevelsDb (keyPower.data(), f.keyDb);
         if (msActive)
@@ -466,6 +538,13 @@ void SpectralEngine::processMidSide (const ModelSettings& settings, float blend,
         ms.reveal *= eqAmount;
         ms.smooth *= eqAmount;
         ms.tiltDbPerOct *= eqAmount;
+        // Reference match: the stereo (linked) match curve, applied to each routed component.
+        ms.refMode = refOff;
+        if (model.isMatching())
+        {
+            ms.matchDb = model.getMatchDb();
+            ms.matchScale = eqAmount;
+        }
         msModel[c].analyse (msPower[c].data(), ms, framesPerSecond, keyPtr);
 
         const float* in[] = { msSpec[c].data() };

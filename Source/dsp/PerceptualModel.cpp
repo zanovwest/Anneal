@@ -95,6 +95,13 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
         alloc (*v, (size_t) numBands);
     for (auto* v : { &keySlices, &keySmoothed, &keyPlace })
         alloc (*v, (size_t) numBands);
+    for (auto* v : { &refBand, &longPower, &longDb, &mainNorm, &matchRaw, &matchDb, &learnDb, &paintEq, &paintHeat })
+        alloc (*v, (size_t) numBands);
+    learnSum.assign ((size_t) numBands, 0.0);
+    learnFrames = 0;
+    matchHalf = std::max (1, (int) std::lround (1.5 / dz));   // the match curve is smoothed +-1.5 Cam
+    applyReference();
+    applyPaint();
     for (auto* v : { &binGainDb, &binGain, &binNeed, &binAutoDb, &binAutoGain })
         alloc (*v, (size_t) numBins);
     prefix.assign ((size_t) numBands + 1, 0.0);
@@ -123,10 +130,12 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
 void PerceptualModel::reset (bool keepCurve)
 {
     primed = false;
-    liftPeakDb = cutPeakDb = transientPeak = 0.0f;
-    for (auto* v : { &smoothed, &prom, &slowPlace, &transient })
+    liftPeakDb = cutPeakDb = transientPeak = matchPeakDb = 0.0f;
+    for (auto* v : { &smoothed, &prom, &slowPlace, &transient, &matchDb })
         std::fill (v->begin(), v->end(), 0.0f);
     keyPrimed = false;
+    longFrames = 0;   // the main's long-term spectrum is measured again (the reference itself stays)
+    matchActive = false;
     std::fill (transientAge.begin(), transientAge.end(), idleAge);
     if (keepCurve && curvePrimed)
         return;   // gain, promSlow and the per-bin curve they produced stay as they are
@@ -284,6 +293,14 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         keyPrimed = false;
     }
 
+    // 4.0 Reference match. Off, Learn key and Amount 0 leave the target exactly as before.
+    matchActive = s.refMode == refMatch && refValid && s.refAmount > 0.0f;
+    if (matchActive)
+        updateMatch (s.refAmount, fps);
+    else
+        longFrames = 0;   // measured afresh when matching starts again
+    const float* extMatch = matchActive ? nullptr : s.matchDb;
+
     sidePeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
@@ -314,7 +331,13 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
                      * clamp01 ((30.0f - rel) / 12.0f) * audible * keyAudible;
         }
 
-        target[(size_t) b] = boost - cut + side;
+        // Reference match: like Reveal, nothing is moved where the main is inaudible.
+        float t = boost - cut + side;
+        if (matchActive)
+            t += matchDb[(size_t) b] * audible;
+        else if (extMatch != nullptr)
+            t += s.matchScale * extMatch[b] * audible;
+        target[(size_t) b] = t;
         if (std::abs (side) > std::abs (sidePeakDb))
             sidePeakDb = side;
     }
@@ -349,7 +372,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     const double zLo = erb::hzToCam (std::max (20.0f, s.rangeLoHz));
     const double zHi = std::max (zLo + 0.5, erb::hzToCam (s.rangeHiHz));
 
-    liftPeakDb = cutPeakDb = transientPeak = 0.0f;
+    liftPeakDb = cutPeakDb = transientPeak = matchPeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
         const double z = z0 + b * dz;
@@ -359,11 +382,23 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
         const float autoDb = guarded ? gain[(size_t) b] * relax : gain[(size_t) b];
-        gainOut[(size_t) b] = rg * (autoDb + tilt);
-        autoOut[(size_t) b] = rg * autoDb;
-        liftPeakDb = std::max (liftPeakDb, rg * autoDb);
-        cutPeakDb  = std::min (cutPeakDb, rg * autoDb);
+        float eqOut = rg * (autoDb + tilt), eqAuto = rg * autoDb;
+        if (paintEqOn)   // Paint: the painted share of the whole change, on top of Range
+        {
+            eqOut *= paintEq[(size_t) b];
+            eqAuto *= paintEq[(size_t) b];
+        }
+        gainOut[(size_t) b] = eqOut;
+        autoOut[(size_t) b] = eqAuto;
+        liftPeakDb = std::max (liftPeakDb, eqAuto);
+        cutPeakDb  = std::min (cutPeakDb, eqAuto);
         transientPeak = std::max (transientPeak, rg * transient[(size_t) b]);
+        if (matchActive)
+        {
+            const float m = rg * matchDb[(size_t) b] * (paintEqOn ? paintEq[(size_t) b] : 1.0f);
+            if (std::abs (m) > std::abs (matchPeakDb))
+                matchPeakDb = m;
+        }
 
         const float ps = promSlow[(size_t) b];
         const float shadowed = clamp01 ((-ps - 1.0f) / 9.0f);
@@ -371,7 +406,10 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float need = clamp01 (0.35f + 0.65f * shadowed - 0.5f * dominant);
         const float zn = (float) b / (numBands - 1);
         const float focusW = std::clamp (1.0f + s.focus * (2.0f * zn - 1.0f), 0.0f, 2.0f);
-        needOut[(size_t) b] = guarded ? rg * need * focusW * relax : rg * need * focusW;   // no harmonics smeared over attacks
+        float heatNeed = guarded ? rg * need * focusW * relax : rg * need * focusW;   // no harmonics smeared over attacks
+        if (paintHeatOn)
+            heatNeed *= paintHeat[(size_t) b];
+        needOut[(size_t) b] = heatNeed;
     }
 
     for (int k = 0; k < numBins; ++k)
@@ -413,5 +451,110 @@ void PerceptualModel::bandLevelsDb (const float* binPower, float* outDb)
     boxSum (tmp.data(), outDb, boxHalf, false);
     for (int b = 0; b < numBands; ++b)
         outDb[b] = powToDb (outDb[b]);
+}
+
+//==============================================================================
+// 4.0 Reference match
+
+void PerceptualModel::setReference (const ReferenceCurve& curve) noexcept
+{
+    refFixed = curve;
+    applyReference();
+}
+
+void PerceptualModel::applyReference() noexcept
+{
+    refValid = refFixed.valid && ! refBand.empty();
+    if (! refValid)
+        return;
+    for (int b = 0; b < numBands; ++b)
+        refBand[(size_t) b] = refgrid::sampleAt (refFixed.db, ReferenceCurve::numPoints, z0 + b * dz);
+    // Normalised again on these bands: below 40.8 kHz the top of the grid is cut off.
+    normaliseLevels (refBand.data(), nullptr, numBands, z0, dz, refBand.data());
+}
+
+void PerceptualModel::updateMatch (float amount, float fps) noexcept
+{
+    // The main's physical one-ERB power (no ear weighting, no internal noise: the reference has
+    // neither), averaged over ~3 s; a plain running mean until that many frames have been heard.
+    boxSum (slices.data(), tmp.data(), boxHalf, false);
+    ++longFrames;
+    const float aLong = 1.0f - std::exp (-1.0f / (3.0f * fps));
+    const float a = std::max (1.0f / (float) longFrames, aLong);
+    for (int b = 0; b < numBands; ++b)
+    {
+        longPower[(size_t) b] += a * (tmp[(size_t) b] - longPower[(size_t) b]);
+        longDb[(size_t) b] = powToDb (longPower[(size_t) b]);
+    }
+    normaliseLevels (longDb.data(), longPower.data(), numBands, z0, dz, mainNorm.data());
+
+    // Only where both have something: no lifting into an empty region of the main, and nothing
+    // pulled down where the reference is empty (e.g. above an MP3's cut-off).
+    for (int b = 0; b < numBands; ++b)
+    {
+        const float r = refBand[(size_t) b], m = mainNorm[(size_t) b];
+        matchRaw[(size_t) b] = (r - m) * clamp01 ((r + 45.0f) / 15.0f) * clamp01 ((m + 45.0f) / 15.0f);
+    }
+    boxSum (matchRaw.data(), tmp.data(), matchHalf, true);
+    for (int b = 0; b < numBands; ++b)
+        matchDb[(size_t) b] = amount * std::clamp (tmp[(size_t) b], -6.0f, 6.0f);
+}
+
+void PerceptualModel::clearLearned() noexcept
+{
+    std::fill (learnSum.begin(), learnSum.end(), 0.0);
+    learnFrames = 0;
+}
+
+void PerceptualModel::learnKey (const float* keyPower) noexcept
+{
+    binPowerToSlices (keyPower, keySlices.data());
+    boxSum (keySlices.data(), tmp.data(), boxHalf, false);
+    for (int b = 0; b < numBands; ++b)
+        learnSum[(size_t) b] += tmp[(size_t) b];
+    ++learnFrames;
+}
+
+void PerceptualModel::getLearnedCurve (ReferenceCurve& out) noexcept
+{
+    out.valid = false;
+    if (learnFrames == 0)
+        return;
+    for (int b = 0; b < numBands; ++b)
+        learnDb[(size_t) b] = powToDb (learnSum[(size_t) b] / learnFrames);
+    for (int i = 0; i < ReferenceCurve::numPoints; ++i)
+    {
+        const double u = std::clamp ((refgrid::camAt (i, ReferenceCurve::numPoints) - z0) / dz, 0.0, (double) (numBands - 1));
+        const int b = std::min ((int) u, numBands - 2);
+        const float f = (float) (u - b);
+        out.db[i] = learnDb[(size_t) b] + f * (learnDb[(size_t) b + 1] - learnDb[(size_t) b]);
+    }
+    const double fixedDz = (refgrid::zMax() - refgrid::zMin()) / (ReferenceCurve::numPoints - 1);
+    normaliseLevels (out.db, nullptr, ReferenceCurve::numPoints, refgrid::zMin(), fixedDz, out.db);
+    out.valid = true;
+}
+
+//==============================================================================
+// 4.0 Paint
+
+void PerceptualModel::setPaint (const PaintCurves& paint) noexcept
+{
+    paintSrc = paint;
+    applyPaint();
+}
+
+void PerceptualModel::applyPaint() noexcept
+{
+    // All 100 % switches the weighting off entirely, so the result is bit-identical to no paint.
+    paintEqOn = ! PaintCurves::isFull (paintSrc.eq);
+    paintHeatOn = ! PaintCurves::isFull (paintSrc.heat);
+    if (paintEq.empty())
+        return;
+    for (int b = 0; b < numBands; ++b)
+    {
+        const double z = z0 + b * dz;
+        paintEq[(size_t) b] = std::clamp (refgrid::sampleAt (paintSrc.eq, PaintCurves::numPoints, z), 0.0f, 1.0f);
+        paintHeat[(size_t) b] = std::clamp (refgrid::sampleAt (paintSrc.heat, PaintCurves::numPoints, z), 0.0f, 1.0f);
+    }
 }
 }

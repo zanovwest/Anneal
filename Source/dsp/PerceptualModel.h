@@ -1,9 +1,13 @@
 #pragma once
 
+#include "Reference.h"
+
 #include <vector>
 
 namespace anneal
 {
+    enum ReferenceMode { refOff = 0, refLearn = 1, refMatch = 2 };
+
     struct ModelSettings
     {
         float reveal       = 0.0f;     // 0..1, lift bands in a masking shadow
@@ -17,6 +21,12 @@ namespace anneal
         bool freeze        = false;    // hold the auto-EQ curve where it is (3.0)
         int scMode         = 0;        // sidechain: 0 off, 1 make room (duck where the key needs space), 2 unmask
         float scAmount     = 0.5f;     // 0..1
+        int refMode        = refOff;   // 4.0 reference: off / learn the key / match (ReferenceMode)
+        float refAmount    = 0.5f;     // 0..1
+        // 4.0 Mid/Side: the linked model's match curve (band dB), added to this model's target
+        // x matchScale. nullptr = none.
+        const float* matchDb = nullptr;
+        float matchScale   = 1.0f;
     };
 
     // ERB-rate band model. Turns a linked power spectrum into
@@ -68,7 +78,40 @@ namespace anneal
         double getBandHz (int band) const noexcept { return bandHz[(size_t) band]; }
         int bandForHz (double hz) const noexcept;
 
+        // 4.0 Reference match. The reference is resampled onto this model's bands; kept across
+        // prepare() and reset(). Real-time safe (no allocation).
+        void setReference (const ReferenceCurve& curve) noexcept;
+        bool hasReference() const noexcept { return refValid; }
+        // Match: the main's slow (~3 s) long-term one-ERB spectrum against the reference, both
+        // level-normalised; the difference smoothed +-1.5 Cam, clamped to +-6 dB, x Amount.
+        bool isMatching() const noexcept { return matchActive; }
+        const float* getMatchDb() const noexcept { return matchDb.data(); }   // band dB, this frame
+        float getMatchPeakDb() const noexcept { return matchPeakDb; }        // strongest move inside the range
+        const float* getMainNormDb() const noexcept { return mainNorm.data(); }   // tests: the main's normalised long-term levels
+        const float* getReferenceBandDb() const noexcept { return refBand.data(); }
+
+        // Learn: the sidechain key's long-term one-ERB spectrum, a power mean over every frame given.
+        void clearLearned() noexcept;
+        void learnKey (const float* keyPower) noexcept;
+        int getLearnedFrames() const noexcept { return learnFrames; }
+        void getLearnedCurve (ReferenceCurve& out) noexcept;   // normalised, on the fixed grid
+
+        // 4.0 Paint: per-band share of the auto-EQ change and of Heat. Kept across prepare()/reset().
+        void setPaint (const PaintCurves& paint) noexcept;
+
     private:
+        void applyReference() noexcept;
+        void applyPaint() noexcept;
+        void updateMatch (float amount, float framesPerSecond) noexcept;
+
+        ReferenceCurve refFixed;   // as given, on the fixed grid
+        PaintCurves paintSrc;
+        std::vector<float> refBand, longPower, longDb, mainNorm, matchRaw, matchDb, learnDb, paintEq, paintHeat;
+        std::vector<double> learnSum;
+        int longFrames = 0, learnFrames = 0, matchHalf = 37;
+        bool refValid = false, matchActive = false, paintEqOn = false, paintHeatOn = false;
+        float matchPeakDb = 0.0f;
+
         void binPowerToSlices (const float* binPower, float* slices) const noexcept;
         void boxSum (const float* in, float* out, int halfWidth, bool mean) noexcept;
         void contextOf (const float* placeLevel, float* context) noexcept;

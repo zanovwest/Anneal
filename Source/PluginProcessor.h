@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dsp/LoudnessMatch.h"
+#include "dsp/Reference.h"
 #include "dsp/SpectralEngine.h"
 #include "dsp/TruePeakLimiter.h"
 
@@ -81,15 +82,50 @@ public:
     void undo();
     void redo();
 
+    // 4.0 Reference match. The reference lives here and in the saved state (not in parameters);
+    // the audio thread gets each new one through a wait-free buffer. Any thread but the audio one.
+    struct ReferenceInfo
+    {
+        anneal::ReferenceCurve curve;   // invalid = no reference
+        juce::String name;              // the file's name, or "sidechain key"
+    };
+    ReferenceInfo getReference();
+    std::uint32_t getReferenceSerial() const noexcept { return refSerial.load(); }   // changes with each new reference
+    // holdLearning: Learn key stops until it is chosen again (a dropped file replaces the key).
+    void setReference (const anneal::ReferenceCurve& curve, const juce::String& name, bool holdLearning = false);
+    void clearReference() { setReference ({}, {}); }
+
+    // A file dropped on the display (wav, aif/aiff, flac, mp3, ogg) is decoded and analysed on a
+    // background thread; when it is ready it becomes the reference and Reference switches to Match.
+    static bool canLoadReferenceFile (const juce::File& file);
+    void loadReferenceFile (const juce::File& file);
+    bool isAnalysingReference() const noexcept { return analysing.load(); }
+    juce::String getReferenceError();   // why the last dropped file was not used, or empty
+    void* getLastAnalysisThread() const noexcept { return analysisThread.load(); }   // tests
+
+    // 4.0 Paint (message thread). setPaint between beginPaintStroke() and endPaintStroke() is one
+    // undo step; a paint change outside a stroke isn't recorded.
+    anneal::PaintCurves getPaint();
+    void setPaint (const anneal::PaintCurves& paint);
+    void beginPaintStroke();
+    void endPaintStroke();
+    std::uint32_t getPaintSerial() const noexcept { return paintSerial.load(); }
+
 private:
     void pushParametersToEngine() noexcept;
     void timerCallback() override;
     int requestedLatencyMode() const noexcept;
     int totalLatency() noexcept { return getEngine().getLatencySamples() + limiter.getLatency(); }
 
-    // Undo bookkeeping.
+    // Undo bookkeeping. A step holds parameter values, a paint stroke (4.0), or both.
     using Snapshot = std::map<int, float>;   // parameter index -> normalised value
-    struct UndoStep { Snapshot before, after; };
+    struct UndoStep
+    {
+        Snapshot before, after;
+        bool paintChange = false;
+        anneal::PaintCurves paintBefore, paintAfter;
+    };
+    void pushUndoStep (UndoStep step);
     void parameterValueChanged (int, float) override {}
     void parameterGestureChanged (int index, bool starting) override;
     void beginUndoGroup();
@@ -156,6 +192,27 @@ private:
     std::atomic<float>* pScMode = nullptr;
     std::atomic<float>* pScAmount = nullptr;
     std::atomic<float>* pCeiling = nullptr;
+    std::atomic<float>* pRefMode = nullptr;
+    std::atomic<float>* pRefAmount = nullptr;
+
+    // 4.0 Reference and Paint. refLock guards the copies below, the writer side of refToAudio and
+    // paintToAudio and the reader side of refLearned; the audio thread never takes it.
+    void pollLearnedReference();
+    void applyPaintNow (const anneal::PaintCurves& paint);   // no undo step
+    void referenceFailed (const juce::File& file, const juce::String& why);
+    anneal::TripleBuffer<anneal::ReferenceCurve> refToAudio, refLearned;
+    anneal::TripleBuffer<anneal::PaintCurves> paintToAudio;
+    juce::CriticalSection refLock;
+    anneal::ReferenceCurve refCurve;
+    juce::String refName, refError;
+    anneal::PaintCurves paint, strokeStart;
+    bool strokeOpen = false;
+    unsigned int refEpoch = 0;
+    std::atomic<std::uint32_t> refSerial { 0 }, paintSerial { 0 };
+    std::atomic<bool> analysing { false }, autoMatchPending { false };
+    std::atomic<void*> analysisThread { nullptr };
+    class ReferenceLoader;
+    std::unique_ptr<ReferenceLoader> loader;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnnealAudioProcessor)
 };

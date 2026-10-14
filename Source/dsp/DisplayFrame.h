@@ -24,6 +24,10 @@ namespace anneal
         bool keyActive = false;      // 3.0: a sidechain mode is on and the key carries signal
         bool frozen = false;         // 3.0: the auto-EQ curve is held (Freeze)
         float scDb = 0.0f;           // 3.0: strongest sidechain move, dB (< 0 ducking, > 0 lifting)
+        int refMode = 0;             // 4.0: Reference Off / Learn key / Match
+        bool refValid = false;       // 4.0: a reference is loaded
+        float refSeconds = 0.0f;     // 4.0: Learn key, seconds of key learned so far
+        float matchDb = 0.0f;        // 4.0: Match, strongest move inside the range, dB
 
         float inDb[numBands]   {};    // input level per ERB, dBFS (signal power within +-0.5 Cam)
         float outDb[numBands]  {};    // output level per ERB, dBFS
