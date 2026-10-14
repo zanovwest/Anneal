@@ -7,6 +7,9 @@ CMakeLists.txt.
 ## Unreleased
 
 Fixes
+- Uninstalling while a DAW has Anneal loaded now moves the locked DLL aside before removing the
+  bundle. Setup records the actual VST3 destination so custom install folders work at uninstall
+  time. A later install cleans the moved-aside DLL after the DAW releases it.
 - Dragging Range Low after automation crosses the range limits now starts from the displayed
   range instead of jumping below the stored Range High. The displayed high limit stays in place
   while dragging Low. Clicking without dragging leaves the stored values unchanged.
@@ -14,6 +17,8 @@ Fixes
 Tests: 45/45 acceptance checks, including five range-handle interaction checks; 13/13 host checks
 on the patched VST3. The installed 0.2.2 copy also passed 13/13 host checks. Editor snapshots
 rendered at 100/150/200 % and at the minimum and maximum window sizes.
+Installer regression: 25/25 sandbox checks, including custom VST3 destination metadata,
+uninstall while the replacement DLL is loaded, and cleanup after release on a later install.
 
 ## 0.2.2 — 2026-10-13 14:50
 

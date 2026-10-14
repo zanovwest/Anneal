@@ -93,6 +93,12 @@ Source: "..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{autoprograms}\Anneal"; Filename: "{app}\Anneal.exe"; Components: standalone
 
+; The uninstaller has its own command line, so remember the actual destinations (including
+; /VST3DIR overrides) instead of recomputing them from the uninstall command line.
+[Registry]
+Root: HKA; Subkey: "Software\Qulic\Anneal\Installations\{#AppIdValue}"; ValueType: string; ValueName: "AnnealVst3Dir"; ValueData: "{code:Vst3Dir}"; Components: vst3; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Qulic\Anneal\Installations\{#AppIdValue}"; ValueType: string; ValueName: "AnnealPerUserVst3Dir"; ValueData: "{code:PerUserVst3Dir}"; Tasks: peruser; Flags: uninsdeletevalue uninsdeletekeyifempty
+
 ; Bundle folders that existed before the first setup (earlier manual copies) are not Setup's own,
 ; so remove them explicitly, and only when empty.
 [UninstallDelete]
@@ -209,6 +215,19 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  RootKey: Integer;
+  Key, Dir: String;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    DeleteOldBinaries();
+    if IsAdminInstallMode then RootKey := HKLM64 else RootKey := HKCU64;
+    Key := 'Software\Qulic\Anneal\Installations\' +
+           '{#StringChange(AppIdValue, "{{", "{")}';
+    if RegQueryStringValue(RootKey, Key, 'AnnealVst3Dir', Dir) then MoveAside(Dir)
+    else Log('No recorded Anneal VST3 destination in ' + Key);
+    if RegQueryStringValue(RootKey, Key, 'AnnealPerUserVst3Dir', Dir) then MoveAside(Dir);
+  end;
   if CurUninstallStep = usPostUninstall then DeleteOldBinaries();
 end;

@@ -1,13 +1,18 @@
 ﻿# Tests the setup without administrator rights, in a sandbox under %TEMP%: fresh install, update while
-# another process has the plug-in DLL loaded (as a DAW would), uninstall. Touches no real VST3 folder.
+# another process has the plug-in DLL loaded (as a DAW would), uninstall while loaded, and later
+# cleanup after the DLL is released. Touches no real VST3 folder.
 #   TestSetup.ps1 -Setup <build>\setup-test\Anneal-test-Setup.exe -Built <built bundle>\Contents\x86_64-win\Anneal.vst3
 # Use the test setup build.ps1 makes: same script with its own AppId (below), so a real "just for me"
 # install of Anneal is never touched. Exit code = number of failed checks.
 param([string]$Setup, [string]$Built)
 $ErrorActionPreference = "Stop"
 $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{C3A9A011-1FE8-4D62-BC17-61FF1488E1F2}_is1"
+$metadataKey = "HKCU:\Software\Qulic\Anneal\Installations\{C3A9A011-1FE8-4D62-BC17-61FF1488E1F2}"
 # Short path on purpose: Setup refuses to start with a very long /LOG or /DIR.
-$sb = Join-Path $env:TEMP "anneal-setup-test"
+$testTempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')
+$sb = [IO.Path]::GetFullPath((Join-Path $testTempRoot "anneal-setup-test"))
+if (-not $sb.StartsWith($testTempRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    (Split-Path -Leaf $sb) -ne "anneal-setup-test") { throw "Invalid setup test sandbox: $sb" }
 if (Test-Path $sb) { Remove-Item -Recurse -Force $sb }
 New-Item -ItemType Directory -Force $sb | Out-Null
 $vst = "$sb\vst3"; $app = "$sb\app"
@@ -18,7 +23,7 @@ function Check($ok, $what) { if ($ok) { "[PASS] $what" } else { "[FAIL] $what"; 
 
 function Run-Setup($log) {
     $a = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /COMPONENTS=vst3 /VST3DIR=`"$vst`" /DIR=`"$app`" /LOG=`"$log`""
-    $p = Start-Process $Setup -ArgumentList $a -Wait -PassThru
+    $p = Start-Process $Setup -ArgumentList $a -Wait -PassThru -WindowStyle Hidden
     return $p.ExitCode
 }
 
@@ -34,6 +39,7 @@ Check (Test-Path "$app\unins000.exe") "uninstaller in app folder, not in VST3 fo
 Check (-not (Test-Path "$vst\unins000.exe")) "nothing else dropped into VST3 folder"
 Check (Test-Path $key) "registered under Apps (per-user test mode)"
 if (Test-Path $key) { "       DisplayName: " + (Get-ItemProperty $key).DisplayName + " / version " + (Get-ItemProperty $key).DisplayVersion }
+Check ((Get-ItemProperty $metadataKey -ErrorAction SilentlyContinue).AnnealVst3Dir -eq $vst) "installer records the custom VST3 destination"
 
 # 2. update while the DLL is loaded by another process
 $loader = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\HoldDll.ps1`" -Dll `"$bin`" -Flag `"$sb\loaded.txt`""
@@ -55,15 +61,40 @@ Check ($ours.Count -eq 1) "loaded binary moved aside to %TEMP%\AnnealOld ($($our
 Stop-Process -Id $loader.Id -Force
 Start-Sleep 1
 
-# 3. uninstall
-Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+# 3. uninstall while the replacement DLL is loaded, as it would be in a DAW.
+$uninstallLoader = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\HoldDll.ps1`" -Dll `"$bin`" -Flag `"$sb\uninstall-loaded.txt`""
+for ($i = 0; $i -lt 60 -and -not (Test-Path "$sb\uninstall-loaded.txt"); $i++) { Start-Sleep -Milliseconds 500 }
+$uninstallHandle = if (Test-Path "$sb\uninstall-loaded.txt") { (Get-Content "$sb\uninstall-loaded.txt").Trim() } else { "none" }
+Check ($uninstallHandle -ne "0" -and $uninstallHandle -ne "none") "uninstall test process has the replacement DLL loaded (handle $uninstallHandle)"
+$uninstallLocked = $false
+try { [IO.File]::Delete($bin) } catch { $uninstallLocked = $true }
+Check $uninstallLocked "uninstall test DLL cannot be deleted while loaded"
+$beforeUninstall = @(Get-ChildItem $oldDir -File -ErrorAction SilentlyContinue | ForEach-Object Name)
+$uninstaller = Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru -WindowStyle Hidden
+Check ($uninstaller.ExitCode -eq 0) "uninstall while loaded: exit 0 (got $($uninstaller.ExitCode))"
 for ($i = 0; $i -lt 60 -and (Test-Path "$app\unins000.exe"); $i++) { Start-Sleep -Milliseconds 500 }
 Start-Sleep 1
 Check (-not (Test-Path "$vst\Anneal.vst3")) "uninstall removes the bundle"
 Check (-not (Test-Path $key)) "uninstall removes the Apps entry"
+Check (-not (Test-Path $metadataKey)) "uninstall removes its destination metadata"
 Check (-not (Test-Path "$app\unins000.exe")) "uninstall removes itself"
+$uninstallMoved = @(Get-ChildItem $oldDir -File -ErrorAction SilentlyContinue | ForEach-Object Name | Where-Object { $beforeUninstall -notcontains $_ })
+Check ($uninstallMoved.Count -eq 1) "uninstall moves the loaded binary aside ($($uninstallMoved.Count) new)"
+Stop-Process -Id $uninstallLoader.Id -Force
+Start-Sleep 1
 $left = @($ours | Where-Object { Test-Path (Join-Path $oldDir $_) }).Count
 Check ($ours.Count -eq 1 -and $left -eq 0) "moved-aside binary cleaned up once released ($left left)"
+
+# The uninstall's moved-aside DLL was still held during usPostUninstall. A later install
+# cleans it up after the DAW releases it; test that without touching a real installation.
+if ($uninstallMoved.Count -eq 1) {
+    $c = Run-Setup "$sb\install3.log"
+    Check ($c -eq 0) "install after held uninstall: exit 0 (got $c)"
+    $uninstallLeft = @($uninstallMoved | Where-Object { Test-Path (Join-Path $oldDir $_) }).Count
+    Check ($uninstallLeft -eq 0) "later install cleans the released uninstall binary ($uninstallLeft left)"
+    $cleanup = Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait -PassThru -WindowStyle Hidden
+    Check ($cleanup.ExitCode -eq 0 -and -not (Test-Path "$vst\Anneal.vst3") -and -not (Test-Path $key)) "final sandbox uninstall removes the bundle and Apps entry"
+}
 Remove-Item -Recurse -Force $sb -ErrorAction SilentlyContinue
 "$fails setup check(s) failed"
 exit $fails

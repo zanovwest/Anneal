@@ -20,9 +20,6 @@ the hourly runs.)
 3. **Saturation flavours**: Tape (soft, mostly even, gentle HF roll-off), Tube (2nd-heavy),
    Transformer (odd, low end), Exciter (air only). A flavour menu next to Color.
 4. **Sidechain unmask mode**: lift what a sidechain key masks, or dip the bands the key needs.
-5. **Fix (setup): uninstall while a DAW has Anneal loaded.** Install moves a loaded DLL aside, but
-   uninstall doesn't, so the locked DLL and its folders stay behind. Do the same move-aside in
-   `CurUninstallStepChanged (usUninstall)` and extend TestSetup to uninstall while the DLL is held.
 6. **Freeze curve**: hold the current auto-EQ curve as a static EQ.
 7. **True-peak output ceiling** (a look-ahead limiter, as in Morphfall) so Heat can't clip.
 8. **CPU under the 3 % budget in Precise** (now 3.4 %; Low is 2.4 %): SIMD FFT (PFFFT) and
@@ -44,6 +41,9 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- Unreleased (2026-10-13): **Uninstall while a DAW has Anneal loaded.** Move the held DLL aside
+  using the recorded install destination; a later install cleans it after release. Installer
+  regression covers the held-DLL uninstall and custom folder (25/25 sandbox checks).
 - Unreleased (2026-10-13): **Range handles after crossed automation.** Dragging Low starts from
   the displayed range and preserves the displayed High limit; a click without dragging leaves
   the parameters alone. Five interaction regression checks added (45/45 acceptance checks).
