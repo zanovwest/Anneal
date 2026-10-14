@@ -21,11 +21,15 @@ namespace anneal
         float cutDb = 0.0f;           // strongest Smooth cut inside the range, dB (<= 0)
         float heatRelDb = -200.0f;    // harmonic energy written, relative to the whole output, dB
         bool midSide = false;        // gainDb = Mid, sideGainDb = Side when true
+        bool keyActive = false;      // 3.0: a sidechain mode is on and the key carries signal
+        bool frozen = false;         // 3.0: the auto-EQ curve is held (Freeze)
+        float scDb = 0.0f;           // 3.0: strongest sidechain move, dB (< 0 ducking, > 0 lifting)
 
         float inDb[numBands]   {};    // input level per ERB, dBFS (signal power within +-0.5 Cam)
         float outDb[numBands]  {};    // output level per ERB, dBFS
         float gainDb[numBands] {};    // live auto-EQ gain incl. tilt and range gate, dB
         float heatDb[numBands] {};    // harmonic energy written per ERB, dBFS
         float sideGainDb[numBands] {};
+        float keyDb[numBands] {};    // sidechain key level per ERB, dBFS (valid when keyActive)
     };
 }

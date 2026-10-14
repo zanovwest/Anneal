@@ -8,10 +8,10 @@ namespace ids = anneal::ids;
 
 namespace
 {
-    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> OUTPUT.
-    constexpr int titleY = 408, dividerTop = 414, dividerBottom = 604;
-    constexpr int routingY = 402;   // 26 px pills centred on the 15 px title row
-    constexpr int dividerX[] = { 490, 832 };
+    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> SIDECHAIN -> OUTPUT.
+    constexpr int titleY = 418, dividerTop = 424, dividerBottom = 628;
+    constexpr int routingY = 412;   // 26 px pills centred on the 15 px title row
+    constexpr int dividerX[] = { 490, 832, 984 };
 
     juce::String minus() { return juce::String::fromUTF8 ("\xe2\x88\x92"); }
 
@@ -58,12 +58,27 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       heatTarget (p.apvts, ids::heatTarget, "Heat: ", { "Both", "Mid", "Side" },
                   "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
       listen (p.apvts, ids::listen),
-      flavour (p.apvts, ids::flavour)
+      flavour (p.apvts, ids::flavour),
+      freeze (p.apvts, ids::freeze, "FREEZE", colour::straw,
+              "Freeze: hold the auto-EQ curve where it is; Heat keeps following the music"),
+      scMode (p.apvts, ids::scMode, "", { "Off", "Make room", "Unmask" },
+              "Sidechain: Make room ducks this track where the key track needs space; Unmask lifts this track where the key "
+              "masks it. Route a track to Anneal's sidechain input in your DAW"),
+      ceiling (p.apvts, ids::ceiling, "Ceiling: ", { "Off", juce::String::fromUTF8 ("0.0 dB"), juce::String::fromUTF8 ("\xe2\x88\x92" "0.3 dB"),
+                                                     juce::String::fromUTF8 ("\xe2\x88\x92" "1.0 dB") },
+               "Ceiling: a true-peak limiter at the very end, so Heat and Output can never clip (dBTP, look-ahead 1.4 ms)"),
+      scAmount (p.apvts, ids::scAmount, "Amount", colour::violet, Size::primary, false, "connect a key track",
+                "Sidechain amount: how far the key ducks (Make room) or lifts (Unmask) this track, up to 9 / 6 dB"),
+      undoButton (anneal::IconButton::Glyph::undo, "Undo the last change"),
+      redoButton (anneal::IconButton::Glyph::redo, "Redo")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
-             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour })
+             &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
+             &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton })
         addAndMakeVisible (c);
+    undoButton.onClick = [&p] { p.undo(); };
+    redoButton.onClick = [&p] { p.redo(); };
 
     presets.getCount = [&p] { return p.getNumPrograms(); };
     presets.getName = [&p] (int i) { return p.getProgramName (i); };
@@ -82,44 +97,50 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
 
 void AnnealEditorContent::resized()
 {
-    // Header: wordmark left, presets centred, the compare cluster right.
+    // Header: wordmark, latency and Undo/Redo left, presets centred, the compare cluster right.
     latency.setBounds (182, 11, anneal::LatencyMenu::captionWidth + 92, 26);
-    presets.setBounds (380, 10, 240, 28);
-    match.setBounds (712, 11, 100, 26);
-    delta.setBounds (820, 11, 72, 26);
-    bypass.setBounds (900, 11, 78, 26);
-    stereoMode.setBounds (626, 11, 80, 26);
-    // The routing menus sit on their group's title row (the same row for both).
-    eqTarget.setBounds (360, routingY, 114, 26);
-    heatTarget.setBounds (700, routingY, 118, 26);
-    // The saturation flavour shapes everything in HEAT, so it sits on the group's title row too.
-    flavour.setBounds (562, routingY, 122, 26);
+    undoButton.setBounds (348, 11, 32, 26);
+    redoButton.setBounds (384, 11, 32, 26);
+    presets.setBounds (460, 10, 240, 28);
+    stereoMode.setBounds (712, 11, 80, 26);
+    match.setBounds (882, 11, 100, 26);
+    delta.setBounds (990, 11, 72, 26);
+    bypass.setBounds (1070, 11, 78, 26);
 
-    screen.setBounds (12, 50, 976, 346);
+    screen.setBounds (12, 50, 1136, 356);
 
     const int primaryW = anneal::Knob::preferredWidth (Size::primary), primaryH = anneal::Knob::preferredHeight (Size::primary);
     const int heroW = anneal::Knob::preferredWidth (Size::hero), heroH = anneal::Knob::preferredHeight (Size::hero);
     const int smallH = anneal::Knob::preferredHeight (Size::secondary);
 
-    // AUTO EQ: the two primary rings, their settings stacked beside them.
-    reveal.setBounds (26, 432, primaryW, primaryH);
-    smooth.setBounds (172, 432, primaryW, primaryH);
-    tilt.setBounds (334, 432, 140, smallH);
-    response.setBounds (334, 488, 140, smallH);
-    guard.setBounds (334, 544, 140, smallH);
+    // AUTO EQ: the two primary rings, their settings stacked beside them; Freeze and the M/S
+    // routing on the group's title row.
+    freeze.setBounds (252, routingY, 84, 26);
+    eqTarget.setBounds (360, routingY, 114, 26);
+    reveal.setBounds (26, 442, primaryW, primaryH);
+    smooth.setBounds (172, 442, primaryW, primaryH);
+    tilt.setBounds (334, 442, 140, smallH);
+    response.setBounds (334, 498, 140, smallH);
+    guard.setBounds (334, 554, 140, smallH);
 
     // HEAT: the largest ring; Color with the harmonics it produces, then Focus.
-    // The ring's top lines up with Reveal and Smooth, below the Flavour pill on the title row.
-    heat.setBounds (500, 432, heroW, heroH);
-    color.setBounds (684, 428, 134, 53);
-    harmonics.setBounds (690, 486, 122, 40);
-    focus.setBounds (684, 536, 134, 53);
+    flavour.setBounds (562, routingY, 122, 26);
+    heatTarget.setBounds (700, routingY, 118, 26);
+    heat.setBounds (500, 442, heroW, heroH);
+    color.setBounds (684, 438, 134, 53);
+    harmonics.setBounds (690, 496, 122, 40);
+    focus.setBounds (684, 546, 134, 53);
 
-    // OUTPUT: what you hear (Listen), then Mix and Output.
-    listen.setBounds (844, 430, 102, 26);
-    mix.setBounds (846, 468, 100, smallH);
-    output.setBounds (846, 528, 100, smallH);
-    meter.setBounds (950, 424, 34, 176);
+    // SIDECHAIN: the mode, then how much.
+    scMode.setBounds (844, 438, 128, 26);
+    scAmount.setBounds (838, 474, primaryW, primaryH);
+
+    // OUTPUT: what you hear (Listen), the ceiling, then Mix and Output; the meter at the edge.
+    listen.setBounds (996, 438, 112, 26);
+    ceiling.setBounds (996, 472, 112, 26);
+    mix.setBounds (998, 510, 104, smallH);
+    output.setBounds (998, 566, 104, smallH);
+    meter.setBounds (1116, 438, 32, 190);
 }
 
 void AnnealEditorContent::paint (juce::Graphics& g)
@@ -148,7 +169,8 @@ void AnnealEditorContent::paint (juce::Graphics& g)
     };
     groupTitle (28, "AUTO EQ", { colour::straw, colour::blue });
     groupTitle (506, "HEAT", { colour::bronze });
-    groupTitle (848, "OUTPUT", { colour::muted });
+    groupTitle (848, "SIDECHAIN", { colour::violet });
+    groupTitle (1000, "OUTPUT", { colour::muted });
 
     g.setColour (colour::divider);
     for (int x : dividerX)
@@ -176,18 +198,31 @@ void AnnealEditorContent::updateActivity()
     else if (a.heatRelDb < -90.0f)          heat.setActivity (0.0f, "no harmonics yet");
     else                                    heat.setActivity ((a.heatRelDb + 54.0f) / 48.0f,
                                                               "harmonics " + signedDb (a.heatRelDb) + " dB");
+
+    const int sc = juce::roundToInt (param (ids::scMode));
+    if (sc == 0)                                     scAmount.setActivity (0.0f, "off");
+    else if (! processor.isSidechainConnected())     scAmount.setActivity (0.0f, "no key connected");
+    else if (! a.live)                               scAmount.setActivity (0.0f, {});
+    else if (! a.keyActive)                          scAmount.setActivity (0.0f, "key is silent");
+    else if (std::abs (a.scDb) < 0.1f)               scAmount.setActivity (0.0f, sc == 1 ? "nothing to duck" : "nothing masked");
+    else                                             scAmount.setActivity (std::abs (a.scDb) / (sc == 1 ? 9.0f : 6.0f),
+                                                                           (a.scDb < 0.0f ? "ducking " : "lifting ") + signedDb (a.scDb) + " dB");
+    scAmount.setAlpha (sc == 0 ? 0.55f : 1.0f);
 }
 
 void AnnealEditorContent::tick (float dt)
 {
     const float peaks[2] = { processor.takeOutputPeak (0), processor.takeOutputPeak (1) };
-    meter.push (peaks, processor.getTotalNumOutputChannels(), dt);
+    meter.push (peaks, processor.getMainBusNumOutputChannels(), dt);
+    meter.pushReduction (processor.takeCeilingReductionDb(), dt);
+    undoButton.setEnabled (processor.canUndo());
+    redoButton.setEnabled (processor.canRedo());
     latency.refresh();
     presets.refresh();
     harmonics.refresh();
     updateActivity();
 
-    const bool stereo = processor.getTotalNumInputChannels() > 1;
+    const bool stereo = processor.getMainBusNumInputChannels() > 1;
     stereoMode.setEnabled (stereo);
     const bool ms = stereo && processor.apvts.getRawParameterValue (ids::stereoMode)->load() > 0.5f;
     eqTarget.setEnabled (ms);
@@ -216,7 +251,7 @@ AnnealEditor::AnnealEditor (AnnealAudioProcessor& p)
     setLookAndFeel (&lookAndFeel);
 
     setResizable (true, true);
-    setResizeLimits (800, 496, 1600, 992);
+    setResizeLimits (870, 480, 1740, 960);
     getConstrainer()->setFixedAspectRatio ((double) AnnealEditorContent::baseWidth / AnnealEditorContent::baseHeight);
     setSize (AnnealEditorContent::baseWidth, AnnealEditorContent::baseHeight);
 

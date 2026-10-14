@@ -20,6 +20,7 @@ namespace anneal::theme
         inline const juce::Colour straw   { 0xfff1c36b };
         inline const juce::Colour bronze  { 0xffff8b3d };
         inline const juce::Colour blue    { 0xff6fa7ff };
+        inline const juce::Colour violet  { 0xffa57be0 };   // sidechain key (temper purple)
         inline const juce::Colour warning { 0xffff5a4e };
     }
 

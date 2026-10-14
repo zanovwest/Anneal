@@ -40,9 +40,11 @@ namespace
 
     juce::String signedDb (float v, int decimals)
     {
-        const auto s = juce::String (std::abs (v), decimals);
-        if (std::abs (v) < 0.5f * std::pow (10.0f, (float) -decimals)) return juce::String (0.0f, decimals);
-        return (v > 0 ? "+" : juce::String::fromUTF8 ("\xe2\x88\x92")) + s;   // U+2212 minus
+        // juce::String (float, 0) means "as many decimals as needed", so whole dB are formatted
+        // by rounding (the hover read-out once showed "heat -24.8106 dB").
+        auto fmt = [decimals] (float x) { return decimals == 0 ? juce::String (juce::roundToInt (x)) : juce::String (x, decimals); };
+        if (std::abs (v) < 0.5f * std::pow (10.0f, (float) -decimals)) return fmt (0.0f);
+        return (v > 0 ? "+" : juce::String::fromUTF8 ("\xe2\x88\x92")) + fmt (std::abs (v));   // U+2212 minus
     }
 
     float textWidth (const juce::Font& f, const juce::String& s)
@@ -141,6 +143,7 @@ void PerceptionScreen::updateViews()
     smooth (inDb, inView);
     smooth (outDb, outView);
     smooth (heatDb, heatView);
+    smooth (keyDb, keyView);
 }
 
 void PerceptionScreen::timerCallback()
@@ -152,8 +155,11 @@ void PerceptionScreen::timerCallback()
         z0 = f->z0;
         dz = f->dz;
         midSide = f->midSide;
+        keyActive = f->keyActive;
+        frozen = f->frozen;
         for (int b = 0; b < nb; ++b)
         {
+            keyDb[(size_t) b] = keyActive ? juce::jmax (f->keyDb[b], keyDb[(size_t) b] - levelFallPerTick) : floorDb;
             inDb[(size_t) b]   = juce::jmax (f->inDb[b], inDb[(size_t) b] - levelFallPerTick);
             outDb[(size_t) b]  = juce::jmax (f->outDb[b], outDb[(size_t) b] - levelFallPerTick);
             heatDb[(size_t) b] = juce::jmax (f->heatDb[b], heatDb[(size_t) b] - heatFallPerTick);
@@ -163,6 +169,9 @@ void PerceptionScreen::timerCallback()
         activity.liftDb = juce::jmax (f->liftDb, activity.liftDb - activityFallPerTick);
         activity.cutDb = juce::jmin (f->cutDb, activity.cutDb + activityFallPerTick);
         activity.heatRelDb = juce::jmax (f->heatRelDb, activity.heatRelDb - activityFallPerTick);
+        activity.scDb = std::abs (f->scDb) >= std::abs (activity.scDb) ? f->scDb
+                      : activity.scDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
+        activity.keyActive = f->keyActive;
         activity.live = true;
         haveFrame = true;
         idleTicks = 0;
@@ -204,7 +213,10 @@ void PerceptionScreen::refreshNow()
         std::copy (f->gainDb, f->gainDb + nb, gainDb.begin());
         std::copy (f->sideGainDb, f->sideGainDb + nb, sideGainDb.begin());
         midSide = f->midSide;
-        activity = { f->liftDb, f->cutDb, f->heatRelDb, true };
+        keyActive = f->keyActive;
+        frozen = f->frozen;
+        std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
+        activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive };
         haveFrame = true;
         updateViews();
         repaint();
@@ -283,6 +295,20 @@ void PerceptionScreen::paintSpectrum (juce::Graphics& g)
     g.strokePath (inLine, juce::PathStrokeType (1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     g.setColour (outStroke);
     g.strokePath (outLine, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // Sidechain key (3.0): its level per ERB, on the same scale as the spectrum.
+    if (keyActive)
+    {
+        juce::Path keyLine;
+        for (int b = 0; b < nb; ++b)
+        {
+            const float x = xForCam (z0 + b * dz), y = yFor (keyView[(size_t) b]);
+            if (b == 0) keyLine.startNewSubPath (x, y);
+            else        keyLine.lineTo (x, y);
+        }
+        g.setColour (colour::violet.withAlpha (0.85f));
+        g.strokePath (keyLine, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
 }
 
 void PerceptionScreen::paintEq (juce::Graphics& g)
@@ -479,8 +505,15 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
         g.setColour (colour::faint);
         g.drawText (sub, juce::Rectangle<float> (at.x + textWidth (f, t) + 8.0f, at.y, 260.0f, 14.0f), juce::Justification::centredLeft, false);
     };
-    tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ", colour::muted,
-         midSide ? "Mid solid / Side dashed" : "live gain over the spectrum");
+    if (frozen)
+        tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ FROZEN", colour::straw,
+             "the curve is held; Heat still follows the music");
+    else
+        tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ", colour::muted,
+             midSide ? "Mid solid / Side dashed" : "live gain over the spectrum");
+    if (keyActive)
+        tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 24.0f }, "KEY", colour::violet,
+             "sidechain level (violet line)");
     tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), "harmonics written, vs output");
 }
 

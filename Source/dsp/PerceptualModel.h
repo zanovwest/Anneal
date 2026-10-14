@@ -14,6 +14,9 @@ namespace anneal
         float rangeHiHz    = 20000.0f;
         float focus        = 0.0f;     // -1 body .. +1 air (heat placement)
         float guard        = 0.0f;     // 0..1 transient guard (0 = off: exactly the old behaviour)
+        bool freeze        = false;    // hold the auto-EQ curve where it is (3.0)
+        int scMode         = 0;        // sidechain: 0 off, 1 make room (duck where the key needs space), 2 unmask
+        float scAmount     = 0.5f;     // 0..1
     };
 
     // ERB-rate band model. Turns a linked power spectrum into
@@ -29,7 +32,9 @@ namespace anneal
         void reset();
 
         // binPower: fftSize/2+1 values in amplitude^2 units (a full-scale sine peaks at 1.0).
-        void analyse (const float* binPower, const ModelSettings& settings, float framesPerSecond);
+        // keyPower: the sidechain key's spectrum in the same units, or nullptr (no key).
+        void analyse (const float* binPower, const ModelSettings& settings, float framesPerSecond,
+                      const float* keyPower = nullptr);
 
         const float* getBinGain() const noexcept     { return binGain.data(); }   // linear
         // Listen modes: the same per-bin gain without Tilt (Reveal/Smooth only), so that
@@ -51,6 +56,8 @@ namespace anneal
         // Strongest Reveal lift / Smooth cut in the last frame, inside the range, without Tilt (dB).
         float getMaxLiftDb() const noexcept { return liftPeakDb; }
         float getMaxCutDb() const noexcept  { return cutPeakDb; }   // <= 0
+        // Strongest sidechain move this frame inside the range (dB: < 0 ducking, > 0 lifting).
+        float getSidechainPeakDb() const noexcept { return sidePeakDb; }
 
         float getZ0() const noexcept { return (float) z0; }
         float getDz() const noexcept { return (float) dz; }
@@ -67,6 +74,7 @@ namespace anneal
         double aUp = 0.0, aDn = 0.0, aUpM = 0.0, aDnM = 0.0;
         bool primed = false;
         float liftPeakDb = 0.0f, cutPeakDb = 0.0f;   // (not maxCutDb/maxBoostDb: those are the limits)
+        float sidePeakDb = 0.0f;
         float transientPeak = 0.0f;
 
         // band -> bin partition (CSR)
@@ -85,6 +93,8 @@ namespace anneal
         std::vector<int> transientAge;                             // frames since the band's last rise
         std::vector<float> binGainDb, binGain, binNeed;
         std::vector<float> autoOut, binAutoDb, binAutoGain;        // listen modes (no Tilt)
+        std::vector<float> keySlices, keySmoothed, keyPlace;       // sidechain key (3.0)
+        bool keyPrimed = false;
 
         // Band dB values -> smoothed linear per-bin gain (the band->bin step of analyse()).
         void bandsToBinGain (const float* bandDb, float* binDb, float* linear) noexcept;

@@ -6,6 +6,7 @@
 #include "Params.h"
 #include "Presets.h"
 #include "dsp/SpectralEngine.h"
+#include "dsp/TruePeakLimiter.h"
 #include "dsp/ErbScale.h"
 #include "ui/PerceptionScreen.h"
 #include "TestSignals.h"
@@ -89,6 +90,7 @@ struct Rig
         {
             juce::AudioProcessor::BusesLayout l;
             l.inputBuses.add (juce::AudioChannelSet::mono());
+            l.inputBuses.add (juce::AudioChannelSet::disabled());   // 3.0 sidechain bus
             l.outputBuses.add (juce::AudioChannelSet::mono());
             proc->setBusesLayout (l);
         }
@@ -242,7 +244,7 @@ void testLatency()
         const auto pout = rig.run (in, fixedBlocks (512));
         const int lat = rig.proc->getLatencySamples();
         const int pPeak = peakIndex (pout);
-        ok = ok && lat == anneal::SpectralEngine::fftSizeFor (48000.0, mode) && pPeak == 1000 + lat;
+        ok = ok && lat == anneal::SpectralEngine::fftSizeFor (48000.0, mode) + rig.proc->getCeilingLatency() && pPeak == 1000 + lat;
         log << juce::String (1000.0 * lat / 48000.0, 1) << " ms (impulse +" << (pPeak - 1000) << ")  ";
     }
     check (ok, "processor: Low by default, modes switch and stay aligned", log);
@@ -261,7 +263,7 @@ void testLatency()
         b.prepare (48000.0, 512);
         b.proc->setStateInformation (old.getData(), (int) old.getSize());
         b.proc->applyLatencyModeIfChanged();
-        check (b.proc->getLatencyMode() == anneal::SpectralEngine::precise && b.proc->getLatencySamples() == 4096,
+        check (b.proc->getLatencyMode() == anneal::SpectralEngine::precise && b.proc->getLatencySamples() == 4096 + b.proc->getCeilingLatency(),
                "projects from before 0.2.0 load as Precise (85 ms)", "mode " + juce::String (b.proc->getLatencyMode())
                    + ", latency " + juce::String (b.proc->getLatencySamples()));
     }
@@ -601,7 +603,7 @@ void testReprepare()
     {
         r.prepare (fs, 480);
         const auto out = r.run (testsig::musicLike (fs, 1.0), fixedBlocks (480));
-        const int expected = anneal::SpectralEngine::fftSizeFor (fs, r.proc->getLatencyMode());
+        const int expected = anneal::SpectralEngine::fftSizeFor (fs, r.proc->getLatencyMode()) + r.proc->getCeilingLatency();
         ok = ok && allFinite (out) && r.proc->getLatencySamples() == expected;
         log << juce::String (fs / 1000.0, 1) << "k:" << r.proc->getLatencySamples() << "  ";
     }
@@ -1216,7 +1218,7 @@ void testMidSide()
             r.set (ids::heatTarget, (float) ((block++ / 13) % 3));
             return 257;
         });
-        check (allFinite (y) && maxAbs (y) < 1 && r.proc->getLatencySamples() == 1024,
+        check (allFinite (y) && maxAbs (y) < 1 && r.proc->getLatencySamples() == 1024 + r.proc->getCeilingLatency(),
                "routing automation remains finite, same latency", "peak " + db (toDb (maxAbs (y))));
     }
 }
@@ -1661,7 +1663,7 @@ void testEditorLayout()
     for (auto* c : routing)
         where << "y " << c->getY() << " (centre " << juce::String (c->getBounds().toFloat().getCentreY(), 1) << ")  ";
     check (routing.size() == 2 && routing[0]->getY() == routing[1]->getY()
-               && std::abs (routing[0]->getBounds().toFloat().getCentreY() - 415.5f) <= 1.0f,
+               && std::abs (routing[0]->getBounds().toFloat().getCentreY() - 425.5f) <= 1.0f,   // 3.0 title row
            "EQ and Heat routing menus share the title row", where);
 
     r.set (ids::listen, 2);
@@ -1678,6 +1680,25 @@ void testEditorLayout()
            "Flavour menu on the HEAT title row, follows the parameter",
            flavour != nullptr ? flavour->getBounds().toString() + ", shows " + anneal::FlavourMenu::pillText (flavour->getChoice())
                               : juce::String ("missing"));
+
+    // 3.0: every control inside the base size, and no two controls overlapping.
+    {
+        juce::String overlaps;
+        const juce::Rectangle<int> base (0, 0, AnnealEditorContent::baseWidth, AnnealEditorContent::baseHeight);
+        auto kids = content.getChildren();
+        for (int i = 0; i < kids.size(); ++i)
+        {
+            if (! kids[i]->isVisible())
+                continue;
+            if (! base.contains (kids[i]->getBounds()))
+                overlaps << "outside: " << kids[i]->getBounds().toString() << "  ";
+            for (int j = i + 1; j < kids.size(); ++j)
+                if (kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
+                    overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
+        }
+        check (overlaps.isEmpty(), "3.0 layout: all controls inside, none overlapping",
+               overlaps.isEmpty() ? juce::String (kids.size()) + " controls" : overlaps);
+    }
 }
 
 void benchmark()
@@ -1734,6 +1755,296 @@ void benchmark()
 }
 }
 
+//==============================================================================
+// 3.0: sidechain, freeze, true-peak ceiling, undo/redo.
+
+Channels runEngineWithKey (anneal::SpectralEngine& e, const Channels& in, const Channels& key, int block)
+{
+    Channels out = in;
+    const int n = (int) in[0].size();
+    for (int pos = 0; pos < n; pos += block)
+    {
+        const int b = std::min (block, n - pos);
+        float* ptrs[2] = { out[0].data() + pos, out[1].data() + pos };
+        const float* k[2] = { key[0].data() + pos, key.size() > 1 ? key[1].data() + pos : key[0].data() + pos };
+        e.process (ptrs, 2, b, k, (int) key.size());
+    }
+    return out;
+}
+
+Channels pinkNoise (double fs, double seconds, float amp, unsigned seed)
+{
+    const int n = (int) (fs * seconds);
+    auto out = testsig::silence (2, n);
+    testsig::Pink pl (seed), pr (seed + 1);
+    for (int i = 0; i < n; ++i)
+    {
+        out[0][(size_t) i] = amp * pl.next();
+        out[1][(size_t) i] = amp * pr.next();
+    }
+    return out;
+}
+
+// True peak by 8x windowed-sinc interpolation (64 taps), independent of the limiter's own detector.
+double truePeak (const Channels& x, int from)
+{
+    constexpr int over = 8, half = 32;
+    double peak = 0.0;
+    for (const auto& ch : x)
+    {
+        const int n = (int) ch.size();
+        for (int i = std::max (from, half); i < n - half; ++i)
+        {
+            peak = std::max (peak, (double) std::abs (ch[(size_t) i]));
+            for (int p = 1; p < over; ++p)
+            {
+                const double frac = (double) p / over;
+                double y = 0.0;
+                for (int k = -half + 1; k <= half; ++k)
+                {
+                    const double t = k - frac;
+                    const double sinc = std::sin (testsig::pi * t) / (testsig::pi * t);
+                    const double w = 0.5 * (1.0 + std::cos (testsig::pi * t / half));
+                    y += ch[(size_t) (i + k)] * sinc * w;
+                }
+                peak = std::max (peak, std::abs (y));
+            }
+        }
+    }
+    return peak;
+}
+
+void testSidechain()
+{
+    section ("21. Sidechain (3.0)");
+    const double fs = 48000.0;
+    const auto main = pinkNoise (fs, 3.0, 0.03f, 21);
+    auto silentKey = testsig::silence (2, (int) main[0].size());
+
+    {
+        // A sidechain mode with a silent key changes nothing (the model's key term is exactly 0).
+        auto a = std::make_unique<anneal::SpectralEngine>();
+        auto b = std::make_unique<anneal::SpectralEngine>();
+        a->prepare (fs, 2, anneal::SpectralEngine::low);
+        b->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.reveal = 0.4f; p.smooth = 0.4f; p.heat = 0.3f;
+        a->setParameters (p);
+        p.scMode = 1; p.scAmount = 1.0f;
+        b->setParameters (p);
+        const auto oa = runEngine (*a, main, fixedBlocks (512));
+        const auto ob = runEngineWithKey (*b, main, silentKey, 512);
+        double worst = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < oa[0].size(); ++i)
+                worst = std::max (worst, (double) std::abs (oa[(size_t) c][i] - ob[(size_t) c][i]));
+        check (worst == 0.0, "sidechain on, silent key = identical output", "max diff " + juce::String (worst, 12));
+    }
+
+    {
+        // Make room: a loud key tone at 2 kHz ducks the main there, not elsewhere.
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.scMode = 1; p.scAmount = 1.0f;
+        e->setParameters (p);
+        const auto key = testsig::sines (fs, (int) main[0].size(), { { 2000.0, 0.2 } });
+        runEngineWithKey (*e, main, key, 512);
+        const float g2k = bandGain (*e, 2000.0), g300 = bandGain (*e, 300.0), g8k = bandGain (*e, 8000.0);
+        check (g2k <= -3.0f && std::abs (g300) < 1.0f && std::abs (g8k) < 1.0f, "Make room: key at 2 kHz ducks the main there",
+               "2 kHz " + db (g2k) + ", 300 Hz " + db (g300) + ", 8 kHz " + db (g8k));
+    }
+
+    {
+        // Unmask: a quiet main tone under loud key noise is lifted.
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.scMode = 2; p.scAmount = 1.0f;
+        e->setParameters (p);
+        const int n = (int) (3 * fs);
+        const auto tone = testsig::sines (fs, n, { { 2000.0, 0.003 } });   // -50 dBFS, clearly under the key
+        const auto key = pinkNoise (fs, 3.0, 0.2f, 33);
+        runEngineWithKey (*e, tone, key, 512);
+        const float g2k = bandGain (*e, 2000.0);
+        check (g2k >= 1.0f, "Unmask: main masked by the key is lifted", "2 kHz " + db (g2k));
+    }
+
+    {
+        // Through the processor: a stereo sidechain bus, routed by the host.
+        Rig r;
+        juce::AudioProcessor::BusesLayout l;
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.outputBuses.add (juce::AudioChannelSet::stereo());
+        const bool accepted = r.proc->setBusesLayout (l);
+        r.setNeutral();
+        r.set (ids::scMode, 1.0f);
+        r.set (ids::scAmount, 100.0f);
+        r.prepare (fs, 512);
+        const int n = (int) (3 * fs);
+        const auto keyTone = testsig::sines (fs, n, { { 2000.0, 0.2 } });
+        juce::AudioBuffer<float> buf (4, 512);
+        juce::MidiBuffer midi;
+        Channels out = main;
+        for (int pos = 0; pos + 512 <= n; pos += 512)
+        {
+            for (int c = 0; c < 2; ++c)
+            {
+                buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                buf.copyFrom (c + 2, 0, keyTone[(size_t) c].data() + pos, 512);
+            }
+            r.proc->processBlock (buf, midi);
+            for (int c = 0; c < 2; ++c)
+                std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + 512, out[(size_t) c].data() + pos);
+        }
+        const int lat = r.proc->getLatencySamples();
+        const double inAmp = testsig::toneAmplitude (main[0].data() + n / 2, n / 3, 2000.0, fs) + 1.0e-12;
+        const double outAmp = testsig::toneAmplitude (out[0].data() + n / 2 + lat, n / 3, 2000.0, fs) + 1.0e-12;
+        const double change = toDb (outAmp / inAmp);
+        check (accepted && r.proc->isSidechainConnected() && change < -2.0,
+               "processor: sidechain bus routed, Make room ducks", "layout " + juce::String (accepted ? "ok" : "REJECTED")
+                   + ", main at 2 kHz " + db (change));
+    }
+}
+
+void testFreeze()
+{
+    section ("22. Freeze (3.0)");
+    const double fs = 48000.0;
+    const int n = (int) (2 * fs);
+    Channels ringy = testsig::silence (2, n);
+    {
+        testsig::Pink pl (1), pr (2);
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+            ringy[0][(size_t) i] = 0.03f * pl.next() + ring;
+            ringy[1][(size_t) i] = 0.03f * pr.next() + ring;
+        }
+    }
+    const auto plain = pinkNoise (fs, 2.0, 0.03f, 9);
+
+    float held = 0.0f, released = 0.0f, before = 0.0f;
+    for (bool freeze : { true, false })
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.smooth = 1.0f;
+        e->setParameters (p);
+        runEngine (*e, ringy, fixedBlocks (512));
+        before = bandGain (*e, 3150.0);
+        p.freeze = freeze;
+        e->setParameters (p);
+        runEngine (*e, plain, fixedBlocks (512));   // the ring is gone
+        (freeze ? held : released) = bandGain (*e, 3150.0);
+    }
+    check (before <= -3.0f && std::abs (held - before) < 0.05f && released > before + 2.0f,
+           "Freeze holds the curve after the music changes", "cut " + db (before) + ", frozen " + db (held) + ", not frozen " + db (released));
+}
+
+void testCeiling()
+{
+    section ("23. True-peak ceiling (3.0)");
+    const double fs = 48000.0;
+    const int n = (int) (2 * fs);
+
+    // fs/4 sine at 45 degrees: every sample lands at 0.707 of the real peak, the classic
+    // inter-sample over. Driven +12 dB so the true peak is ~ +12 dBTP before the ceiling.
+    Channels isp = testsig::silence (2, n);
+    for (int i = 0; i < n; ++i)
+        isp[0][(size_t) i] = isp[1][(size_t) i] = (float) (std::sin (2.0 * testsig::pi * 0.25 * i + testsig::pi / 4.0));
+    const auto music = testsig::musicLike (fs, 2.0);
+
+    bool ok = true;
+    juce::String log;
+    const Channels* signals[] = { &isp, &music };
+    for (int choice : { 1, 2, 3 })
+        for (const Channels* sig : signals)
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::heat, 100.0f);
+            r.set (ids::output, 12.0f);
+            r.set (ids::ceiling, (float) choice);
+            r.prepare (fs, 512);
+            const auto out = r.run (*sig, fixedBlocks (512));
+            const double tp = toDb (truePeak (out, n / 2));
+            const double ceiling = anneal::ceilingDbtp[choice];
+            const float gr = r.proc->takeCeilingReductionDb();   // the meter's read-out
+            const bool fine = allFinite (out) && tp <= ceiling + 0.2 && gr < -1.0f;
+            ok = ok && fine;
+            log << juce::String (ceiling, 1) << ":" << juce::String (tp, 2) << " (GR " << juce::String (gr, 1) << ")" << (fine ? "" : "!") << "  ";
+        }
+    check (ok, "true peak stays under the ceiling (+0.2 dB), sine at fs/4 and music, +12 dB", "dBTP " + log);
+
+    // Off: exactly a delay of the look-ahead (the Mix 0 % null test covers the rest of the path).
+    {
+        anneal::TruePeakLimiter lim;
+        lim.prepare (fs, 2);
+        lim.setCeiling (false, 0.0f);
+        auto x = music;
+        float* ptrs[2] = { x[0].data(), x[1].data() };
+        lim.process (ptrs, 2, n);
+        const double err = delayedError (x, music, lim.getLatency());
+        check (err == 0.0, "ceiling off = pure look-ahead delay", "latency " + juce::String (lim.getLatency()) + " samples, max err " + juce::String (err, 12));
+    }
+}
+
+void testUndo()
+{
+    section ("24. Undo / Redo (3.0)");
+    Rig r;
+    auto* reveal = r.proc->apvts.getParameter (ids::reveal);
+    auto plain = [reveal] { return reveal->convertFrom0to1 (reveal->getValue()); };
+
+    r.set (ids::smooth, 10.0f);   // like automation: no gesture, not recorded
+    const bool automationIgnored = ! r.proc->canUndo();
+
+    reveal->beginChangeGesture();
+    reveal->setValueNotifyingHost (reveal->convertTo0to1 (70.0f));
+    reveal->endChangeGesture();
+    r.proc->undo();
+    const float undone = plain();
+    r.proc->redo();
+    const float redone = plain();
+
+    r.proc->setCurrentProgram (4);   // Vocal air: one step
+    const float afterPreset = plain();
+    r.proc->undo();
+    const float beforePreset = plain();
+    check (automationIgnored && std::abs (undone - 40.0f) < 0.05f && std::abs (redone - 70.0f) < 0.05f
+               && std::abs (afterPreset - 50.0f) < 0.05f && std::abs (beforePreset - 70.0f) < 0.05f,
+           "undo/redo of an edit, a preset is one step, automation isn't recorded",
+           "undo " + juce::String (undone, 1) + ", redo " + juce::String (redone, 1) + ", preset " + juce::String (afterPreset, 1)
+               + " -> undo " + juce::String (beforePreset, 1));
+}
+
+void testOldProjects30()
+{
+    section ("25. Projects from before 3.0");
+    Rig a;
+    juce::MemoryBlock blob;
+    a.proc->getStateInformation (blob);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    for (auto id : { ids::freeze, ids::scMode, ids::scAmount, ids::ceiling })
+        if (auto* e = xml->getChildByAttribute ("id", id))
+            xml->removeChildElement (e, true);
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary (*xml, old);
+
+    Rig b;
+    b.set (ids::freeze, 1.0f);
+    b.set (ids::scMode, 2.0f);
+    b.set (ids::ceiling, 3.0f);
+    b.proc->setStateInformation (old.getData(), (int) old.getSize());
+    auto v = [&b] (const char* id) { return b.proc->apvts.getRawParameterValue (id)->load(); };
+    check (v (ids::freeze) < 0.5f && v (ids::scMode) < 0.5f && v (ids::ceiling) < 0.5f,
+           "older projects load with Freeze, Sidechain and Ceiling off", "freeze " + juce::String (v (ids::freeze))
+               + ", sidechain " + juce::String (v (ids::scMode)) + ", ceiling " + juce::String (v (ids::ceiling)));
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -1759,6 +2070,11 @@ int main()
     testListen();
     testFlavours();
     testEditorLayout();
+    testSidechain();
+    testFreeze();
+    testCeiling();
+    testUndo();
+    testOldProjects30();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

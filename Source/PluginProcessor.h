@@ -2,14 +2,18 @@
 
 #include "dsp/LoudnessMatch.h"
 #include "dsp/SpectralEngine.h"
+#include "dsp/TruePeakLimiter.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <atomic>
+#include <map>
 #include <memory>
+#include <vector>
 
-class AnnealAudioProcessor final : public juce::AudioProcessor, private juce::Timer
+class AnnealAudioProcessor final : public juce::AudioProcessor, private juce::Timer,
+                                   private juce::AudioProcessorParameter::Listener
 {
 public:
     AnnealAudioProcessor();
@@ -64,10 +68,46 @@ public:
     // switch, then reports the new latency to the host.
     void applyLatencyModeIfChanged();
 
+    // 3.0: total latency = engine frame + the ceiling's look-ahead (constant, also when it's off).
+    int getCeilingLatency() const noexcept { return limiter.getLatency(); }
+    float takeCeilingReductionDb() noexcept { return limiterReduction.exchange (0.0f); }
+    bool isSidechainConnected() const noexcept { return sidechainLive.load (std::memory_order_relaxed); }
+
+    // 3.0 Undo / Redo of parameter edits (message thread). Records completed gestures from the
+    // editor and the host's own controls; automation playback has no gestures and isn't recorded.
+    // A preset change is one step.
+    bool canUndo() const noexcept { return ! undoStack.empty(); }
+    bool canRedo() const noexcept { return ! redoStack.empty(); }
+    void undo();
+    void redo();
+
 private:
     void pushParametersToEngine() noexcept;
     void timerCallback() override;
     int requestedLatencyMode() const noexcept;
+    int totalLatency() noexcept { return getEngine().getLatencySamples() + limiter.getLatency(); }
+
+    // Undo bookkeeping.
+    using Snapshot = std::map<int, float>;   // parameter index -> normalised value
+    struct UndoStep { Snapshot before, after; };
+    void parameterValueChanged (int, float) override {}
+    void parameterGestureChanged (int index, bool starting) override;
+    void beginUndoGroup();
+    void endUndoGroup();
+    void commitPending();
+    void applySnapshot (const Snapshot& values);
+    std::vector<UndoStep> undoStack, redoStack;
+    UndoStep pending;
+    Snapshot gestureStart;
+    int openGestures = 0, groupDepth = 0;
+    bool applyingUndo = false;
+
+    anneal::TruePeakLimiter limiter;
+    juce::AudioBuffer<float> bypassRing;   // dry delayed by the limiter's look-ahead, for Bypass
+    std::vector<float> bypassRamp;         // per-sample bypass amount for the current chunk
+    int bypassPos = 0;
+    std::atomic<float> limiterReduction { 0.0f };
+    std::atomic<bool> sidechainLive { false };
 
     std::array<std::unique_ptr<anneal::SpectralEngine>, anneal::SpectralEngine::numModes> engines;
     anneal::TripleBuffer<anneal::DisplayFrame> display;   // shared by the engines
@@ -112,6 +152,10 @@ private:
     std::atomic<float>* pHeatTarget = nullptr;
     std::atomic<float>* pListen = nullptr;
     std::atomic<float>* pFlavour = nullptr;
+    std::atomic<float>* pFreeze = nullptr;
+    std::atomic<float>* pScMode = nullptr;
+    std::atomic<float>* pScAmount = nullptr;
+    std::atomic<float>* pCeiling = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnnealAudioProcessor)
 };

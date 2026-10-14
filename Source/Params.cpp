@@ -201,6 +201,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         {
             return parseFlavour (t);
         })));
+
+    // 3.0. All default to what earlier versions did, and older projects load with exactly that
+    // (AnnealAudioProcessor::setStateInformation).
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::freeze, 1 }, "Freeze", false));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::scMode, 1 }, "Sidechain",
+        juce::StringArray { "Off", "Make room", "Unmask" }, scOff));
+    layout.add (percent (ids::scAmount, "Sidechain Amount", 50.0f));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::ceiling, 1 }, "Ceiling",
+        juce::StringArray { "Off", "0.0 dBTP", "-0.3 dBTP", "-1.0 dBTP" }, 0));
     return layout;
 }
 }

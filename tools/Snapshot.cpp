@@ -21,14 +21,31 @@ void set (AnnealAudioProcessor& p, const char* id, float plain)
     prm->setValueNotifyingHost (prm->convertTo0to1 (plain));
 }
 
+// The key track the sidechain scenario feeds: a vocal-ish line (two formant tones) at 1.2 and 3 kHz.
+const testsig::Channels& sidechainKey (double fs, int n)
+{
+    static testsig::Channels key;
+    if ((int) (key.empty() ? 0 : key[0].size()) < n)
+        key = testsig::sines (fs, n, { { 1200.0, 0.12 }, { 3000.0, 0.06 } });
+    return key;
+}
+
 void feed (AnnealAudioProcessor& p, const testsig::Channels& in, int block, int from, int to)
 {
-    juce::AudioBuffer<float> buf (2, block);
+    // With the sidechain bus enabled the host buffer carries main (0-1) and key (2-3).
+    auto* sc = p.getBus (true, 1);
+    const bool withKey = sc != nullptr && sc->isEnabled();
+    const auto& key = sidechainKey (48000.0, (int) in[0].size());
+    juce::AudioBuffer<float> buf (withKey ? 4 : 2, block);
     juce::MidiBuffer midi;
     for (int pos = from; pos + block <= to; pos += block)
     {
         for (int c = 0; c < 2; ++c)
+        {
             buf.copyFrom (c, 0, in[(size_t) c].data() + pos, block);
+            if (withKey)
+                buf.copyFrom (c + 2, 0, key[(size_t) c].data() + pos, block);
+        }
         p.processBlock (buf, midi);
     }
 }
@@ -122,6 +139,17 @@ int main (int argc, char* argv[])
               set (p, ids::heat, 60); set (p, ids::delta, 1); set (p, ids::output, -4.5f);
           }, -1.0f, true },
         { "empty", [] (AnnealAudioProcessor&) {}, -1.0f, false },
+        { "sidechain", [] (AnnealAudioProcessor& p)
+          {
+              juce::AudioProcessor::BusesLayout l;
+              l.inputBuses.add (juce::AudioChannelSet::stereo());
+              l.inputBuses.add (juce::AudioChannelSet::stereo());
+              l.outputBuses.add (juce::AudioChannelSet::stereo());
+              p.setBusesLayout (l);
+              set (p, ids::scMode, 1); set (p, ids::scAmount, 80);
+              set (p, ids::ceiling, 2); set (p, ids::output, 6.0f); set (p, ids::heat, 60);
+          }, 1200.0f, true },
+        { "frozen", [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); set (p, ids::smooth, 70); }, 3150.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
         { "midside", [] (AnnealAudioProcessor& p)
           {
@@ -177,10 +205,10 @@ int main (int argc, char* argv[])
         {
             failures += shoot (*editor, outDir.getChildFile (base + "_150.png"), 1.5f) ? 0 : 1;
             failures += shoot (*editor, outDir.getChildFile (base + "_200.png"), 2.0f) ? 0 : 1;
-            editor->setSize (800, 496);
-            failures += shoot (*editor, outDir.getChildFile (base + "_min_800x496.png")) ? 0 : 1;
-            editor->setSize (1600, 992);
-            failures += shoot (*editor, outDir.getChildFile (base + "_max_1600x992.png")) ? 0 : 1;
+            editor->setSize (870, 480);
+            failures += shoot (*editor, outDir.getChildFile (base + "_min_870x480.png")) ? 0 : 1;
+            editor->setSize (1740, 960);
+            failures += shoot (*editor, outDir.getChildFile (base + "_max_1740x960.png")) ? 0 : 1;
         }
 
         std::printf ("%s: latency %.1f ms, match gain %.2f dB, peaks in last frame %d\n", s.name, proc.getLatencyMs(),

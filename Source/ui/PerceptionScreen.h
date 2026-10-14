@@ -40,7 +40,7 @@ namespace anneal
 
         // How hard Reveal / Smooth / Heat are working (from the engine's frames, with meter
         // ballistics: instant rise, 12 dB/s fall). live = audio is arriving.
-        struct Activity { float liftDb = 0.0f, cutDb = 0.0f, heatRelDb = -200.0f; bool live = false; };
+        struct Activity { float liftDb = 0.0f, cutDb = 0.0f, heatRelDb = -200.0f, scDb = 0.0f; bool live = false, keyActive = false; };
         Activity getActivity() const noexcept { return activity; }
 
     private:
@@ -69,6 +69,8 @@ namespace anneal
         // What is drawn: the levels above, smoothed across bands (about +-0.25 Cam) so tonal
         // content reads as a flowing line rather than one-ERB-wide plateaus. Display only.
         std::array<float, nb> inView {}, outView {}, heatView {};
+        std::array<float, nb> keyDb {}, keyView {};   // sidechain key (3.0)
+        bool keyActive = false, frozen = false;
         void updateViews();
         float z0 = 0.0f, dz = 0.0f;
         bool haveFrame = false;

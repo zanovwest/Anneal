@@ -59,6 +59,9 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
         rawSpec[c].assign ((size_t) numBins * 2, 0.0f);
     }
     power.assign ((size_t) numBins, 0.0f);
+    keyFifo.assign ((size_t) fftSize, 0.0f);
+    keySpec.assign ((size_t) fftSize * 2, 0.0f);
+    keyPower.assign ((size_t) numBins, 0.0f);
     outPower.assign ((size_t) numBins, 0.0f);
     harmPower.assign ((size_t) numBins, 0.0f);
 
@@ -75,6 +78,7 @@ void SpectralEngine::reset()
     for (int c = 0; c < maxChannels; ++c)
         for (auto* v : { &inFifo[c], &outAcc[c], &outFifo[c], &harmAcc[c], &harmFifo[c], &alignRing[c] })
             std::fill (v->begin(), v->end(), 0.0f);
+    std::fill (keyFifo.begin(), keyFifo.end(), 0.0f);
     pos = 0;
     ringPos = 0;
     envIn = envHarm = 0.0f;
@@ -86,7 +90,8 @@ void SpectralEngine::reset()
     lastPeakCount = 0;
 }
 
-void SpectralEngine::process (float* const* io, int numChannels, int numSamples) noexcept
+void SpectralEngine::process (float* const* io, int numChannels, int numSamples,
+                              const float* const* key, int keyChannels) noexcept
 {
     numChannels = std::min (numChannels, channels);
     int done = 0;
@@ -102,6 +107,25 @@ void SpectralEngine::process (float* const* io, int numChannels, int numSamples)
                 std::memcpy (fifoIn, io[c] + done, sizeof (float) * (size_t) todo);
             else
                 std::memset (fifoIn, 0, sizeof (float) * (size_t) todo);
+        }
+        {
+            // Sidechain key, mono, in step with the main input (silence when there is none).
+            float* k = keyFifo.data() + (fftSize - hop + pos);
+            if (key != nullptr && keyChannels > 0)
+            {
+                const float scale = 1.0f / (float) keyChannels;
+                for (int i = 0; i < todo; ++i)
+                {
+                    float sum = 0.0f;
+                    for (int c = 0; c < keyChannels; ++c)
+                        sum += key[c][done + i];
+                    k[i] = sum * scale;
+                }
+            }
+            else
+            {
+                std::memset (k, 0, sizeof (float) * (size_t) todo);
+            }
         }
 
         // Output: main path + gated harmonic stream. The gate keeps the harmonics' envelope
@@ -164,6 +188,9 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.eqSide, target.eqSide);
     lin (current.heatMid, target.heatMid);
     lin (current.heatSide, target.heatSide);
+    lin (current.scAmount, target.scAmount);
+    current.freeze = target.freeze;
+    current.scMode = target.scMode;
     lg  (current.rangeLoHz, target.rangeLoHz);
     lg  (current.rangeHiHz, target.rangeHiHz);
     current.responseMs = target.responseMs;
@@ -243,6 +270,30 @@ void SpectralEngine::processFrame() noexcept
 
     const float ampScale = 4.0f / (float) fftSize;
     const float powScale = ampScale * ampScale / (float) channels;
+
+    // Sidechain key: only transformed when a sidechain mode is on (no cost otherwise).
+    const float* keyPtr = nullptr;
+    bool keyHasSignal = false;
+    if (current.scMode != 0)
+    {
+        float* s = keySpec.data();
+        for (int i = 0; i < fftSize; ++i)
+        {
+            const int n = (i + half) & mask;
+            s[i] = keyFifo[(size_t) n] * window[(size_t) n];
+        }
+        std::fill (s + fftSize, s + 2 * fftSize, 0.0f);
+        fft->performRealOnlyForwardTransform (s, true);
+        const float keyScale = ampScale * ampScale;
+        double total = 0.0;
+        for (int k = 0; k < numBins; ++k)
+        {
+            keyPower[(size_t) k] = (s[2 * k] * s[2 * k] + s[2 * k + 1] * s[2 * k + 1]) * keyScale;
+            total += keyPower[(size_t) k];
+        }
+        keyHasSignal = total > 1.0e-12;
+        keyPtr = keyPower.data();
+    }
     for (int k = 0; k < numBins; ++k)
     {
         float sum = 0.0f;
@@ -260,7 +311,10 @@ void SpectralEngine::processFrame() noexcept
     ms.rangeHiHz = current.rangeHiHz;
     ms.focus = current.focus;
     ms.guard = current.guard;
-    model.analyse (power.data(), ms, framesPerSecond);
+    ms.freeze = current.freeze;
+    ms.scMode = current.scMode;
+    ms.scAmount = current.scAmount;
+    model.analyse (power.data(), ms, framesPerSecond, keyPtr);
 
     const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
     float* harmPtrs[maxChannels] = { harm[0].data(), harm[1].data() };
@@ -297,7 +351,7 @@ void SpectralEngine::processFrame() noexcept
 
     if (msActive)
     {
-        processMidSide (ms, msBlend);
+        processMidSide (ms, msBlend, keyPtr);
         harmonicsWritten = harmonicsWritten || lastPeakCount > 0;
     }
 
@@ -311,6 +365,13 @@ void SpectralEngine::processFrame() noexcept
         f.liftDb = model.getMaxLiftDb();
         f.cutDb = model.getMaxCutDb();
         f.midSide = msActive;
+        f.keyActive = keyHasSignal;
+        f.scDb = msActive ? (std::abs (msModel[0].getSidechainPeakDb()) > std::abs (msModel[1].getSidechainPeakDb())
+                                 ? msModel[0].getSidechainPeakDb() : msModel[1].getSidechainPeakDb())
+                          : model.getSidechainPeakDb();
+        f.frozen = current.freeze;
+        if (keyHasSignal)
+            model.bandLevelsDb (keyPower.data(), f.keyDb);
         if (msActive)
         {
             f.liftDb = std::max (msModel[0].getMaxLiftDb(), msModel[1].getMaxLiftDb());
@@ -380,9 +441,10 @@ void SpectralEngine::processFrame() noexcept
         float* in = inFifo[c].data();
         std::memmove (in, in + hop, sizeof (float) * (size_t) (fftSize - hop));
     }
+    std::memmove (keyFifo.data(), keyFifo.data() + hop, sizeof (float) * (size_t) (fftSize - hop));
 }
 
-void SpectralEngine::processMidSide (const ModelSettings& settings, float blend) noexcept
+void SpectralEngine::processMidSide (const ModelSettings& settings, float blend, const float* keyPtr) noexcept
 {
     const float scale = 4.0f / (float) fftSize;
     for (int c = 0; c < 2; ++c)
@@ -397,7 +459,7 @@ void SpectralEngine::processMidSide (const ModelSettings& settings, float blend)
         ms.reveal *= eqAmount;
         ms.smooth *= eqAmount;
         ms.tiltDbPerOct *= eqAmount;
-        msModel[c].analyse (msPower[c].data(), ms, framesPerSecond);
+        msModel[c].analyse (msPower[c].data(), ms, framesPerSecond, keyPtr);
 
         const float* in[] = { msSpec[c].data() };
         float* out[] = { msHarm[c].data() };

@@ -5,6 +5,7 @@
 #include "ui/Fader.h"
 #include "ui/FlavourMenu.h"
 #include "ui/HarmonicGraph.h"
+#include "ui/IconButton.h"
 #include "ui/Knob.h"
 #include "ui/LatencyMenu.h"
 #include "ui/ListenMenu.h"
@@ -16,18 +17,20 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 // Everything laid out at a fixed base size; the editor scales it uniformly.
-// Layout (docs/DESIGN.md, v2): header with presets and the compare cluster (Match, Delta,
-// Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT, OUTPUT.
+// Layout (docs/DESIGN.md, 3.0): header with Undo/Redo, presets and the compare cluster (Match,
+// Delta, Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT,
+// SIDECHAIN, OUTPUT.
 class AnnealEditorContent : public juce::Component
 {
 public:
-    static constexpr int baseWidth = 1000, baseHeight = 620;
+    static constexpr int baseWidth = 1160, baseHeight = 640;
 
     explicit AnnealEditorContent (AnnealAudioProcessor&);
 
     void paint (juce::Graphics&) override;
     void resized() override;
     void tick (float dtSeconds);   // meters + live read-outs, called from the editor's timer
+    float getShownCeilingReductionDb() const noexcept { return meter.getShownReductionDb(); }
 
     anneal::PerceptionScreen screen;
     anneal::PresetBar presets;
@@ -46,6 +49,11 @@ private:
     anneal::RoutingMenu stereoMode, eqTarget, heatTarget;
     anneal::ListenMenu listen;
     anneal::FlavourMenu flavour;
+    // 3.0
+    anneal::Toggle freeze;
+    anneal::RoutingMenu scMode, ceiling;
+    anneal::Knob scAmount;
+    anneal::IconButton undoButton, redoButton;
 
     juce::String shownMatchText;
 };
@@ -60,6 +68,7 @@ public:
     void resized() override;
 
     AnnealEditorContent& getContent() noexcept { return content; }
+    float getShownCeilingReductionDb() const noexcept { return content.getShownCeilingReductionDb(); }
 
 private:
     void timerCallback() override;

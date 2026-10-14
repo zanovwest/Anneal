@@ -26,6 +26,10 @@ namespace anneal::ids
     inline constexpr const char* heatTarget = "heatTarget";
     inline constexpr const char* listen     = "listen";     // 0.2.5: Off / Reveal / Smooth / Heat only (solo)
     inline constexpr const char* flavour    = "flavour";    // 0.2.6: saturation flavour, Clean = as before
+    inline constexpr const char* freeze     = "freeze";     // 3.0: hold the auto-EQ curve (off = as before)
+    inline constexpr const char* scMode     = "scMode";     // 3.0: sidechain Off / Make room / Unmask
+    inline constexpr const char* scAmount   = "scAmount";   // 3.0: sidechain amount, %
+    inline constexpr const char* ceiling    = "ceiling";    // 3.0: true-peak ceiling Off / 0.0 / -0.3 / -1.0 dBTP
 
     inline constexpr int stateVersion = 1;
 }
@@ -46,4 +50,8 @@ namespace anneal
     float parseHz (const juce::String& text);
     int parseListen (const juce::String& text);   // "reveal", "smooth", "harmonics"/"heat", "off" or 0-3
     int parseFlavour (const juce::String& text);  // "clean", "tape", "tube", "transformer", "exciter" or 0-4
+
+    // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
+    enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };
+    inline constexpr float ceilingDbtp[] = { 0.0f, 0.0f, -0.3f, -1.0f };   // index 0 = Off
 }

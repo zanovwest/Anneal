@@ -93,6 +93,8 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
                      &fwd, &bwd, &prom, &target, &targetSmoothed, &gain, &promSlow, &gainOut, &needOut, &tmp,
                      &raw, &fastPlace, &slowPlace, &transient, &autoOut })
         alloc (*v, (size_t) numBands);
+    for (auto* v : { &keySlices, &keySmoothed, &keyPlace })
+        alloc (*v, (size_t) numBands);
     for (auto* v : { &binGainDb, &binGain, &binNeed, &binAutoDb, &binAutoGain })
         alloc (*v, (size_t) numBins);
     prefix.assign ((size_t) numBands + 1, 0.0);
@@ -128,6 +130,7 @@ void PerceptualModel::reset()
     std::fill (binGain.begin(), binGain.end(), 1.0f);
     std::fill (binAutoDb.begin(), binAutoDb.end(), 0.0f);
     std::fill (binAutoGain.begin(), binAutoGain.end(), 1.0f);
+    keyPrimed = false;
     std::fill (binNeed.begin(), binNeed.end(), 0.0f);
     std::fill (transientAge.begin(), transientAge.end(), idleAge);
 }
@@ -183,7 +186,7 @@ void PerceptualModel::contextOf (const float* placeLevel, float* ctx) noexcept
     }
 }
 
-void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, float fps)
+void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, float fps, const float* keyPower)
 {
     binPowerToSlices (binPower, slices.data());
 
@@ -246,6 +249,27 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     }
     const bool guarded = s.guard > 0.0f;
 
+    // Sidechain key: the same ear-weighted, 20 ms-integrated one-ERB level as the main signal,
+    // so key and main are compared like for like in every band. The internal-noise floor is in
+    // both, so a silent key is inaudible (keyAudible = 0) and changes nothing.
+    const bool keyOn = keyPower != nullptr && s.scMode != 0 && s.scAmount > 0.0f;
+    if (keyOn)
+    {
+        binPowerToSlices (keyPower, keySlices.data());
+        for (int b = 0; b < numBands; ++b)
+        {
+            const float x = keySlices[(size_t) b] * earW[(size_t) b] + noiseSlice[(size_t) b];
+            keySmoothed[(size_t) b] = keyPrimed ? keySmoothed[(size_t) b] + aP * (x - keySmoothed[(size_t) b]) : x;
+        }
+        keyPrimed = true;
+        boxSum (keySmoothed.data(), keyPlace.data(), boxHalf, false);
+    }
+    else
+    {
+        keyPrimed = false;
+    }
+
+    sidePeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
         const float d = std::clamp (powToDb ((double) place[(size_t) b] / ((double) context[(size_t) b] + 1.0e-30))
@@ -260,7 +284,24 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float fade   = clamp01 ((30.0f + d) / 12.0f);            // empty gaps are not lifted
         const float boost  = s.reveal * std::min (maxBoostDb, 0.6f * shadow) * fade * audible;
 
-        target[(size_t) b] = boost - cut;
+        // Make room: duck the main where the key is about as loud or louder in the same ERB (up to
+        // -9 dB at full amount). Unmask: lift the main where the key masks it, i.e. the key is
+        // clearly louder there but the main is still present (not an empty gap).
+        float side = 0.0f;
+        if (keyOn)
+        {
+            const float rel = powToDb ((double) keyPlace[(size_t) b] / (double) place[(size_t) b]);
+            const float keyAudible = clamp01 ((powToDb ((double) keyPlace[(size_t) b] / noiseBox[(size_t) b]) - 6.0f) / 12.0f);
+            if (s.scMode == 1)
+                side = -s.scAmount * std::min (maxCutDb, 0.75f * std::max (0.0f, rel + 6.0f)) * keyAudible;
+            else
+                side = s.scAmount * std::min (6.0f, 0.5f * std::max (0.0f, rel - 3.0f))
+                     * clamp01 ((30.0f - rel) / 12.0f) * audible * keyAudible;
+        }
+
+        target[(size_t) b] = boost - cut + side;
+        if (std::abs (side) > std::abs (sidePeakDb))
+            sidePeakDb = side;
     }
 
     boxSum (target.data(), targetSmoothed.data(), smoothHalf, true);
@@ -275,7 +316,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         std::copy (prom.begin(), prom.end(), promSlow.begin());
         primed = true;
     }
-    else
+    else if (! s.freeze)   // Freeze: the curve (and its prominence memory) hold where they are
     {
         for (int b = 0; b < numBands; ++b)
         {

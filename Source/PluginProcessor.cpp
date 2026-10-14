@@ -6,7 +6,9 @@
 AnnealAudioProcessor::AnnealAudioProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
-                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
+                          // 3.0: optional sidechain key (FL Studio: route a track to Anneal's sidechain).
+                          .withInput ("Sidechain", juce::AudioChannelSet::stereo(), false)),
       apvts (*this, nullptr, "AnnealState", anneal::createParameterLayout())
 {
     namespace ids = anneal::ids;
@@ -31,6 +33,12 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pHeatTarget = apvts.getRawParameterValue (ids::heatTarget);
     pListen     = apvts.getRawParameterValue (ids::listen);
     pFlavour    = apvts.getRawParameterValue (ids::flavour);
+    pFreeze     = apvts.getRawParameterValue (ids::freeze);
+    pScMode     = apvts.getRawParameterValue (ids::scMode);
+    pScAmount   = apvts.getRawParameterValue (ids::scAmount);
+    pCeiling    = apvts.getRawParameterValue (ids::ceiling);
+    for (auto* prm : getParameters())
+        prm->addListener (this);
 
     // A usable default before the host calls prepareToPlay (e.g. state loading, editor opening).
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
@@ -39,14 +47,17 @@ AnnealAudioProcessor::AnnealAudioProcessor()
         engines[(size_t) m]->setDisplayTarget (&display);
         engines[(size_t) m]->prepare (48000.0, 2, m);
     }
+    limiter.prepare (48000.0, 2);
     mode = requestedLatencyMode();
-    setLatencySamples (getEngine().getLatencySamples());
+    setLatencySamples (totalLatency());
     startTimerHz (10);
 }
 
 AnnealAudioProcessor::~AnnealAudioProcessor()
 {
     stopTimer();
+    for (auto* prm : getParameters())
+        prm->removeListener (this);
 }
 
 int AnnealAudioProcessor::requestedLatencyMode() const noexcept
@@ -73,8 +84,11 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     ringLength = getEngine().getLatencySamples();
     dryRing.clear();
     dryPos = 0;
+    limiter.reset();
+    bypassRing.clear();
+    bypassPos = 0;
     suspendProcessing (false);
-    setLatencySamples (ringLength);   // the host re-aligns (VST3: restartComponent kLatencyChanged)
+    setLatencySamples (totalLatency());   // the host re-aligns (VST3: restartComponent kLatencyChanged)
 }
 
 bool AnnealAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -82,16 +96,30 @@ bool AnnealAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     const auto out = layouts.getMainOutputChannelSet();
     if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
         return false;
-    return layouts.getMainInputChannelSet() == out;
+    if (layouts.getMainInputChannelSet() != out)
+        return false;
+    // Sidechain: off, mono or stereo (it is summed to mono for the analysis).
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto sc = layouts.getChannelSet (true, 1);
+        if (! sc.isDisabled() && sc != juce::AudioChannelSet::mono() && sc != juce::AudioChannelSet::stereo())
+            return false;
+    }
+    return true;
 }
 
 void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    preparedChannels = juce::jlimit (1, 2, getTotalNumInputChannels());
+    preparedChannels = juce::jlimit (1, 2, getMainBusNumInputChannels());
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
         engines[(size_t) m]->prepare (sampleRate, preparedChannels, m);
+    limiter.prepare (sampleRate, preparedChannels);
+    bypassRing.setSize (2, limiter.getLatency());
+    bypassRing.clear();
+    bypassPos = 0;
+    bypassRamp.assign ((size_t) juce::jmax (samplesPerBlock, 512), 0.0f);
     mode = requestedLatencyMode();
-    setLatencySamples (getEngine().getLatencySamples());
+    setLatencySamples (totalLatency());
 
     // The dry ring is sized for the longest mode, so switching modes never allocates.
     ringLength = getEngine().getLatencySamples();
@@ -127,6 +155,9 @@ void AnnealAudioProcessor::reset()
     // measurement, not audio, so it is kept (otherwise every restart would re-converge for ~3 s).
     for (auto& e : engines)
         e->reset();
+    limiter.reset();
+    bypassRing.clear();
+    bypassPos = 0;
     dryRing.clear();
     dryBlock.clear();
     dryPos = 0;
@@ -139,19 +170,18 @@ void AnnealAudioProcessor::reset()
 double AnnealAudioProcessor::getTailLengthSeconds() const
 {
     const auto& e = *engines[(size_t) mode];
-    return e.getFftSize() / e.getSampleRate();
+    return (e.getFftSize() + limiter.getLatency()) / e.getSampleRate();
 }
 
 double AnnealAudioProcessor::getLatencyMs() const noexcept
 {
-    const auto& e = *engines[(size_t) mode];
-    return 1000.0 * e.getLatencySamples() / e.getSampleRate();
+    return getLatencyMsForMode (mode);
 }
 
 double AnnealAudioProcessor::getLatencyMsForMode (int m) const noexcept
 {
     const auto& e = *engines[(size_t) juce::jlimit (0, anneal::SpectralEngine::numModes - 1, m)];
-    return 1000.0 * e.getLatencySamples() / e.getSampleRate();
+    return 1000.0 * (e.getLatencySamples() + limiter.getLatency()) / e.getSampleRate();
 }
 
 void AnnealAudioProcessor::pushParametersToEngine() noexcept
@@ -175,6 +205,9 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.heatSide = ht == 1 ? 0.0f : 1.0f;
     p.listen = juce::jlimit (0, 3, juce::roundToInt (pListen->load()));
     p.flavour = juce::jlimit (0, anneal::HarmonicSynth::numFlavours - 1, juce::roundToInt (pFlavour->load()));
+    p.freeze = pFreeze->load() > 0.5f;
+    p.scMode = juce::jlimit (0, 2, juce::roundToInt (pScMode->load()));
+    p.scAmount = pScAmount->load() * 0.01f;
     getEngine().setParameters (p);
 }
 
@@ -183,13 +216,28 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
 
     const int numSamples = buffer.getNumSamples();
-    const int numIn = getTotalNumInputChannels();
-    for (int c = numIn; c < getTotalNumOutputChannels(); ++c)
+    const int numIn = getMainBusNumInputChannels();
+    for (int c = numIn; c < getMainBusNumOutputChannels(); ++c)
         buffer.clear (c, 0, numSamples);
     if (numSamples == 0 || ringLength == 0)   // nothing to do / not prepared yet: pass through
         return;
 
     const int nch = juce::jmin (numIn, preparedChannels, buffer.getNumChannels());
+
+    // Sidechain key (3.0): the second input bus, when the host has it enabled.
+    const float* key[2] = { nullptr, nullptr };
+    int keyChannels = 0;
+    if (auto* scBus = getBus (true, 1); scBus != nullptr && scBus->isEnabled())
+    {
+        auto sc = getBusBuffer (buffer, true, 1);
+        keyChannels = juce::jmin (2, sc.getNumChannels());
+        for (int c = 0; c < keyChannels; ++c)
+            key[c] = sc.getReadPointer (c);
+    }
+    sidechainLive.store (keyChannels > 0, std::memory_order_relaxed);
+
+    const int ceilingChoice = juce::jlimit (0, 3, juce::roundToInt (pCeiling->load()));
+    limiter.setCeiling (ceilingChoice > 0, anneal::ceilingDbtp[ceilingChoice]);
 
     pushParametersToEngine();
     mixSmoothed.setTargetValue (pMix->load() * 0.01f);
@@ -229,7 +277,8 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
         // 2. Spectral engine, in place -> wet.
         float* wet[2] = { buffer.getWritePointer (0, start), nch > 1 ? buffer.getWritePointer (1, start) : nullptr };
-        getEngine().process (wet, nch, len);
+        const float* keyChunk[2] = { key[0] != nullptr ? key[0] + start : nullptr, key[1] != nullptr ? key[1] + start : nullptr };
+        getEngine().process (wet, nch, len, keyChannels > 0 ? keyChunk : nullptr, keyChannels);
 
         // 3. Loudness match (always measured, applied only when enabled). A listen solo is not
         //    the wet signal, so the measurement holds while one is heard.
@@ -264,11 +313,41 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 const float y = (normal + dl * (diff - normal)) * og;
                 // Listen: the engine's solo alone, scaled like the wet signal it is part of.
                 const float heard = y + ls * (mx * mg * wet[c][i] * og - y);
-                const float out = heard + bp * (dry - heard);
+                wet[c][i] = heard;
+            }
+            bypassRamp[(size_t) i] = bp;
+        }
+
+        // 5. True-peak ceiling (3.0), then Bypass. The limiter delays by its look-ahead even when
+        //    off, and Bypass crossfades to the dry signal delayed by the same amount, so the whole
+        //    plug-in always has one constant latency and Bypass stays exactly the dry signal.
+        limiter.process (wet, nch, len);
+        const int L = bypassRing.getNumSamples();
+        int bpAfter = bypassPos;
+        for (int c = 0; c < nch; ++c)
+        {
+            float* ring = bypassRing.getWritePointer (c);
+            const float* dry = dryBlock.getReadPointer (c);
+            int p = bypassPos;
+            for (int i = 0; i < len; ++i)
+            {
+                const float dryL = ring[p];
+                ring[p] = dry[i];
+                if (++p == L)
+                    p = 0;
+                const float out = wet[c][i] + bypassRamp[(size_t) i] * (dryL - wet[c][i]);
                 wet[c][i] = out;
                 peak[c] = juce::jmax (peak[c], std::abs (out));
             }
+            bpAfter = p;
         }
+        bypassPos = bpAfter;
+    }
+
+    {
+        const float gr = limiter.takeGainReductionDb();
+        if (gr < limiterReduction.load (std::memory_order_relaxed))
+            limiterReduction.store (gr, std::memory_order_relaxed);
     }
 
     matchGainDb.store (juce::Decibels::gainToDecibels (matchSmoothed.getCurrentValue()), std::memory_order_relaxed);
@@ -298,7 +377,99 @@ void AnnealAudioProcessor::setCurrentProgram (int index)
         return;
     currentPreset = index;
     presetChosen = true;
+    beginUndoGroup();   // a preset is one undo step
     anneal::presets::apply (apvts, index);
+    endUndoGroup();
+}
+
+//==============================================================================
+void AnnealAudioProcessor::parameterGestureChanged (int index, bool starting)
+{
+    // Only gestures made on the message thread (the editor, the host's own controls).
+    if (applyingUndo || ! juce::MessageManager::existsAndIsCurrentThread())
+        return;
+    auto* prm = getParameters()[index];
+    if (prm == nullptr)
+        return;
+    if (starting)
+    {
+        ++openGestures;
+        if (gestureStart.count (index) == 0)
+            gestureStart[index] = prm->getValue();
+    }
+    else
+    {
+        openGestures = juce::jmax (0, openGestures - 1);
+        if (auto it = gestureStart.find (index); it != gestureStart.end())
+        {
+            if (std::abs (prm->getValue() - it->second) > 1.0e-6f)
+            {
+                if (pending.before.count (index) == 0)
+                    pending.before[index] = it->second;
+                pending.after[index] = prm->getValue();
+            }
+            gestureStart.erase (it);
+        }
+        if (openGestures == 0 && groupDepth == 0)
+            commitPending();
+    }
+}
+
+void AnnealAudioProcessor::beginUndoGroup()
+{
+    ++groupDepth;
+}
+
+void AnnealAudioProcessor::endUndoGroup()
+{
+    groupDepth = juce::jmax (0, groupDepth - 1);
+    if (groupDepth == 0 && openGestures == 0)
+        commitPending();
+}
+
+void AnnealAudioProcessor::commitPending()
+{
+    if (! pending.after.empty())
+    {
+        undoStack.push_back (std::move (pending));
+        if (undoStack.size() > 200)
+            undoStack.erase (undoStack.begin());
+        redoStack.clear();
+    }
+    pending = {};
+}
+
+void AnnealAudioProcessor::applySnapshot (const Snapshot& values)
+{
+    const juce::ScopedValueSetter<bool> guard (applyingUndo, true);
+    auto& prms = getParameters();
+    for (auto [index, value] : values)
+        if (auto* prm = prms[index])
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost (value);
+            prm->endChangeGesture();
+        }
+}
+
+void AnnealAudioProcessor::undo()
+{
+    if (undoStack.empty())
+        return;
+    auto step = std::move (undoStack.back());
+    undoStack.pop_back();
+    applySnapshot (step.before);
+    redoStack.push_back (std::move (step));
+}
+
+void AnnealAudioProcessor::redo()
+{
+    if (redoStack.empty())
+        return;
+    auto step = std::move (redoStack.back());
+    redoStack.pop_back();
+    applySnapshot (step.after);
+    undoStack.push_back (std::move (step));
 }
 
 const juce::String AnnealAudioProcessor::getProgramName (int index)
@@ -346,6 +517,9 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasHeatTarget = tree.getChildWithProperty ("id", anneal::ids::heatTarget).isValid();
             const bool hasListen = tree.getChildWithProperty ("id", anneal::ids::listen).isValid();
             const bool hasFlavour = tree.getChildWithProperty ("id", anneal::ids::flavour).isValid();
+            const bool hasFreeze = tree.getChildWithProperty ("id", anneal::ids::freeze).isValid();
+            const bool hasScMode = tree.getChildWithProperty ("id", anneal::ids::scMode).isValid();
+            const bool hasCeiling = tree.getChildWithProperty ("id", anneal::ids::ceiling).isValid();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
@@ -383,6 +557,19 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasFlavour)
                 if (auto* fp = apvts.getParameter (anneal::ids::flavour))
                     fp->setValueNotifyingHost (0.0f);
+
+            // Projects saved before 3.0: no Freeze, no sidechain, no ceiling, as they were made.
+            for (auto [id, present] : { std::pair { anneal::ids::freeze, hasFreeze },
+                                       std::pair { anneal::ids::scMode, hasScMode },
+                                       std::pair { anneal::ids::ceiling, hasCeiling } })
+                if (! present)
+                    if (auto* np = apvts.getParameter (id))
+                        np->setValueNotifyingHost (0.0f);
+
+            // A loaded project starts a fresh undo history.
+            undoStack.clear();
+            redoStack.clear();
+            pending = {};
 
             if (juce::MessageManager::existsAndIsCurrentThread())
                 applyLatencyModeIfChanged();

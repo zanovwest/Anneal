@@ -4,6 +4,69 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 3.0.0 — 2026-10-13 19:05
+
+The first major update. Anneal can now listen to another track, hold its curve, and keep its
+output under a true-peak ceiling. Everything from 0.2.6 sounds the same with the new controls off.
+
+New
+- **Sidechain** (new SIDECHAIN group, violet). Route another track into Anneal's sidechain input
+  and pick what it does:
+  - **Make room**: dips the main only where the key is loud, in the key's own bands. A vocal key
+    over a music bus pulls the bus down at the vocal's formants and leaves the rest. Measured with
+    a 2 kHz key at Amount 100 %: −9.0 dB at 2 kHz, 0.0 dB at 300 Hz and 8 kHz.
+  - **Unmask**: lifts the main where the key would mask it (+5.6 dB at 2 kHz in the test).
+  - **Amount** 0–100 % (default 50 %). The ring's live line shows how far it is ducking or
+    lifting right now. The key's spectrum is drawn on the display as a violet line, with a KEY tag.
+  - With no key routed, or a silent one, the output is identical (max difference 0). The key's FFT
+    runs only while Sidechain is on. Off is the default, and projects from earlier versions open Off.
+  - Routing: in Cubase, enable the plug-in's side-chain input and send the key to it. In FL Studio,
+    send the key's mixer track to Anneal's track with *Sidechain to this track*, then pick that
+    track as Anneal's sidechain input in the wrapper's *Processing* tab. Both were tested here
+    through JUCE's VST3 host, not inside the DAWs.
+- **Freeze** (AUTO EQ title row): holds the auto-EQ curve where it is, so Anneal works as a static
+  EQ shaped by the music it just heard. Heat, Tilt and Range stay live. The sidechain dip is part of
+  the curve, so it holds too. The display shows "AUTO EQ FROZEN". Measured: a −9.0 dB cut stays at
+  −9.0 dB after the music changes (without Freeze it returns to 0.0 dB).
+- **Ceiling** Off / 0.0 / −0.3 / −1.0 dBTP (OUTPUT): a true-peak look-ahead limiter at the very end,
+  after Mix and Output, so Heat and an Output boost can't clip. Peaks are found 4× between the
+  samples (16-tap windowed sinc), with 1.25 ms look-ahead and 80 ms release. With a sine at fs/4 and
+  music driven 12 dB over, the true peak (measured with an independent 8× meter) lands from
+  0.01 dB under to 0.10 dB over the ceiling. The output meter shows the reduction in orange under
+  the peak, holding the deepest value for 1.5 s. Off is a pure delay (bit-exact) and the default.
+- **Undo / Redo**: two arrows in the header next to Latency. Each knob drag, typed value or menu
+  choice is one step, and loading a preset is one step. Host automation isn't recorded. Undo
+  history starts fresh when a project loads.
+- **Wider layout**: 1160 × 640 (was 1000 × 620), resizable from 870 × 480 to 1740 × 960, with a
+  SIDECHAIN group between HEAT and OUTPUT.
+
+Changed
+- **Latency is 1.4 ms longer** (67 samples at 48 kHz) in every mode: the Ceiling's look-ahead.
+  It is reported whether the Ceiling is on or off, so turning it on never shifts timing. At 48 kHz:
+  Low 22.7 ms, Normal 44.1 ms, Precise 86.7 ms. Hosts compensate automatically.
+- The plug-in has a second, optional input bus (the sidechain). Hosts that route nothing to it
+  see a stereo effect as before.
+
+Fixes
+- Hover read-outs with whole decibels could show four decimals ("heat −24.8106 dB"); they now round.
+
+Compatibility: every parameter ID is unchanged. Four parameters are added (Freeze, Sidechain,
+Sidechain Amount, Ceiling); projects from earlier versions open with all of them off.
+
+Tests: 93/93 acceptance checks (10 new: a silent key changes nothing, Make room ducks only the
+key's band, Unmask lifts, the processor's sidechain bus, Freeze holds, true peak under each
+ceiling, Ceiling Off is a pure delay, undo/redo with a preset as one step, older projects open with
+the new controls off, and the 3.0 layout with every control inside and none overlapping). 17/17 host
+checks on the built VST3 (new: the sidechain bus through VST3, a routed key ducking the main −9.0 dB;
+latency checks now include the look-ahead). 25/25 isolated installer checks. Editor rendered at
+100/150/200 % and at minimum/maximum size, plus new Sidechain and Freeze snapshots.
+CPU at 48 kHz on this machine (Ceiling and Sidechain off): Stereo Low 2.5 %, Normal 2.1 %, Precise
+3.4 % of one core; Mid/Side Low 4.6 % (64), Normal 3.5 % (512), Precise 5.3 % (64). That is above
+0.2.6's run (1.9 / 1.7 / 2.7 %) and close to 0.2.5's (2.4 / 2.1 / 3.4 %); the runs weren't side by
+side and the machine's load varies, so treat it as unconfirmed. Slowest 0.1 % of 64-sample blocks:
+Stereo Low 10 %, Precise 28 %; Mid/Side Low 20 %, Precise 43 % of the deadline. Ceiling-on and
+Sidechain-on CPU weren't benchmarked.
+
 ## 0.2.6 — 2026-10-13 18:23
 
 New

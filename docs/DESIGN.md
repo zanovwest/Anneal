@@ -28,18 +28,20 @@ secondary.
 ## Signal path and control groups
 
 ```
-in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve ─┐
-    │            │                                     ├─► ×gain + harmonics ─► iSTFT ─► match ─► mix/Δ ─► output ─► bypass xfade ─► out
-    │            └─► heat-need map ─► harmonic synth ──┘
-    └─ latency-matched dry ─────────────────────────────────────────────────────────┘
+key ── STFT ─► key spectrum ─┐ (3.0, only while Sidechain is on)
+in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve (Freeze holds it) ─┐
+    │            │                                                      ├─► ×gain + harmonics ─► iSTFT ─► match ─► mix/Δ ─► output ─► ceiling ─► bypass xfade ─► out
+    │            └─► heat-need map ─► harmonic synth ───────────────────┘
+    └─ latency-matched dry (STFT + ceiling look-ahead) ──────────────────────────────────────────────────────────────┘
 ```
 
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
-| AUTO EQ | Reveal, Smooth | Tilt, Response, Guard (transients) |
+| AUTO EQ | Reveal, Smooth | Freeze (3.0, title row), Tilt, Response, Guard (transients) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
-| OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Mix, Output |
-| Header | Preset, Latency (Low / Normal / Precise) | Match (loudness), Δ (delta listen), Bypass |
+| SIDECHAIN (3.0) | Amount | Mode (Off / Make room / Unmask) |
+| OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
+| Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0), Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
 | On the display | Range low / high handles (limits where Anneal acts) | |
 
@@ -55,6 +57,7 @@ to a cool, near-black neutral so the accents carry the information.
 | Reveal / lift | straw `#F1C36B` | lifted bands, Reveal ring |
 | Heat / harmonics | bronze `#FF8B3D` | harmonic energy written, Heat ring, harmonic bars |
 | Smooth / cut | temper blue `#6FA7FF` | reduced bands, Smooth ring |
+| Sidechain / key | violet `#A57BE0` (3.0) | key spectrum line, SIDECHAIN title dot, Amount ring. Annealed steel goes violet just before blue, so the key sits in the temper family |
 | Deck | `#111215` | |
 | Screen | `#0A0B0D`, grid `#1B1E23`, divider `#24272D` | |
 | Raised (buttons, menus) | `#191B1F` | |
@@ -76,9 +79,10 @@ on hue alone; even vs. odd harmonics are solid vs. lighter bars.
   the engine; the same amount is a thin inner arc. Secondary controls are compact rows: a
   42 px ring with title and value beside it. Color and Focus are faders with their two
   ends named (even/odd, body/air). Buttons are pills; on = tinted in the role colour.
-- **Layout:** header 48 px (wordmark, latency, presets centred, compare cluster right);
-  the display takes 56 % of the height; the deck follows the signal: AUTO EQ → HEAT → OUTPUT,
-  hairlines between groups, no cards.
+- **Layout (3.0: 1160 × 640):** header 48 px (wordmark, latency, undo/redo, presets centred,
+  compare cluster right); the display takes 56 % of the height; the deck follows the signal:
+  AUTO EQ → HEAT → SIDECHAIN → OUTPUT (dividers at x 490 / 832 / 984), hairlines between groups,
+  no cards. The output meter is a tall bar at the right edge of the deck.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
@@ -110,6 +114,12 @@ plain raised pill ("Flavour: clean"); any other flavour shows its name tinted br
 colour, like Listen's solos. The harmonic bars under Color are drawn with the synth's own flavour law,
 for a 120 Hz partial (Transformer's drive depends on the note) or a 4 kHz one for Exciter, and the
 tooltip says so.
+
+**Sidechain, Freeze, Ceiling (3.0).** The key's spectrum is a thin violet line on the EQ lane, drawn
+only while a key is arriving, with a KEY legend under AUTO EQ. Freeze is a pill on the AUTO EQ title
+row, tinted straw when on, and the display then shows an "AUTO EQ FROZEN" tag so a held curve is never
+mistaken for a live one. The Ceiling's reduction is a short bronze bar and number under the meter's
+peak, holding its deepest value for 1.5 s so a brief catch is readable.
 
 In Mid/Side mode the centre and sides are analysed independently. The EQ curve is solid for Mid
 and dashed for Side, with the same straw-above / blue-below colour convention. Hover reports

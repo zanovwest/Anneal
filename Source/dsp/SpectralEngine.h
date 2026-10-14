@@ -34,6 +34,9 @@ namespace anneal
         float heatMid      = 1.0f, heatSide = 1.0f;
         int listen         = listenOff;   // Listen enum; switches per frame (overlap-add crossfades it)
         int flavour        = flavourClean;   // Flavour enum (HarmonicSynth.h); switches per frame like listen
+        bool freeze        = false;          // hold the auto-EQ curve
+        int scMode         = 0;              // sidechain: 0 off, 1 make room, 2 unmask
+        float scAmount     = 0.5f;
     };
 
     // STFT host for the perceptual model and the harmonic synth.
@@ -55,8 +58,10 @@ namespace anneal
         // Called once per host block from the audio thread; values are smoothed per frame.
         void setParameters (const EngineParams& p) noexcept { target = p; }
 
-        // In-place. Real-time safe.
-        void process (float* const* channels, int numChannels, int numSamples) noexcept;
+        // In-place. Real-time safe. key: the sidechain input (any channel count, summed to mono),
+        // sample-aligned with channels, or nullptr when there is none.
+        void process (float* const* channels, int numChannels, int numSamples,
+                      const float* const* key = nullptr, int keyChannels = 0) noexcept;
 
         int getLatencySamples() const noexcept { return fftSize; }
         int getFftSize() const noexcept        { return fftSize; }
@@ -74,7 +79,7 @@ namespace anneal
     private:
         void processFrame() noexcept;
         void smoothParameters() noexcept;
-        void processMidSide (const ModelSettings&, float blend) noexcept;
+        void processMidSide (const ModelSettings&, float blend, const float* keyPower) noexcept;
         void applyListen (float msBlend) noexcept;
 
         double sampleRate = 48000.0;
@@ -90,6 +95,7 @@ namespace anneal
         std::vector<float> harmSpec[maxChannels], harmAcc[maxChannels], harmFifo[maxChannels], alignRing[maxChannels];
         std::vector<float> power, outPower, harmPower;
         std::vector<float> rawSpec[maxChannels];   // this frame's spectrum before the EQ (listen modes)
+        std::vector<float> keyFifo, keySpec, keyPower;   // sidechain key (mono), analysed only when used
         int ringPos = 0;
         float envIn = 0.0f, envHarm = 0.0f, gateGain = 1.0f, envRelease = 0.0f, gateCoeff = 0.0f;
 

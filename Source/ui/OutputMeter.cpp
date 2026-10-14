@@ -7,7 +7,8 @@ using namespace theme;
 
 OutputMeter::OutputMeter()
 {
-    setTooltip ("Output sample peak, dBFS. Red latch = a sample went over 0 dBFS (click to clear).");
+    setTooltip ("Output sample peak, dBFS; under it in orange, how much the Ceiling is reducing. "
+                "Red latch = a sample went over 0 dBFS (click to clear).");
 }
 
 void OutputMeter::push (const float* peaks, int numChannels, float dt)
@@ -31,6 +32,19 @@ void OutputMeter::push (const float* peaks, int numChannels, float dt)
         repaint();
 }
 
+void OutputMeter::pushReduction (float db, float dt)
+{
+    reductionAge += dt;
+    float next = reduction;
+    if (db < reduction)             { next = db; reductionAge = 0.0f; }
+    else if (reductionAge > 1.5f)   { next = std::min (0.0f, reduction + 12.0f * dt); }
+    if (std::abs (next - reduction) > 0.01f)
+    {
+        reduction = next;
+        repaint();
+    }
+}
+
 float OutputMeter::yForDb (float db, juce::Rectangle<float> bar) const noexcept
 {
     const float v = juce::jlimit (bottomDb, topDb, db);
@@ -50,7 +64,16 @@ void OutputMeter::paint (juce::Graphics& g)
                                            : (peak > 0.0f ? "+" : peak < -0.05f ? juce::String::fromUTF8 ("\xe2\x88\x92") : juce::String())
                                                  + juce::String (std::abs (peak), 1);
     drawTabular (g, peakText, readout, juce::Justification::centred);
-    r.removeFromTop (6.0f);
+
+    // Ceiling gain reduction (only while the ceiling is working).
+    const auto grArea = r.removeFromTop (14.0f);
+    if (reduction < -0.05f)
+    {
+        g.setFont (font (11.0f, "Semibold"));
+        g.setColour (colour::bronze);
+        drawTabular (g, juce::String::fromUTF8 ("\xe2\x88\x92") + juce::String (-reduction, 1), grArea, juce::Justification::centred);
+    }
+    r.removeFromTop (2.0f);
 
     // Slim bars with tick marks only: the number on top carries the value.
     r = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 16.0f), r.getHeight());

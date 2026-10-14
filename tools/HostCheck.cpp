@@ -58,6 +58,10 @@ bool run (juce::AudioPluginInstance& p, const testsig::Channels& in, testsig::Ch
     return true;
 }
 
+// 3.0: every latency includes the true-peak ceiling's look-ahead (1.25 ms + a 7-sample
+// detector), constant whether the ceiling is on or off. At 48 kHz: 60 + 7 samples.
+constexpr int ceilingLookahead48k = 67;
+
 double peakOf (const testsig::Channels& x)
 {
     double m = 0.0;
@@ -124,7 +128,7 @@ int main (int argc, char* argv[])
     for (int i = 0; i < (int) out[0].size(); ++i)
         if (std::abs (out[0][(size_t) i]) > std::abs (out[0][(size_t) peakAt]))
             peakAt = i;
-    check (latency == 1024 && peakAt - 1000 == latency, "latency reported and applied (Mix 0 %, Low)",
+    check (latency == 1024 + ceilingLookahead48k && peakAt - 1000 == latency, "latency reported and applied (Mix 0 %, Low)",
            "reported " + juce::String (latency) + ", impulse delayed by " + juce::String (peakAt - 1000));
     mix->setValueNotifyingHost (1.0f);
 
@@ -298,12 +302,71 @@ int main (int argc, char* argv[])
             for (int i = 0; i < (int) o[0].size(); ++i)
                 if (std::abs (o[0][(size_t) i]) > std::abs (o[0][(size_t) pk]))
                     pk = i;
-            const int expected = v > 0.75f ? 4096 : v > 0.25f ? 2048 : 1024;
+            const int expected = (v > 0.75f ? 4096 : v > 0.25f ? 2048 : 1024) + ceilingLookahead48k;
             ok = ok && plugin->getLatencySamples() == expected && pk - 1000 == expected;
             log << plugin->getLatencySamples() << " (impulse +" << (pk - 1000) << ")  ";
         }
         mixParam->setValueNotifyingHost (1.0f);
         check (ok, "latency modes switch through the host", log);
+    }
+
+    // 6c. Sidechain (3.0): the plug-in offers a second, optional input bus; a host that routes a
+    //     key into it gets Make room ducking the main where the key sits.
+    {
+        bool ok = plugin->getBusCount (true) == 2;
+        auto layout = plugin->getBusesLayout();
+        if (ok)
+        {
+            layout.inputBuses.getReference (1) = juce::AudioChannelSet::stereo();
+            plugin->releaseResources();
+            ok = plugin->setBusesLayout (layout);
+        }
+        double change = 0.0;
+        if (ok)
+        {
+            plugin->setRateAndBufferSizeDetails (48000.0, 512);   // not setPlayConfigDetails: that would re-assign all 4 inputs to the main bus
+            plugin->prepareToPlay (48000.0, 512);
+            findParam (*plugin, "Sidechain")->setValueNotifyingHost (0.5f);          // Make room
+            findParam (*plugin, "Sidechain Amount")->setValueNotifyingHost (1.0f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            const int n = 3 * 48000;
+            const auto main = testsig::musicLike (48000.0, 3.0);
+            const auto key = testsig::sines (48000.0, n, { { 2000.0, 0.2 } });
+            auto runWith = [&] (bool withKey)
+            {
+                testsig::Channels out = main;
+                juce::AudioBuffer<float> buf (4, 512);
+                juce::MidiBuffer midi;
+                for (int pos = 0; pos + 512 <= n; pos += 512)
+                {
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                        if (withKey) buf.copyFrom (c + 2, 0, key[(size_t) c].data() + pos, 512);
+                        else         buf.clear (c + 2, 0, 512);
+                    }
+                    plugin->processBlock (buf, midi);
+                    for (int c = 0; c < 2; ++c)
+                        std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + 512, out[(size_t) c].data() + pos);
+                }
+                return out;
+            };
+            const auto dry = runWith (false);
+            plugin->reset();
+            const auto keyed = runWith (true);
+            const double a = testsig::toneAmplitude (dry[0].data() + n / 2, n / 3, 2000.0, 48000.0) + 1.0e-12;
+            const double b = testsig::toneAmplitude (keyed[0].data() + n / 2, n / 3, 2000.0, 48000.0) + 1.0e-12;
+            change = testsig::toDb (b / a);
+            ok = std::isfinite (change) && change < -2.0;
+            findParam (*plugin, "Sidechain")->setValueNotifyingHost (0.0f);
+            layout.inputBuses.getReference (1) = juce::AudioChannelSet::disabled();
+            plugin->releaseResources();
+            plugin->setBusesLayout (layout);
+            plugin->setPlayConfigDetails (2, 2, 48000.0, 512);
+            plugin->prepareToPlay (48000.0, 512);
+        }
+        check (ok, "sidechain bus: routed key ducks the main (Make room)",
+               "buses in " + juce::String (plugin->getBusCount (true)) + ", 2 kHz with key vs without " + juce::String (change, 1) + " dB");
     }
 
     // 6b. Factory presets as host programs: listed, selectable, and a saved project keeps both its

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Anneal VERSION 0.2.6 LANGUAGES C CXX)
+project(Anneal VERSION 3.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,7 @@ target_sources(AnnealCore INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/HarmonicSynth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/SpectralEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/LoudnessMatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/TruePeakLimiter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Params.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Presets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/PluginProcessor.cpp

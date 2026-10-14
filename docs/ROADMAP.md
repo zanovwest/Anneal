@@ -12,21 +12,27 @@ Add ideas anywhere in the list and reorder freely. Never add anything listed und
 ## Next up
 
 Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (0.2.4), Listen
-modes (0.2.5), Saturation flavours (0.2.6), Sidechain unmask, then the rest. (The icon was done by hand that
-day, outside the hourly runs.)
+modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
+the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-4. **Sidechain unmask mode**: lift what a sidechain key masks, or dip the bands the key needs.
-6. **Freeze curve**: hold the current auto-EQ curve as a static EQ.
-7. **True-peak output ceiling** (a look-ahead limiter, as in Morphfall) so Heat can't clip.
-8. **CPU under the 3 % budget in Precise** (now 3.4 %; Low is 2.4 %): SIMD FFT (PFFFT) and
+8. **CPU under the 3 % budget in Precise** (3.4 % in 3.0; Low is 2.5 %): SIMD FFT (PFFFT) and
    batched log/exp, as in Morphfall (8.8 % → 1.5 %).
-9. **Undo/redo** for parameter changes, in the header.
 10. **Spread the frame work across blocks** (optional): each STFT frame lands in one host block.
     That's fine for Anneal alone (Low: 10 % of a 64-sample block), but spreading it over the hop
     would leave more headroom for other plugins at tiny buffers. Costs one hop of latency, so only
     as a switch.
 11. **Show the guard on the display**: a faint mark in the bands where Guard is holding an attack,
     and a live line under the Guard knob, so you can see it working.
+
+## Reserved for 4.0
+
+The user asked for a major 4.0 on 2026-10-14. These belong to that run; hourly updates don't take them.
+
+1. **Reference match**: learn a reference's long-term ERB spectrum (from the sidechain key, or an
+   audio file dropped on the display) and steer the auto EQ toward it, with a Match amount.
+2. **Paint where it acts**: draw a per-band amount on the display (beyond the two Range handles),
+   for the EQ and Heat separately.
+3. **Keyboard shortcuts** for Undo/Redo (Ctrl+Z / Ctrl+Shift+Z) where the host passes keys through.
 
 ## Not wanted
 
@@ -37,6 +43,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 3.0.0 (2026-10-13): **Sidechain** Make room / Unmask with Amount and a violet key line;
+  **Freeze**; true-peak **Ceiling** (Off / 0.0 / −0.3 / −1.0 dBTP, 4× detection, 1.25 ms look-ahead,
+  always in the latency); **Undo/Redo** in the header; 1160 × 640 layout with a SIDECHAIN group;
+  ceiling reduction on the output meter. Fixed: whole-dB hover read-outs showed four decimals.
 - 0.2.6 (2026-10-13): **Saturation flavours** (Flavour menu on the HEAT title row): Clean (as
   before), Tape (soft, mostly even, harmonics rolled off above 5 kHz), Tube (strong 2nd),
   Transformer (odd, driven by the low end), Exciter (air only: nothing from partials below
