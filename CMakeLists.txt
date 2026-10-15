@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 # (Apple Silicon + Intel), as .github/workflows/platforms.yml does.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
 
-project(Anneal VERSION 4.0.0 LANGUAGES C CXX)
+project(Anneal VERSION 4.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,7 +78,14 @@ endif()
 # ---------------------------------------------------------------------------
 # The plugin. Not copied into any system/user plugin folder by default.
 option(ANNEAL_COPY_AFTER_BUILD "Copy the VST3 into ANNEAL_VST3_COPY_DIR after building" OFF)
-set(ANNEAL_VST3_COPY_DIR "$ENV{LOCALAPPDATA}/Programs/Common/VST3" CACHE PATH "Where to copy the VST3 when ANNEAL_COPY_AFTER_BUILD is ON")
+if(WIN32)
+    set(anneal_vst3_copy_default "$ENV{LOCALAPPDATA}/Programs/Common/VST3")
+elseif(APPLE)
+    set(anneal_vst3_copy_default "$ENV{HOME}/Library/Audio/Plug-Ins/VST3")
+else()
+    set(anneal_vst3_copy_default "$ENV{HOME}/.vst3")
+endif()
+set(ANNEAL_VST3_COPY_DIR "${anneal_vst3_copy_default}" CACHE PATH "Where to copy the VST3 when ANNEAL_COPY_AFTER_BUILD is ON")
 
 # Formats per platform. Windows: VST3 + Standalone (the setup). macOS: also AU, for Logic Pro,
 # GarageBand and MainStage. Linux: also LV2, for Ardour and other LV2 hosts. CLAP is optional on

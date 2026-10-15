@@ -4,6 +4,26 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 4.0.1 — 2026-10-15
+
+Linux support
+- A dedicated Linux workflow builds VST3, LV2, CLAP and Standalone on Ubuntu 24.04, runs
+  acceptance and built-plugin host checks under Xvfb, inspects LV2 metadata and runtime
+  dependencies, and packages the binaries with SHA-256 checksums. It runs on pull requests,
+  development/main pushes, manual dispatch and published releases, including patch releases.
+- `bash build.sh --test --snapshot --package` provides the same local build path, including a
+  display for JUCE's bundle metadata helpers. Building does not install a live plugin.
+- Linux and macOS get their own correct default VST3 copy folders rather than a Windows path.
+
+Fixes
+- A failed Linux update copy no longer deletes the previous plugin first. Replacements are
+  staged on the destination filesystem and the old copy can be restored if replacement fails.
+  Running install.sh without any extracted binaries now reports an error.
+
+Verification: 23 shell packaging checks pass with fixture payloads, including paths with spaces,
+copy failures, update preservation and archive integrity (two checks failed before the installer
+fix). Native Linux build and runtime verification are pending the first workflow run.
+
 ## 4.0.0 — 2026-10-14 17:46
 
 The second major update. Anneal can now match the tone of a reference, and you can draw where it

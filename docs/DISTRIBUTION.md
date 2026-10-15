@@ -10,13 +10,29 @@ and apple silicon".
 | Windows x64 | VST3 + Standalone (in `Anneal-<v>-Setup.exe`) | `build.ps1` on the author's PC, every release | 93 acceptance + 17 host + 25 installer checks |
 | Windows x64 | CLAP (`Anneal-<v>-Windows-CLAP.zip`) | the author's PC for 3.1.0 and 4.0.0; GitHub Actions once switched on | `tools/ClapCheck.py`: 10/10 (main + sidechain ports, 27 parameters since 4.0, latency 1091 samples at 48 kHz, 2 s of audio); not tried in a DAW |
 | macOS 10.15+, **Apple Silicon and Intel** (one universal binary) | AU, VST3, CLAP, Standalone (`Anneal-<v>-macOS.zip`) | GitHub Actions, **not switched on yet** | the workflow runs: acceptance tests, host check on the VST3, ClapCheck, `auval -strict` on the AU, `lipo` check for arm64 + x86_64 |
-| Linux x86_64 | VST3, LV2, CLAP, Standalone (`Anneal-<v>-Linux-x86_64.tar.gz`) | GitHub Actions (Ubuntu 24.04), **not switched on yet** | the workflow runs: acceptance tests, host check, ClapCheck, under a virtual display |
+| Linux x86_64 | VST3, LV2, CLAP, Standalone (`Anneal-<v>-Linux-x86_64.tar.gz`) | Dedicated `.github/workflows/linux.yml` (Ubuntu 24.04) | acceptance tests, built-VST3 host check, ClapCheck, LV2 metadata inspection, dependency checks and editor renders under Xvfb; first native run pending |
 
-The workflow runs for each published x.y.0 release and by hand (Actions → Platforms → Run workflow,
+The parked combined workflow runs for each published x.y.0 release and by hand (Actions → Platforms → Run workflow,
 optionally with a release tag to attach the files to). It skips patch releases: on a private
 repository GitHub counts macOS minutes ten times.
 
-### Turning on the macOS and Linux builds
+### Linux builds (4.0.1)
+
+The dedicated **Linux** workflow runs on main, the Linux development branch, pull requests,
+manual dispatch and every published release, including patch releases. It builds the release's
+exact tag before attaching its package. Ordinary builds have read-only repository access; only
+the release upload job can write release assets. macOS jobs remain parked.
+
+For a local Ubuntu 24.04 build, see README → Build (Linux). `bash build.sh --test --snapshot --package`
+builds VST3, LV2, CLAP and Standalone, runs audio/host checks with Xvfb when headless, and creates
+the tar.gz and SHA-256 file in `dist/`. It never installs a live copy. The archive's `install.sh`
+installs per user and stages replacements before touching the old plugin. A package-copy failure
+preserves the old installation; 23 fixture packaging checks cover that regression and archive integrity.
+
+Native Linux build and runtime results must be checked in Actions before describing a release as
+Linux-tested. LV2 inspection checks metadata/discovery, rather than claiming an LV2 DAW audio test.
+
+### Turning on the parked macOS and Windows CLAP builds
 
 The workflow is in the repository as `packaging/ci/platforms.yml`, but it isn't running yet. GitHub
 only runs workflows from `.github/workflows/`, and refuses to accept a file there from a login
@@ -25,9 +41,9 @@ run this once and approve it in the browser:
 
     gh auth refresh -h github.com -s workflow
 
-Then the file moves to `.github/workflows/platforms.yml` in one commit, and the first run checks the
-macOS and Linux builds. Until then, no macOS or Linux files exist: they have never been compiled,
-only the Windows build (including CLAP) has.
+Then the file moves to `.github/workflows/platforms.yml` in one commit, and the first run checks
+the macOS and Windows CLAP builds. Linux uses its dedicated workflow above; enabling it does not
+require enabling the parked Mac jobs. macOS builds have not yet been verified.
 
 ### Which DAW uses what
 

@@ -94,11 +94,38 @@ on the macOS and Linux builds" in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md). 
 Every knob: drag, **Ctrl-drag** for fine adjustment, **double-click** to reset, **click
 the value** to type one (units such as `2.5k`, `Body 40`, `odd` are understood).
 
+## Build (Linux, x86_64)
+
+Ubuntu 24.04, GCC/Clang with C++20, CMake 3.28+ (for CLAP), Git and Python 3:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential cmake ninja-build git python3 \
+  libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+  libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+  xvfb xauth lilv-utils
+bash build.sh --test --snapshot --package
+```
+
+This builds VST3, LV2, CLAP and Standalone, tests the DSP and built VST3/CLAP, and creates
+`dist/Anneal-<version>-Linux-x86_64.tar.gz` plus its SHA-256 file. Build products are in
+`build-linux/Anneal_artefacts/Release/`. Use `--juce-dir /path/to/JUCE` for an existing JUCE 8.0.4
+checkout; otherwise it is fetched. `--no-clap` skips the CLAP dependency download (not available
+with `--package`). `--build-dir` and `--jobs` control the build directory and parallelism.
+
+Nothing installs automatically. To install, extract the archive and run its `bash install.sh`.
+Updates stage each replacement so a copy failure preserves the previous plugin. Linux builds use
+X11/XWayland; on a headless machine the script uses Xvfb for JUCE's build helpers and test tools.
+The dedicated **Linux** GitHub Actions workflow checks these same commands, inspects LV2 metadata
+and shared-library dependencies, and stores the archive and editor snapshots as artifacts. It
+attaches tested Linux packages on release events, including patch releases. Native Linux
+verification is pending the first workflow run; this Windows PC has no Linux runtime installed.
+
 ## Build (Windows, x64)
 
-(macOS and Linux: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` and
+(macOS: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` and
 `cmake --build build --parallel`; add `"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"` for a universal Mac
-build and `-DANNEAL_CLAP=ON` for CLAP. The exact steps, Linux packages and checks are in
+build and `-DANNEAL_CLAP=ON` for CLAP. The parked combined-platform steps are in
 `packaging/ci/platforms.yml`.)
 
 Requirements: Visual Studio 2022 or 2026 with the C++ workload, CMake ≥ 3.22.

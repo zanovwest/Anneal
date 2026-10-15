@@ -11,6 +11,9 @@ Add ideas anywhere in the list and reorder freely. Never add anything listed und
 
 ## Next up
 
+The user resumed **Linux support** on 2026-10-15. The dedicated Linux workflow and build/package
+scripts are the current priority. Native Linux verification must pass before publishing binaries.
+
 Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (0.2.4), Listen
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
@@ -38,9 +41,10 @@ The user is on Windows and dropped the Mac plans on 2026-10-13 ("im on windows i
 coding was free"). The setup stays in the repo, untouched, in case that changes. Keep the code
 portable, but don't work on these:
 
-- **Switch on the macOS / Linux / CLAP workflow**: it needs the gh login's `workflow` scope
+- **Switch on the combined macOS / CLAP workflow**: it needs the gh login's `workflow` scope
   (`gh auth refresh -h github.com -s workflow`), then `packaging/ci/platforms.yml` moves to
   `.github/workflows/`.
+  Linux now has its own `.github/workflows/linux.yml`; this does not enable the parked Mac jobs.
 - **Notarized macOS builds**: Apple Developer Program membership (99 USD a year).
 
 ## Not wanted
