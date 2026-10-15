@@ -1,6 +1,6 @@
 # Changelog
 
-Newest first. Each completed, tested update gets a versioned entry (see README → Minute updates).
+Newest first. Each completed, tested update gets a versioned entry (see docs/ROADMAP.md).
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
@@ -14,6 +14,9 @@ Linux support
 - `bash build.sh --test --snapshot --package` provides the same local build path, including a
   display for JUCE's bundle metadata helpers. Building does not install a live plugin.
 - Linux and macOS get their own correct default VST3 copy folders rather than a Windows path.
+- Headless checks use Xvfb with a ready Openbox window manager, and the VST3 test host
+  initialises Xlib before loading a plugin. Bare Xvfb previously crashed at editor attachment
+  with `BadAtom`; editor creation and repeated attachment remain required host checks.
 
 Fixes
 - A failed Linux update copy no longer deletes the previous plugin first. Replacements are

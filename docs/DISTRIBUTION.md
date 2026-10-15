@@ -24,10 +24,15 @@ exact tag before attaching its package. Ordinary builds have read-only repositor
 the release upload job can write release assets. macOS jobs remain parked.
 
 For a local Ubuntu 24.04 build, see README → Build (Linux). `bash build.sh --test --snapshot --package`
-builds VST3, LV2, CLAP and Standalone, runs audio/host checks with Xvfb when headless, and creates
+builds VST3, LV2, CLAP and Standalone, runs audio/host checks with Xvfb and Openbox when headless, and creates
 the tar.gz and SHA-256 file in `dist/`. It never installs a live copy. The archive's `install.sh`
 installs per user and stages replacements before touching the old plugin. A package-copy failure
 preserves the old installation; 23 fixture packaging checks cover that regression and archive integrity.
+
+The headless desktop includes a window manager and waits for its X11 properties before starting
+JUCE. The VST3 test host also initialises its own Xlib before loading the plugin. The initial native
+run compiled all formats and passed 112 acceptance checks, but bare Xvfb failed with `BadAtom` at
+the editor attach check. That failure is kept visible until the full host check passes.
 
 Native Linux build and runtime results must be checked in Actions before describing a release as
 Linux-tested. LV2 inspection checks metadata/discovery, rather than claiming an LV2 DAW audio test.

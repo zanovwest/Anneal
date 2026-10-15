@@ -110,6 +110,10 @@ std::vector<float> numbersOf (const juce::String& text)
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+#if JUCE_LINUX
+    // XInitThreads must run in the host before a plugin opens its own X connection.
+    juce::XWindowSystem::getInstance();
+#endif
     if (argc < 2)
     {
         std::printf ("usage: AnnealHostCheck <path to Anneal.vst3>\n");

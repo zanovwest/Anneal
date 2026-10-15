@@ -45,10 +45,7 @@ command -v cmake >/dev/null || { echo "CMake is required (3.28+ with CLAP)." >&2
 if ((test)) && [[ "$clap" == ON ]]; then command -v python3 >/dev/null; fi
 
 with_display() {
-    if [[ -n "${DISPLAY:-}" ]]; then "$@";
-    elif command -v xvfb-run >/dev/null; then xvfb-run -a "$@";
-    else echo "No X display. Install xvfb and xauth, or run from an X11/XWayland desktop." >&2; return 2;
-    fi
+    bash "$root/tools/WithDisplay.sh" "$@"
 }
 configure=(-S "$root" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DANNEAL_COPY_AFTER_BUILD=OFF "-DANNEAL_CLAP=$clap")
 [[ -z "$juce_dir" ]] || configure+=("-DANNEAL_JUCE_DIR=$juce_dir")

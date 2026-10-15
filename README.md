@@ -54,9 +54,11 @@ standalone app; `bash install.sh` puts them in `~/.vst3`, `~/.lv2`, `~/.clap` an
 **CLAP on Windows**: `Anneal-<version>-Windows-CLAP.zip`, for Bitwig, Reaper and FL Studio 2024+
 (the VST3 from the setup works there too).
 
-The macOS, Linux and CLAP files come from a GitHub Actions workflow (`packaging/ci/platforms.yml`)
-that builds and tests them for every x.y.0 release. It's waiting to be switched on: see "Turning
-on the macOS and Linux builds" in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md). Pro Tools (AAX) isn't supported yet; see [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+Linux packages come from the dedicated **Linux** GitHub Actions workflow, including patch releases.
+Windows CLAP packages are built separately. The combined macOS workflow remains parked in
+`packaging/ci/platforms.yml`; macOS downloads are not verified or available yet.
+See [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) for verification details and the formats each DAW uses.
+Pro Tools (AAX) isn't supported yet.
 
 ## Controls
 
@@ -103,7 +105,7 @@ sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build git python3 \
   libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
   libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
-  xvfb xauth lilv-utils
+  xvfb xauth openbox x11-utils lilv-utils
 bash build.sh --test --snapshot --package
 ```
 
@@ -115,7 +117,9 @@ with `--package`). `--build-dir` and `--jobs` control the build directory and pa
 
 Nothing installs automatically. To install, extract the archive and run its `bash install.sh`.
 Updates stage each replacement so a copy failure preserves the previous plugin. Linux builds use
-X11/XWayland; on a headless machine the script uses Xvfb for JUCE's build helpers and test tools.
+X11/XWayland; on a headless machine the script starts Xvfb with Openbox for JUCE's build helpers
+and test tools. It waits for the window manager to be ready and stops it after each command.
+Bare Xvfb lacks the window-manager properties JUCE 8.0.4 needs to open a native editor.
 The dedicated **Linux** GitHub Actions workflow checks these same commands, inspects LV2 metadata
 and shared-library dependencies, and stores the archive and editor snapshots as artifacts. It
 attaches tested Linux packages on release events, including patch releases. Native Linux

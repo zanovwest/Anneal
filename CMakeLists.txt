@@ -177,6 +177,10 @@ target_compile_definitions(AnnealHostCheck PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0)
+if(UNIX AND NOT APPLE)
+    # Initialise the host's Xlib before loading a plugin with its own JUCE/Xlib instance.
+    target_compile_definitions(AnnealHostCheck PRIVATE JUCE_GUI_BASICS_INCLUDE_XHEADERS=1)
+endif()
 target_link_libraries(AnnealHostCheck
     PRIVATE
         juce::juce_audio_utils
