@@ -4,7 +4,7 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
-## 4.0.0 — @@WHEN@@
+## 4.0.0 — 2026-10-14 17:46
 
 The second major update. Anneal can now match the tone of a reference, and you can draw where it
 works. With the new controls left alone, everything sounds exactly as in 3.1 (tested: bit-identical).
@@ -50,6 +50,8 @@ Changed
   1968 × 960. Everything else is where it was.
 - The project format is version 2: it adds the reference and the paint. 3.x projects open as they
   were; projects saved by 4.0 don't open their reference or paint in 3.x (the knobs do).
+- The Windows CLAP is on the release again: `Anneal-4.0.0-Windows-CLAP.zip`, with the two new
+  parameters (27 in all).
 
 Fixes
 - **Freeze** lost the held curve when the DAW stopped and started playback (the curve was re-learned
@@ -62,16 +64,18 @@ Tests: 112/112 acceptance checks (19 new: the two fixes above, Reference match (
 the shelf moved 5.3 dB, Learn key, files analysed off the audio thread, Freeze holds the match), Paint
 (identical at 100 %, EQ and Heat paint, a stroke is one undo step), reference and paint in saved projects
 and older projects, the shortcuts, paint strokes and a double-click reset on the display, a dropped file,
-the display following Learn key, and the REFERENCE group in the layout). @@HOST@@ host checks on the built
+the display following Learn key, and the REFERENCE group in the layout). 20/20 host checks on the built
 VST3 (new: the Reference parameters, Learn key through the sidechain bus, and the reference and paint
 travelling in the VST3 state into a new instance: Heat painted to 0 % there writes nothing, −300 dB,
-against −15.3 dB unpainted). @@SETUP@@ isolated installer checks. Editor rendered at 100/150/200 % and
+against −15.3 dB unpainted). 25/25 isolated installer checks, ClapCheck 10/10 on the Windows CLAP, file
+version 4.0.0 on the VST3 and the app. Editor rendered at 100/150/200 % and
 at the new minimum and maximum sizes, plus Reference, Learn key, Paint, painted and file-drop snapshots.
 CPU at 48 kHz on this machine: Stereo Low 2.0 %, Normal 1.8 %, Precise 2.7 % of one core; Mid/Side
 Low 3.7 % (64), Normal 2.8 % (512), Precise 4.3 % (64), the same as 3.1.0. With Reference Match at
 100 % and Paint on: Low 2.2 %, Normal 1.9 %, Precise 2.8 %. Slowest 0.1 % of 64-sample blocks: Stereo
 Low 8 %, Precise 25 %; Mid/Side Low 19 %, Precise 36 % of the deadline.
 
+## 3.1.0 — 2026-10-13 23:06
 
 New
 - **CLAP for Windows**: `Anneal-3.1.0-Windows-CLAP.zip` on the release, for Bitwig, Reaper,

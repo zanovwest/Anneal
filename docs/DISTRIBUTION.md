@@ -8,7 +8,7 @@ and apple silicon".
 | Platform | Formats | Built by | Tested |
 |---|---|---|---|
 | Windows x64 | VST3 + Standalone (in `Anneal-<v>-Setup.exe`) | `build.ps1` on the author's PC, every release | 93 acceptance + 17 host + 25 installer checks |
-| Windows x64 | CLAP (`Anneal-<v>-Windows-CLAP.zip`) | the author's PC for 3.1.0; GitHub Actions once switched on | `tools/ClapCheck.py`: 10/10 (main + sidechain ports, 25 parameters, latency 1091 samples at 48 kHz, 2 s of audio); not tried in a DAW |
+| Windows x64 | CLAP (`Anneal-<v>-Windows-CLAP.zip`) | the author's PC for 3.1.0 and 4.0.0; GitHub Actions once switched on | `tools/ClapCheck.py`: 10/10 (main + sidechain ports, 27 parameters since 4.0, latency 1091 samples at 48 kHz, 2 s of audio); not tried in a DAW |
 | macOS 10.15+, **Apple Silicon and Intel** (one universal binary) | AU, VST3, CLAP, Standalone (`Anneal-<v>-macOS.zip`) | GitHub Actions, **not switched on yet** | the workflow runs: acceptance tests, host check on the VST3, ClapCheck, `auval -strict` on the AU, `lipo` check for arm64 + x86_64 |
 | Linux x86_64 | VST3, LV2, CLAP, Standalone (`Anneal-<v>-Linux-x86_64.tar.gz`) | GitHub Actions (Ubuntu 24.04), **not switched on yet** | the workflow runs: acceptance tests, host check, ClapCheck, under a virtual display |
 

@@ -175,15 +175,15 @@ The install needs your approval: Windows' administrator prompt waits on screen u
 If you're away, the prompt keeps waiting, later updates don't add more prompts, and the one Yes
 installs the newest build. The task never approves or works around the prompt itself.
 
-The major 4.0.0 comes from its own task ("Anneal 4.0 update") on 2026-10-14, retried every two
-hours that day until it's released; the daily update waits for it.
+The major 4.0.0 came from its own task ("Anneal 4.0 update") on 2026-10-14; the daily updates
+continue from it.
 
 Parameter IDs, plugin codes and saved-state compatibility never change, so existing FL Studio
 projects keep their settings.
 
 ## Status
 
-- **Built (4.0.0):** Windows: Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4. `build.ps1` checks that the DLL's Windows file version matches (it said 0.2.1 until 3.0.1). Windows CLAP (3.1.0): built here and checked with `tools/ClapCheck.py` (10/10: ports, 25 parameters, latency, audio). macOS (universal arm64 + x86_64: AU, VST3, CLAP, Standalone) and Linux (VST3, LV2, CLAP, Standalone): set up in `packaging/ci/platforms.yml`, not compiled yet; the workflow waits for GitHub's workflow permission.
+- **Built (4.0.0):** Windows: Release VST3 + Standalone, MSVC 19.51 (VS 2026), x64, JUCE 8.0.4. `build.ps1` checks that the DLL's Windows file version matches (it said 0.2.1 until 3.0.1). Windows CLAP (since 3.1.0; 4.0.0 built here offline from the cached clap-juce-extensions): checked with `tools/ClapCheck.py` (10/10: ports, 27 parameters, latency, audio). macOS (universal arm64 + x86_64: AU, VST3, CLAP, Standalone) and Linux (VST3, LV2, CLAP, Standalone): set up in `packaging/ci/platforms.yml`, not compiled yet; the workflow waits for GitHub's workflow permission.
 - **Reference match, Paint, shortcuts (4.0):** Match at 100 % moves a mix with a +6 dB shelf at 4 kHz 5.3 dB toward a flat reference (Stereo and Mid/Side); a reference learned from the sidechain key is within 0.28 dB of the same audio analysed as a file; WAV, FLAC and AIFF files analyse exactly like the audio itself (0.000 dB) on their own thread while the audio thread keeps running; Freeze holds the match. EQ paint at 0 % over 2–5 kHz takes a −9.0 dB cut at 3150 Hz to 0.0 dB (800 Hz untouched); Heat paint there takes the harmonics below −170 dB. Reference Off / Learn key / Amount 0 and paint at 100 % are bit-identical to 3.1. Reference and paint round-trip in the project (also through the built VST3 into a new instance), older projects open with neither. On the display: paint strokes are one undo step each, Alt erases, a double-click reset is one step; a dropped file becomes the reference; Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo and redo.
 - **Sidechain, Freeze, Ceiling, Undo (3.0):** Make room ducks a 2 kHz key's band −9.0 dB and leaves 300 Hz / 8 kHz at 0.0 dB (also through the built VST3's sidechain bus); Unmask lifts +5.6 dB; a silent key changes nothing. Freeze keeps a −9.0 dB cut after the music changes. The Ceiling holds the true peak (independent 8× meter) between −0.01 and +0.10 dB of 0.0 / −0.3 / −1.0 dBTP on a sine at fs/4 and on music 12 dB over; Off is bit-exact. Undo/redo restores edits and treats a preset as one step.
 - **Saturation flavours (0.2.6):** Clean / Tape / Tube / Transformer / Exciter, measured on steady tones: Tube's 2nd +3.5 dB over Clean and 25 dB over its 3rd; Tape's 5th −17 dB, its 2nd at 9 kHz −6 dB but at 1 kHz unchanged; Transformer's 3rd 17 dB over its 2nd at 60 Hz, 37 dB below Clean at 2 kHz; Exciter writes nothing for a 300 Hz partial (−174 dB) and +6 dB at 8 kHz for a 4 kHz one, also in Mid/Side. Flavours leave the EQ path identical (< 1e-7) and switch click-free.

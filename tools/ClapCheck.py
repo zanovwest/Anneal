@@ -104,7 +104,7 @@ check(len(ins) >= 1 and ins[0][1] == 2 and len(outs) == 1 and outs[0][1] == 2, '
 
 params = C.cast(pl.get_extension(plugin, b'clap.params'), C.POINTER(ParamsExt))
 n_params = params.contents.count(plugin) if params else 0
-check(n_params >= 25, 'parameters exposed', str(n_params))
+check(n_params >= 27, 'parameters exposed', str(n_params))   # 4.0: 27 (Reference, Reference Amount)
 
 fs, block = 48000.0, 512
 check(pl.activate(plugin, fs, 1, 4096), 'activate 48 kHz')
