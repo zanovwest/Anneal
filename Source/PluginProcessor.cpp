@@ -638,6 +638,7 @@ void AnnealAudioProcessor::commitPending()
 
 void AnnealAudioProcessor::pushUndoStep (UndoStep step)
 {
+    lastStepWasStroke = false;
     undoStack.push_back (std::move (step));
     if (undoStack.size() > 200)
         undoStack.erase (undoStack.begin());
@@ -661,6 +662,7 @@ void AnnealAudioProcessor::undo()
 {
     if (undoStack.empty())
         return;
+    lastStepWasStroke = false;
     auto step = std::move (undoStack.back());
     undoStack.pop_back();
     applySnapshot (step.before);
@@ -673,6 +675,7 @@ void AnnealAudioProcessor::redo()
 {
     if (redoStack.empty())
         return;
+    lastStepWasStroke = false;
     auto step = std::move (redoStack.back());
     redoStack.pop_back();
     applySnapshot (step.after);
@@ -771,12 +774,26 @@ void AnnealAudioProcessor::beginPaintStroke()
     strokeOpen = true;
 }
 
-void AnnealAudioProcessor::endPaintStroke()
+void AnnealAudioProcessor::endPaintStroke (bool mergeWithPrevious)
 {
     if (! strokeOpen)
         return;
     strokeOpen = false;
     const auto now = getPaint();
+
+    // A double-click's reset joins the click just before it, when that click was the last step.
+    if (mergeWithPrevious && lastStepWasStroke && ! undoStack.empty() && undoStack.back().paintChange
+        && undoStack.back().before.empty() && undoStack.back().paintAfter == strokeStart)
+    {
+        if (undoStack.back().paintBefore == now)
+        {
+            undoStack.pop_back();
+            lastStepWasStroke = false;
+        }
+        else
+            undoStack.back().paintAfter = now;
+        return;
+    }
     if (now == strokeStart)
         return;
     UndoStep step;
@@ -784,6 +801,7 @@ void AnnealAudioProcessor::endPaintStroke()
     step.paintBefore = strokeStart;
     step.paintAfter = now;
     pushUndoStep (std::move (step));
+    lastStepWasStroke = true;
 }
 
 const juce::String AnnealAudioProcessor::getProgramName (int index)

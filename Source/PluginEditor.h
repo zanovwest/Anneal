@@ -12,18 +12,19 @@
 #include "ui/OutputMeter.h"
 #include "ui/PerceptionScreen.h"
 #include "ui/PresetBar.h"
+#include "ui/ReferenceMenu.h"
 #include "ui/RoutingMenu.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 // Everything laid out at a fixed base size; the editor scales it uniformly.
-// Layout (docs/DESIGN.md, 3.0): header with Undo/Redo, presets and the compare cluster (Match,
-// Delta, Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT,
-// SIDECHAIN, OUTPUT.
+// Layout (docs/DESIGN.md, 4.0): header with Undo/Redo, presets, Paint and the compare cluster
+// (Match, Delta, Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT,
+// SIDECHAIN, REFERENCE, OUTPUT.
 class AnnealEditorContent : public juce::Component
 {
 public:
-    static constexpr int baseWidth = 1160, baseHeight = 640;
+    static constexpr int baseWidth = 1312, baseHeight = 640;
 
     explicit AnnealEditorContent (AnnealAudioProcessor&);
 
@@ -54,8 +55,19 @@ private:
     anneal::RoutingMenu scMode, ceiling;
     anneal::Knob scAmount;
     anneal::IconButton undoButton, redoButton;
+    // 4.0
+    anneal::ReferenceMenu refMenu;
+    anneal::Knob refAmount;
+    juce::TextButton paintButton { "PAINT" };
 
-    juce::String shownMatchText;
+    juce::String shownMatchText, shownRefError;
+    std::uint32_t shownRefSerial = ~0u, shownPaintSerial = ~0u;
+    bool refLoaded = false;
+    int refErrorTicks = 0;
+
+public:
+    void setPaintMode (bool on);   // the Paint pill and the display's paint mode, together
+    bool isPaintMode() const noexcept { return paintButton.getToggleState(); }
 };
 
 class AnnealEditor final : public juce::AudioProcessorEditor, private juce::Timer
@@ -66,6 +78,9 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    // 4.0: Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo (Cmd on macOS), Escape leaves paint mode,
+    // when the host passes keys to the editor.
+    bool keyPressed (const juce::KeyPress&) override;
 
     AnnealEditorContent& getContent() noexcept { return content; }
     float getShownCeilingReductionDb() const noexcept { return content.getShownCeilingReductionDb(); }
@@ -73,6 +88,7 @@ public:
 private:
     void timerCallback() override;
 
+    AnnealAudioProcessor& annealProcessor;
     anneal::AnnealLookAndFeel lookAndFeel;   // declared first: outlives every child
     AnnealEditorContent content;
     juce::TooltipWindow tooltips { this, 700 };

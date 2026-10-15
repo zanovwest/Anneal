@@ -95,6 +95,47 @@ those bands are interpolated rather than independent measurements.
     its time smoothing is slowed by the same factor (the curve doesn't chase hits), and the heat
     need is scaled by `1 − g·T` (no harmonics smeared over attacks).
 
+### Reference match (4.0)
+
+A reference is a **long-term one-ERB spectrum** (the physical power within ±0.5 Cam, no ear
+weighting or internal noise: a recording has neither), stored as 1024 dB values on a fixed grid,
+uniform in Cam from 20 Hz to 20 kHz, so a saved project means the same at every sample rate.
+Every reference is **level-normalised** (`anneal::normaliseLevels`): minus the mean level over
+50 Hz – 16 kHz, where each band counts as at least 40 dB under that window's power mean (an empty
+region, such as above an MP3's cut-off, doesn't pull the mean down).
+
+- **From a file** (wav, aif/aiff, flac, mp3, ogg; JUCE's own decoders on every platform): decoded
+  and analysed on its own thread, in 65 536-sample chunks, up to 20 minutes, channels averaged in
+  power. Hann frames of 8192 (16384 / 32768 above 50 / 100 kHz), hop ½; the power mean of every
+  frame, then the model's own one-ERB measure. A silent or unreadable file changes nothing and the
+  reason is kept for the display. The result is handed over through a wait-free triple buffer
+  (`refToAudio`, preallocated) that the audio thread reads at the top of `processBlock` and copies into
+  each engine's model (resampled onto that model's bands, no allocation). A dropped file switches
+  Reference to Match (one undo step).
+- **Learn key**: while Reference is Learn key and the sidechain key plays (> −90 dBFS), each frame's
+  key one-ERB power is summed (a power mean over time); about four times a second the normalised
+  curve is published back to the message thread through a second triple buffer and becomes the
+  reference ("sidechain key"). A new learn starts with the first playing frame after Learn key is
+  chosen, so choosing it with nothing routed keeps the reference there was. The key's FFT runs only
+  while Sidechain or Learn key is on.
+- **Match**: the main's physical one-ERB power is averaged over ~3 s (a plain running mean until 3 s
+  have been heard), normalised the same way, and subtracted from the reference. The difference is
+  weighted where both have content (each fades out from −30 to −45 dB under its mean, so nothing is
+  lifted into an empty region of the main or pulled down where the reference is empty), averaged
+  over ±1.5 Cam, clamped to ±6 dB, × Amount, and added to the model's target where the main is
+  audible, before the curve's time smoothing. So Range, Guard, Freeze and Paint treat it like the rest
+  of the curve. In Mid/Side the linked model's match curve is added to each routed component.
+- Off, Learn key and Amount 0 % leave the target untouched: the output is bit-identical to 3.x.
+
+### Paint (4.0)
+
+Two curves of 64 points on the same fixed Cam grid, 0..1: one for the EQ, one for Heat. Each model
+resamples them onto its bands. Per band, after Range: the auto-EQ change (Reveal, Smooth, Tilt,
+sidechain, reference; also what the Listen solos play) × the EQ weight, and the heat need × the Heat
+weight. A curve that is 1 everywhere switches its multiply off, so no paint is bit-identical to 3.x.
+The curves reach the audio thread through a third triple buffer; a stroke (begin, changes, end) is
+one undo step in the processor's history.
+
 ## Spectral saturation
 
 Peaks: local maxima (±2 bins) above −100 dBFS and within 70 dB of the frame peak.
@@ -139,6 +180,8 @@ frame (pre-echo up to ~N/2 before sharp onsets). Measured in the tests.
 - Audio callback: no allocation, locks, logging or I/O.
 - Editor data: one `DisplayFrame` per STFT frame via a wait-free triple buffer;
   meters via atomics.
+- 4.0: references and paint arrive through preallocated triple buffers (read at the top of
+  `processBlock`, copied, no allocation); file decoding and analysis run on their own thread.
 
 ## Budgets
 

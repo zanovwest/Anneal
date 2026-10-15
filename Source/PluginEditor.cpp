@@ -8,10 +8,11 @@ namespace ids = anneal::ids;
 
 namespace
 {
-    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> SIDECHAIN -> OUTPUT.
+    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> SIDECHAIN ->
+    // REFERENCE -> OUTPUT.
     constexpr int titleY = 418, dividerTop = 424, dividerBottom = 628;
     constexpr int routingY = 412;   // 26 px pills centred on the 15 px title row
-    constexpr int dividerX[] = { 490, 832, 984 };
+    constexpr int dividerX[] = { 490, 832, 984, 1136 };
 
     juce::String minus() { return juce::String::fromUTF8 ("\xe2\x88\x92"); }
 
@@ -69,16 +70,38 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                "Ceiling: a true-peak limiter at the very end, so Heat and Output can never clip (dBTP, look-ahead 1.4 ms)"),
       scAmount (p.apvts, ids::scAmount, "Amount", colour::violet, Size::primary, false, "connect a key track",
                 "Sidechain amount: how far the key ducks (Make room) or lifts (Unmask) this track, up to 9 / 6 dB"),
-      undoButton (anneal::IconButton::Glyph::undo, "Undo the last change"),
-      redoButton (anneal::IconButton::Glyph::redo, "Redo")
+      undoButton (anneal::IconButton::Glyph::undo, "Undo the last change (Ctrl+Z)"),
+      redoButton (anneal::IconButton::Glyph::redo, "Redo (Ctrl+Shift+Z or Ctrl+Y)"),
+      refMenu (p.apvts, ids::refMode),
+      refAmount (p.apvts, ids::refAmount, "Amount", colour::teal, Size::primary, false, "drop a reference",
+                 "Reference amount: how far Match steers the auto EQ toward the reference's tone, up to 6 dB either way")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
-             &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton })
+             &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
+
+    // 4.0 Reference: a file dropped on the display or chosen in the menu is analysed off the audio
+    // thread; the display draws the reference and says what the loader is doing.
+    screen.canLoadFile = [] (const juce::File& f) { return AnnealAudioProcessor::canLoadReferenceFile (f); };
+    screen.onFileDropped = [&p] (const juce::File& f) { p.loadReferenceFile (f); };
+    refMenu.onLoadFile = [&p] (const juce::File& f) { p.loadReferenceFile (f); };
+    refMenu.onClear = [&p] { p.clearReference(); };
+    refMenu.hasReference = [this] { return refLoaded; };
+
+    // 4.0 Paint: a pill in the header switches the display's paint mode; each stroke is one undo step.
+    paintButton.setClickingTogglesState (true);
+    paintButton.setColour (juce::TextButton::buttonOnColourId, colour::text);
+    paintButton.setTooltip ("Paint: draw on the display how much of the auto EQ and of Heat acts in each region "
+                            "(each stroke is one undo step)");
+    paintButton.setTitle ("Paint");
+    paintButton.onClick = [this] { screen.setPaintMode (paintButton.getToggleState()); };
+    screen.onPaintBegin = [&p] { p.beginPaintStroke(); };
+    screen.onPaintChange = [&p] (const anneal::PaintCurves& c) { p.setPaint (c); };
+    screen.onPaintEnd = [&p] (bool merge) { p.endPaintStroke (merge); };
 
     presets.getCount = [&p] { return p.getNumPrograms(); };
     presets.getName = [&p] (int i) { return p.getProgramName (i); };
@@ -101,13 +124,14 @@ void AnnealEditorContent::resized()
     latency.setBounds (182, 11, anneal::LatencyMenu::captionWidth + 92, 26);
     undoButton.setBounds (348, 11, 32, 26);
     redoButton.setBounds (384, 11, 32, 26);
-    presets.setBounds (460, 10, 240, 28);
-    stereoMode.setBounds (712, 11, 80, 26);
-    match.setBounds (882, 11, 100, 26);
-    delta.setBounds (990, 11, 72, 26);
-    bypass.setBounds (1070, 11, 78, 26);
+    presets.setBounds (536, 10, 240, 28);
+    stereoMode.setBounds (788, 11, 80, 26);
+    paintButton.setBounds (880, 11, 76, 26);
+    match.setBounds (1034, 11, 100, 26);
+    delta.setBounds (1142, 11, 72, 26);
+    bypass.setBounds (1222, 11, 78, 26);
 
-    screen.setBounds (12, 50, 1136, 356);
+    screen.setBounds (12, 50, 1288, 356);
 
     const int primaryW = anneal::Knob::preferredWidth (Size::primary), primaryH = anneal::Knob::preferredHeight (Size::primary);
     const int heroW = anneal::Knob::preferredWidth (Size::hero), heroH = anneal::Knob::preferredHeight (Size::hero);
@@ -135,12 +159,16 @@ void AnnealEditorContent::resized()
     scMode.setBounds (844, 438, 128, 26);
     scAmount.setBounds (838, 474, primaryW, primaryH);
 
+    // REFERENCE (4.0): the mode (with Load / Clear), then how far Match steers.
+    refMenu.setBounds (996, 438, 128, 26);
+    refAmount.setBounds (990, 474, primaryW, primaryH);
+
     // OUTPUT: what you hear (Listen), the ceiling, then Mix and Output; the meter at the edge.
-    listen.setBounds (996, 438, 112, 26);
-    ceiling.setBounds (996, 472, 112, 26);
-    mix.setBounds (998, 510, 104, smallH);
-    output.setBounds (998, 566, 104, smallH);
-    meter.setBounds (1116, 438, 32, 190);
+    listen.setBounds (1148, 438, 112, 26);
+    ceiling.setBounds (1148, 472, 112, 26);
+    mix.setBounds (1150, 510, 104, smallH);
+    output.setBounds (1150, 566, 104, smallH);
+    meter.setBounds (1268, 438, 32, 190);
 }
 
 void AnnealEditorContent::paint (juce::Graphics& g)
@@ -170,7 +198,8 @@ void AnnealEditorContent::paint (juce::Graphics& g)
     groupTitle (28, "AUTO EQ", { colour::straw, colour::blue });
     groupTitle (506, "HEAT", { colour::bronze });
     groupTitle (848, "SIDECHAIN", { colour::violet });
-    groupTitle (1000, "OUTPUT", { colour::muted });
+    groupTitle (1000, "REFERENCE", { colour::teal });
+    groupTitle (1152, "OUTPUT", { colour::muted });
 
     g.setColour (colour::divider);
     for (int x : dividerX)
@@ -208,6 +237,31 @@ void AnnealEditorContent::updateActivity()
     else                                             scAmount.setActivity (std::abs (a.scDb) / (sc == 1 ? 9.0f : 6.0f),
                                                                            (a.scDb < 0.0f ? "ducking " : "lifting ") + signedDb (a.scDb) + " dB");
     scAmount.setAlpha (sc == 0 ? 0.55f : 1.0f);
+
+    // 4.0 Reference: what Learn key has learned, or how far Match is steering right now.
+    const int rm = juce::roundToInt (param (ids::refMode));
+    if (processor.isAnalysingReference())             refAmount.setActivity (0.0f, "analysing the file");
+    else if (rm == 0)                                 refAmount.setActivity (0.0f, "off");
+    else if (rm == 1)
+    {
+        if (! processor.isSidechainConnected())       refAmount.setActivity (0.0f, "no key connected");
+        else if (! a.live)                            refAmount.setActivity (0.0f, {});
+        else if (a.refSeconds <= 0.0f)                refAmount.setActivity (0.0f, "waiting for the key");
+        else                                          refAmount.setActivity (a.refSeconds / 30.0f,
+                                                          "learned " + juce::String (juce::roundToInt (a.refSeconds)) + " s");
+    }
+    else if (! refLoaded)                             refAmount.setActivity (0.0f, "no reference yet");
+    else if (! a.live)                                refAmount.setActivity (0.0f, {});
+    else if (std::abs (a.matchDb) < 0.1f)             refAmount.setActivity (0.0f, "already matched");
+    else                                              refAmount.setActivity (std::abs (a.matchDb) / 6.0f,
+                                                          "matching " + signedDb (a.matchDb) + " dB");
+    refAmount.setAlpha (rm == 0 ? 0.55f : 1.0f);
+}
+
+void AnnealEditorContent::setPaintMode (bool on)
+{
+    paintButton.setToggleState (on, juce::dontSendNotification);
+    screen.setPaintMode (on);
 }
 
 void AnnealEditorContent::tick (float dt)
@@ -220,6 +274,29 @@ void AnnealEditorContent::tick (float dt)
     latency.refresh();
     presets.refresh();
     harmonics.refresh();
+
+    // 4.0: a new reference (a file, a project, or Learn key a few times a second) and paint
+    // (undo/redo, a project) reach the display; a failed file's reason shows for 6 s.
+    processor.pollLearnedReference();
+    if (processor.getReferenceSerial() != shownRefSerial)
+    {
+        const auto r = processor.getReference();
+        shownRefSerial = processor.getReferenceSerial();
+        refLoaded = r.curve.valid;
+        screen.setReference (r.curve, r.name);
+    }
+    if (processor.getPaintSerial() != shownPaintSerial)
+    {
+        shownPaintSerial = processor.getPaintSerial();
+        screen.setPaint (processor.getPaint());
+    }
+    const auto error = processor.getReferenceError();
+    if (error != shownRefError)
+    {
+        shownRefError = error;
+        refErrorTicks = 0;
+    }
+    screen.setReferenceStatus (processor.isAnalysingReference(), refErrorTicks++ < 180 ? error : juce::String());
     updateActivity();
 
     const bool stereo = processor.getMainBusNumInputChannels() > 1;
@@ -243,7 +320,7 @@ void AnnealEditorContent::tick (float dt)
 
 //==============================================================================
 AnnealEditor::AnnealEditor (AnnealAudioProcessor& p)
-    : AudioProcessorEditor (p), content (p)
+    : AudioProcessorEditor (p), annealProcessor (p), content (p)
 {
     // Add the content first: setLookAndFeel() only notifies existing children, and the
     // sliders must rebuild their value fields with this LookAndFeel.
@@ -251,7 +328,8 @@ AnnealEditor::AnnealEditor (AnnealAudioProcessor& p)
     setLookAndFeel (&lookAndFeel);
 
     setResizable (true, true);
-    setResizeLimits (870, 480, 1740, 960);
+    setResizeLimits (984, 480, 1968, 960);   // 0.75x to 1.5x of 1312 x 640
+    setWantsKeyboardFocus (true);            // clicking the editor lets Ctrl+Z / Ctrl+Y reach it
     getConstrainer()->setFixedAspectRatio ((double) AnnealEditorContent::baseWidth / AnnealEditorContent::baseHeight);
     setSize (AnnealEditorContent::baseWidth, AnnealEditorContent::baseHeight);
 
@@ -279,4 +357,28 @@ void AnnealEditor::resized()
 void AnnealEditor::timerCallback()
 {
     content.tick (1.0f / 30.0f);
+}
+
+bool AnnealEditor::keyPressed (const juce::KeyPress& key)
+{
+    const auto mods = key.getModifiers();
+    if (key.getKeyCode() == juce::KeyPress::escapeKey && content.isPaintMode())
+    {
+        content.setPaintMode (false);
+        return true;
+    }
+    if (! mods.isCommandDown() || mods.isAltDown())
+        return false;
+    const auto c = juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) key.getKeyCode());
+    if (c == 'z' && ! mods.isShiftDown())
+    {
+        annealProcessor.undo();
+        return true;
+    }
+    if ((c == 'z' && mods.isShiftDown()) || (c == 'y' && ! mods.isShiftDown()))
+    {
+        annealProcessor.redo();
+        return true;
+    }
+    return false;
 }

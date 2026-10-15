@@ -72,9 +72,11 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
     listenAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::listen),
         [this] (float v) { listenMode = juce::jlimit (0, 3, juce::roundToInt (v)); repaint(); }, state.undoManager);
     listenAttachment->sendInitialUpdate();
+    refModeAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::refMode),
+        [this] (float v) { refMode = juce::jlimit (0, 2, juce::roundToInt (v)); repaint(); }, state.undoManager);
+    refModeAttachment->sendInitialUpdate();
 
-    setTooltip ("Drag a range handle to limit where Anneal acts; double-click a handle to reset it. "
-                "Horizontal axis: ERB-rate scale (equal steps of the ear's frequency resolution).");
+    setPaintMode (false);   // sets the tooltip
     startTimerHz (refreshHz);
 }
 
@@ -101,6 +103,17 @@ float PerceptionScreen::xForCam (double cam) const noexcept
 double PerceptionScreen::camForX (float x) const noexcept
 {
     return zMin + (double) ((x - plot.getX()) / plot.getWidth()) * (zMax - zMin);
+}
+
+float PerceptionScreen::xForHz (float hz) const noexcept
+{
+    return xForCam (erb::hzToCam (hz));
+}
+
+float PerceptionScreen::specY (float db) const noexcept
+{
+    const float v = juce::jlimit (specBottomDb, specTopDb, db);
+    return mainLane.getBottom() - (v - specBottomDb) / (specTopDb - specBottomDb) * mainLane.getHeight();
 }
 
 float PerceptionScreen::eqY (float db) const noexcept
@@ -157,6 +170,10 @@ void PerceptionScreen::timerCallback()
         midSide = f->midSide;
         keyActive = f->keyActive;
         frozen = f->frozen;
+        activity.matchDb = std::abs (f->matchDb) >= std::abs (activity.matchDb) ? f->matchDb
+                         : activity.matchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
+        activity.refSeconds = f->refSeconds;
+        activity.refValid = f->refValid;
         for (int b = 0; b < nb; ++b)
         {
             keyDb[(size_t) b] = keyActive ? juce::jmax (f->keyDb[b], keyDb[(size_t) b] - levelFallPerTick) : floorDb;
@@ -197,6 +214,7 @@ void PerceptionScreen::timerCallback()
     if (changed)
     {
         updateViews();
+        updateReferenceOffset (false);
         repaint();
     }
 }
@@ -216,9 +234,10 @@ void PerceptionScreen::refreshNow()
         keyActive = f->keyActive;
         frozen = f->frozen;
         std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
-        activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive };
+        activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid };
         haveFrame = true;
         updateViews();
+        updateReferenceOffset (true);
         repaint();
     }
 }
@@ -253,12 +272,15 @@ void PerceptionScreen::paint (juce::Graphics& g)
     g.drawText ("20k Hz", juce::Rectangle<float> (plot.getRight() - 44.0f, plot.getBottom() + 6.0f, 44.0f, 13.0f), juce::Justification::centredRight, false);
 
     paintSpectrum (g);
+    paintReference (g);
     paintEq (g);
     paintHeat (g);
+    paintWeights (g);
     paintRange (g);
     paintLegend (g);
     paintListen (g);
     paintReadout (g);
+    paintDrop (g);
 }
 
 void PerceptionScreen::paintSpectrum (juce::Graphics& g)
@@ -267,11 +289,7 @@ void PerceptionScreen::paintSpectrum (juce::Graphics& g)
         return;
 
     const auto lane = mainLane;
-    auto yFor = [&] (float db)
-    {
-        const float v = juce::jlimit (specBottomDb, specTopDb, db);
-        return lane.getBottom() - (v - specBottomDb) / (specTopDb - specBottomDb) * lane.getHeight();
-    };
+    auto yFor = [this] (float db) { return specY (db); };
 
     juce::Path outFillPath, outLine, inLine;
     const float x0 = xForCam (z0), x1 = xForCam (z0 + (nb - 1) * dz);
@@ -494,27 +512,60 @@ void PerceptionScreen::paintRange (juce::Graphics& g)
 
 void PerceptionScreen::paintLegend (juce::Graphics& g)
 {
-    // Two quiet tags: what the big curve is, and what the lower lane is.
-    auto tag = [&g] (juce::Point<float> at, const juce::String& t, juce::Colour c, const juce::String& sub)
+    // Quiet tags: what the big curve is (and the key, the reference, paint), and what the lower lane
+    // is. In paint mode the weight lines run behind them, so the tags get a backing.
+    auto tag = [&g, this] (juce::Point<float> at, const juce::String& t, juce::Colour c, const juce::String& sub)
     {
         const auto f = caps (11.0f);
+        if (paintMode)
+        {
+            const float w = textWidth (f, t) + 8.0f + textWidth (font (11.0f), sub);
+            g.setColour (colour::screen.withAlpha (0.85f));
+            g.fillRoundedRectangle (juce::Rectangle<float> (at.x - 4.0f, at.y - 1.0f, w + 8.0f, 16.0f), 3.0f);
+        }
         g.setFont (f);
         g.setColour (c);
         g.drawText (t, juce::Rectangle<float> (at.x, at.y, 120.0f, 14.0f), juce::Justification::centredLeft, false);
         g.setFont (font (11.0f));
         g.setColour (colour::faint);
-        g.drawText (sub, juce::Rectangle<float> (at.x + textWidth (f, t) + 8.0f, at.y, 260.0f, 14.0f), juce::Justification::centredLeft, false);
+        g.drawText (sub, juce::Rectangle<float> (at.x + textWidth (f, t) + 8.0f, at.y, 560.0f, 14.0f), juce::Justification::centredLeft, false);
     };
+    float y = mainLane.getY() + 8.0f;
     if (frozen)
-        tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ FROZEN", colour::straw,
+        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw,
              "the curve is held; Heat still follows the music");
     else
-        tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 8.0f }, "AUTO EQ", colour::muted,
+        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ", colour::muted,
              midSide ? "Mid solid / Side dashed" : "live gain over the spectrum");
     if (keyActive)
-        tag ({ mainLane.getX() + 10.0f, mainLane.getY() + 24.0f }, "KEY", colour::violet,
+        tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "KEY", colour::violet,
              "sidechain level (violet line)");
+
+    // 4.0 Reference: what it is and what it is doing, whenever it is in use or a file is loading.
+    juce::String refText;
+    const auto dash = juce::String::fromUTF8 (" \xe2\x80\x94 ");
+    if (refError.isNotEmpty())
+        refText = refError;
+    else if (refAnalysing)
+        refText = "analysing the dropped file...";
+    else if (refMode == 1)
+        refText = activity.refSeconds > 0.0f && refHave
+                    ? "learning the sidechain key" + dash + juce::String (juce::roundToInt (activity.refSeconds)) + " s (teal line)"
+                    : juce::String ("Learn key: waiting for the sidechain key");
+    else if (refMode == 2)
+        refText = refHave ? refName + dash + "Match steers toward it (teal line)"
+                          : juce::String ("drop an audio file here, or learn one from the sidechain key");
+    if (refText.isNotEmpty())
+        tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "REF", refError.isNotEmpty() ? colour::warning : colour::teal, refText);
+
+    if (paintMode)
+    {
+        const auto dot = juce::String::fromUTF8 ("  \xc2\xb7  ");
+        tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "PAINT", colour::text,
+             "drag in a lane: how much acts there" + dot + "Alt- or right-drag erases" + dot + "double-click resets the lane");
+    }
     tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), "harmonics written, vs output");
+    legendBottom = y + 14.0f;
 }
 
 void PerceptionScreen::paintListen (juce::Graphics& g)
@@ -565,16 +616,21 @@ void PerceptionScreen::paintReadout (juce::Graphics& g)
     g.drawEllipse (dot, 1.0f);
 
     const float heatAbs = valueAtCam (heatView.data(), cam);
-    const auto text = formatHz (hz)
-                    + (midSide ? "    M " + signedDb (eq, 1) + " / S " + signedDb (valueAtCam (sideGainDb.data(), cam), 1) + " dB"
-                               : "    EQ " + signedDb (eq, 1) + " dB")
-                    + "    in " + signedDb (valueAtCam (inView.data(), cam), 1) + " dB"
-                    + "    heat " + (heatAbs < heatAudibleDb ? juce::String ("none")
-                                                             : signedDb (heatAbs - valueAtCam (outView.data(), cam), 0) + " dB");
+    auto text = formatHz (hz)
+              + (midSide ? "    M " + signedDb (eq, 1) + " / S " + signedDb (valueAtCam (sideGainDb.data(), cam), 1) + " dB"
+                         : "    EQ " + signedDb (eq, 1) + " dB")
+              + "    in " + signedDb (valueAtCam (inView.data(), cam), 1) + " dB"
+              + "    heat " + (heatAbs < heatAudibleDb ? juce::String ("none")
+                                                       : signedDb (heatAbs - valueAtCam (outView.data(), cam), 0) + " dB");
+    // 4.0: the painted share here, in paint mode or wherever it is below 100 %.
+    const float wEq = refgrid::sampleAt (paintCurves.eq, PaintCurves::numPoints, cam);
+    const float wHeat = refgrid::sampleAt (paintCurves.heat, PaintCurves::numPoints, cam);
+    if (paintMode || wEq < 0.995f || wHeat < 0.995f)
+        text << "    paint EQ " << juce::roundToInt (wEq * 100.0f) << " % / heat " << juce::roundToInt (wHeat * 100.0f) << " %";
     const auto fnt = font (size::caption + 0.5f);
     const float w = tabularWidths (fnt, text) + 20.0f, h = 24.0f;
     const bool left = hoverX > plot.getCentreX();
-    auto box = juce::Rectangle<float> (left ? hoverX - 12.0f - w : hoverX + 12.0f, mainLane.getY() + 30.0f, w, h);
+    auto box = juce::Rectangle<float> (left ? hoverX - 12.0f - w : hoverX + 12.0f, juce::jmax (mainLane.getY() + 30.0f, legendBottom + 6.0f), w, h);
     box = box.constrainedWithin (plot);
 
     g.setColour (colour::body.withAlpha (0.96f));
@@ -599,12 +655,30 @@ PerceptionScreen::Handle PerceptionScreen::handleAt (float x, float y) const noe
     return dl <= dh ? Handle::lo : Handle::hi;
 }
 
+PerceptionScreen::Lane PerceptionScreen::laneAt (juce::Point<float> p) const noexcept
+{
+    // The 10 px gap between the lanes belongs to the nearer one.
+    if (p.x < plot.getX() - 4.0f || p.x > plot.getRight() + 4.0f)
+        return Lane::none;
+    const float split = (mainLane.getBottom() + heatLane.getY()) * 0.5f;
+    if (p.y >= mainLane.getY() && p.y < split)
+        return Lane::eq;
+    if (p.y >= split && p.y <= heatLane.getBottom() + 4.0f)
+        return Lane::heat;
+    return Lane::none;
+}
+
 void PerceptionScreen::mouseMove (const juce::MouseEvent& e)
 {
     const auto p = e.position;
+    // In paint mode the range handles are taken by their grips above the plot only.
     hovered = handleAt (p.x, p.y);
+    if (paintMode && p.y >= plot.getY())
+        hovered = Handle::none;
     hoverX = plot.contains (p) ? p.x : -1.0f;
-    setMouseCursor (hovered != Handle::none ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+    setMouseCursor (hovered != Handle::none ? juce::MouseCursor::LeftRightResizeCursor
+                    : paintMode && laneAt (p) != Lane::none ? juce::MouseCursor::CrosshairCursor
+                                                            : juce::MouseCursor::NormalCursor);
     repaint();
 }
 
@@ -618,12 +692,33 @@ void PerceptionScreen::mouseExit (const juce::MouseEvent&)
 void PerceptionScreen::mouseDown (const juce::MouseEvent& e)
 {
     dragging = handleAt (e.position.x, e.position.y);
+    if (paintMode && e.position.y >= plot.getY())
+        dragging = Handle::none;
     if (dragging == Handle::lo) loAttachment->beginGesture();
     if (dragging == Handle::hi) hiAttachment->beginGesture();
+
+    if (paintMode && dragging == Handle::none)
+    {
+        painting = laneAt (e.position);
+        if (painting == Lane::none)
+            return;
+        strokeMerge = false;
+        if (onPaintBegin != nullptr)
+            onPaintBegin();
+        lastPaint = e.position;
+        paintStroke (e.position, e.position, e.mods.isAltDown() || e.mods.isPopupMenu());
+    }
 }
 
 void PerceptionScreen::mouseDrag (const juce::MouseEvent& e)
 {
+    if (painting != Lane::none)
+    {
+        paintStroke (lastPaint, e.position, e.mods.isAltDown() || e.mods.isPopupMenu());
+        lastPaint = e.position;
+        hoverX = plot.contains (e.position) ? e.position.x : -1.0f;
+        return;
+    }
     if (dragging == Handle::none)
         return;
 
@@ -647,6 +742,13 @@ void PerceptionScreen::mouseDrag (const juce::MouseEvent& e)
 
 void PerceptionScreen::mouseUp (const juce::MouseEvent&)
 {
+    if (painting != Lane::none)
+    {
+        painting = Lane::none;
+        if (onPaintEnd != nullptr)
+            onPaintEnd (strokeMerge);
+        strokeMerge = false;
+    }
     if (dragging == Handle::lo) loAttachment->endGesture();
     if (dragging == Handle::hi) hiAttachment->endGesture();
     dragging = Handle::none;
@@ -655,6 +757,18 @@ void PerceptionScreen::mouseUp (const juce::MouseEvent&)
 
 void PerceptionScreen::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    // Paint: a double-click resets the lane to 100 %. The second press already opened a stroke
+    // (mouseUp ends it); it joins the first click's stroke, so the reset is one undo step.
+    if (painting != Lane::none)
+    {
+        std::fill_n (painting == Lane::eq ? paintCurves.eq : paintCurves.heat, PaintCurves::numPoints, 1.0f);
+        strokeMerge = true;
+        if (onPaintChange != nullptr)
+            onPaintChange (paintCurves);
+        repaint();
+        return;
+    }
+
     // JUCE delivers down, up, down, double-click, up. The second press has already opened this
     // handle's gesture (mouseUp closes it), so the reset belongs to that gesture instead of
     // nesting a second one for the same parameter inside it.
@@ -668,5 +782,237 @@ void PerceptionScreen::mouseDoubleClick (const juce::MouseEvent& e)
         attachment.setValueAsPartOfGesture (value);
     else
         attachment.setValueAsCompleteGesture (value);
+}
+//==============================================================================
+// 4.0 Paint
+
+void PerceptionScreen::setPaintMode (bool on)
+{
+    paintMode = on;
+    setTooltip (on ? "Paint: drag in the EQ lane or the Heat lane to set how much of it acts there (top = 100 %, "
+                     "bottom = none). Alt- or right-drag erases back to 100 %, double-click resets the lane"
+                   : "Drag a range handle to limit where Anneal acts; double-click a handle to reset it. Drop an audio "
+                     "file here to use it as the reference. Horizontal axis: ERB-rate scale (equal steps of the ear's "
+                     "frequency resolution).");
+    repaint();
+}
+
+void PerceptionScreen::setPaint (const PaintCurves& curves)
+{
+    if (painting != Lane::none || curves == paintCurves)
+        return;
+    paintCurves = curves;
+    repaint();
+}
+
+void PerceptionScreen::paintStroke (juce::Point<float> from, juce::Point<float> to, bool erase)
+{
+    float* curve = painting == Lane::eq ? paintCurves.eq : paintCurves.heat;
+    const auto& lane = painting == Lane::eq ? mainLane : heatLane;
+    constexpr int n = PaintCurves::numPoints;
+    auto indexAt = [this] (float x)
+    {
+        return (float) juce::jlimit (0.0, (double) (n - 1), (camForX (x) - zMin) / (zMax - zMin) * (n - 1));
+    };
+    // Top = 100 %, bottom = 0 %; the outer 4 % snap, so a fully erased curve is exactly 100 %.
+    auto valueAt = [&lane, erase] (float y)
+    {
+        if (erase)
+            return 1.0f;
+        const float v = (lane.getBottom() - y) / lane.getHeight();
+        return v >= 0.96f ? 1.0f : v <= 0.04f ? 0.0f : v;
+    };
+
+    // Every control point the pointer crossed since the last event, the height interpolated along
+    // the way, so a fast drag leaves no gaps.
+    const float ia = indexAt (from.x), ib = indexAt (to.x);
+    const int lo = juce::roundToInt (juce::jmin (ia, ib)), hi = juce::roundToInt (juce::jmax (ia, ib));
+    bool changed = false;
+    for (int i = lo; i <= hi; ++i)
+    {
+        const float t = std::abs (ib - ia) < 1.0e-4f ? 1.0f : juce::jlimit (0.0f, 1.0f, ((float) i - ia) / (ib - ia));
+        const float v = valueAt (from.y + t * (to.y - from.y));
+        changed = changed || curve[i] != v;
+        curve[i] = v;
+    }
+    if (changed && onPaintChange != nullptr)
+        onPaintChange (paintCurves);
+    repaint();
+}
+
+void PerceptionScreen::paintWeights (juce::Graphics& g)
+{
+    // Painted-out regions dim like outside the Range (fully at 0 %), in the lane they belong to.
+    for (int which = 0; which < 2; ++which)
+    {
+        const float* curve = which == 0 ? paintCurves.eq : paintCurves.heat;
+        if (PaintCurves::isFull (curve))
+            continue;
+        const auto lane = which == 0 ? mainLane : heatLane;
+        for (float x = lane.getX(); x < lane.getRight(); x += 2.0f)
+        {
+            const float w = refgrid::sampleAt (curve, PaintCurves::numPoints, camForX (x + 1.0f));
+            if (w < 0.999f)
+            {
+                g.setColour (colour::screen.withAlpha (0.72f * (1.0f - w)));
+                g.fillRect (juce::Rectangle<float> (x, lane.getY(), juce::jmin (2.0f, lane.getRight() - x), lane.getHeight()));
+            }
+        }
+    }
+
+    if (! paintMode)
+        return;
+
+    // Paint mode: each lane's weight as a line (top of the lane = 100 %) with its control points.
+    for (int which = 0; which < 2; ++which)
+    {
+        const float* curve = which == 0 ? paintCurves.eq : paintCurves.heat;
+        const auto lane = which == 0 ? mainLane : heatLane;
+        auto yOf = [&lane] (float w) { return lane.getBottom() - w * lane.getHeight(); };
+        juce::Path line;
+        for (int i = 0; i < PaintCurves::numPoints; ++i)
+        {
+            const float x = xForCam (refgrid::camAt (i, PaintCurves::numPoints));
+            if (i == 0) line.startNewSubPath (x, yOf (curve[i]));
+            else        line.lineTo (x, yOf (curve[i]));
+        }
+        g.setColour (colour::text.withAlpha (0.75f));
+        g.strokePath (line, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        for (int i = 0; i < PaintCurves::numPoints; ++i)
+        {
+            const auto p = juce::Point<float> (xForCam (refgrid::camAt (i, PaintCurves::numPoints)), yOf (curve[i]));
+            g.setColour (colour::screen);
+            g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (p));
+            g.setColour (colour::text.withAlpha (0.85f));
+            g.drawEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (p), 1.0f);
+        }
+    }
+}
+
+//==============================================================================
+// 4.0 Reference
+
+void PerceptionScreen::setReference (const ReferenceCurve& curve, const juce::String& name)
+{
+    refHave = curve.valid;
+    if (refHave)
+        std::copy (curve.db, curve.db + ReferenceCurve::numPoints, refDb.begin());
+    refName = name;
+    refOffsetPrimed = false;
+    updateReferenceOffset (true);
+    repaint();
+}
+
+void PerceptionScreen::setReferenceStatus (bool analysing, const juce::String& error)
+{
+    if (analysing == refAnalysing && error == refError)
+        return;
+    refAnalysing = analysing;
+    refError = error;
+    repaint();
+}
+
+void PerceptionScreen::updateReferenceOffset (bool instant)
+{
+    // The reference is level-normalised; it is drawn where the output's own spectrum would sit
+    // after the same normalisation (anneal::normaliseLevels), followed with ~0.5 s of smoothing.
+    if (! haveFrame || dz <= 0.0f)
+        return;
+    const double zLo = erb::hzToCam (50.0), zHi = erb::hzToCam (16000.0);
+    const int lo = juce::jlimit (0, nb - 1, (int) std::ceil ((zLo - z0) / dz));
+    const int hi = juce::jlimit (lo, nb - 1, (int) std::floor ((zHi - z0) / dz));
+    double power = 0.0;
+    for (int b = lo; b <= hi; ++b)
+        power += std::pow (10.0, outView[(size_t) b] / 10.0);
+    const double floorLevel = 10.0 * std::log10 (std::max (power / (hi - lo + 1), 1.0e-30)) - 40.0;
+    if (floorLevel < -150.0)
+        return;   // silence: keep the last position
+    double sum = 0.0;
+    for (int b = lo; b <= hi; ++b)
+        sum += std::max ((double) outView[(size_t) b], floorLevel);
+    const float target = (float) (sum / (hi - lo + 1));
+    refOffset = instant || ! refOffsetPrimed ? target : refOffset + 0.07f * (target - refOffset);
+    refOffsetPrimed = true;
+}
+
+void PerceptionScreen::paintReference (juce::Graphics& g)
+{
+    if (! haveFrame || ! refHave || refMode == 0 || ! refOffsetPrimed)
+        return;
+    juce::Path line;
+    bool open = false;
+    for (float x = mainLane.getX(); x <= mainLane.getRight(); x += 2.0f)
+    {
+        const float y = specY (refgrid::sampleAt (refDb.data(), ReferenceCurve::numPoints, camForX (x)) + refOffset);
+        if (! open) { line.startNewSubPath (x, y); open = true; }
+        else        line.lineTo (x, y);
+    }
+    juce::Graphics::ScopedSaveState save (g);
+    g.reduceClipRegion (mainLane.toNearestInt());
+    g.setColour (colour::teal.withAlpha (0.16f));
+    g.strokePath (line, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour (colour::teal.withAlpha (0.9f));
+    g.strokePath (line, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
+bool PerceptionScreen::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (canLoadFile != nullptr && canLoadFile (juce::File (f)))
+            return true;
+    return false;
+}
+
+void PerceptionScreen::fileDragEnter (const juce::StringArray&, int, int)
+{
+    dropHover = true;
+    repaint();
+}
+
+void PerceptionScreen::fileDragExit (const juce::StringArray&)
+{
+    dropHover = false;
+    repaint();
+}
+
+void PerceptionScreen::filesDropped (const juce::StringArray& files, int, int)
+{
+    dropHover = false;
+    for (const auto& f : files)
+        if (canLoadFile != nullptr && canLoadFile (juce::File (f)))
+        {
+            if (onFileDropped != nullptr)
+                onFileDropped (juce::File (f));
+            break;
+        }
+    repaint();
+}
+
+void PerceptionScreen::paintDrop (juce::Graphics& g)
+{
+    if (! dropHover)
+        return;
+    const auto r = plot.expanded (6.0f);
+    g.setColour (colour::teal.withAlpha (0.08f));
+    g.fillRoundedRectangle (r, 8.0f);
+    g.setColour (colour::teal.withAlpha (0.9f));
+    const float dashes[] = { 6.0f, 4.0f };
+    juce::Path outline, dashed;
+    outline.addRoundedRectangle (r.reduced (1.0f), 8.0f);
+    juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
+    g.fillPath (dashed);
+    const auto card = juce::Rectangle<float> (480.0f, 54.0f).withCentre (r.getCentre());
+    g.setColour (colour::body.withAlpha (0.94f));
+    g.fillRoundedRectangle (card, 8.0f);
+    g.setColour (colour::teal.withAlpha (0.6f));
+    g.drawRoundedRectangle (card, 8.0f, 1.0f);
+    g.setColour (colour::teal);
+    g.setFont (caps (13.0f));
+    g.drawText ("DROP TO USE AS THE REFERENCE", r.withHeight (22.0f).withCentre (r.getCentre().translated (0.0f, -10.0f)),
+                juce::Justification::centred, false);
+    g.setFont (font (12.0f));
+    g.setColour (colour::muted);
+    g.drawText ("Anneal learns its long-term tone, then Match steers the auto EQ toward it",
+                r.withHeight (18.0f).withCentre (r.getCentre().translated (0.0f, 12.0f)), juce::Justification::centred, false);
 }
 }

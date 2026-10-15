@@ -70,6 +70,41 @@ double peakOf (const testsig::Channels& x)
             m = std::max (m, (double) std::abs (v));
     return m;
 }
+
+// 4.0: Anneal's own state inside the state JUCE's VST3 host saves (XML "VST3PluginState", the
+// component's state in base64 under "IComponent"), or nullptr.
+std::unique_ptr<juce::XmlElement> annealStateOf (const juce::MemoryBlock& hostState)
+{
+    auto head = juce::AudioProcessor::getXmlFromBinary (hostState.getData(), (int) hostState.getSize());
+    auto* component = head != nullptr ? head->getChildByName ("IComponent") : nullptr;
+    juce::MemoryBlock raw;
+    if (component == nullptr || ! raw.fromBase64Encoding (component->getAllSubText()))
+        return nullptr;
+    return juce::AudioProcessor::getXmlFromBinary (raw.getData(), (int) raw.getSize());
+}
+
+// The same host state with Anneal's state replaced by `anneal`.
+juce::MemoryBlock withAnnealState (const juce::MemoryBlock& hostState, const juce::XmlElement& anneal)
+{
+    juce::MemoryBlock chunk, out;
+    juce::AudioProcessor::copyXmlToBinary (anneal, chunk);
+    if (auto head = juce::AudioProcessor::getXmlFromBinary (hostState.getData(), (int) hostState.getSize()))
+        if (auto* component = head->getChildByName ("IComponent"))
+        {
+            component->deleteAllTextElements();
+            component->addTextElement (chunk.toBase64Encoding());
+            juce::AudioProcessor::copyXmlToBinary (*head, out);
+        }
+    return out;
+}
+
+std::vector<float> numbersOf (const juce::String& text)
+{
+    std::vector<float> v;
+    for (const auto& t : juce::StringArray::fromTokens (text, " ", ""))
+        v.push_back (t.getFloatValue());
+    return v;
+}
 }
 
 int main (int argc, char* argv[])
@@ -107,7 +142,8 @@ int main (int argc, char* argv[])
     for (auto* prm : plugin->getParameters())
         names.add (prm->getName (64));
     bool haveAll = true;
-    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour" })
+    for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
+                    "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -367,6 +403,157 @@ int main (int argc, char* argv[])
         }
         check (ok, "sidechain bus: routed key ducks the main (Make room)",
                "buses in " + juce::String (plugin->getBusCount (true)) + ", 2 kHz with key vs without " + juce::String (change, 1) + " dB");
+    }
+
+    // 6d. Reference and Paint (4.0) through VST3: the two new host parameters; Learn key through the
+    //     sidechain bus; the learned reference and a paint travel in the plug-in's state into a new
+    //     instance and act there (Heat painted to 0 % writes no harmonics; Match moves the output).
+    {
+        auto* refMode = findParam (*plugin, "Reference");
+        auto* refAmount = findParam (*plugin, "Reference Amount");
+        juce::String texts;
+        bool ok = refMode != nullptr && refAmount != nullptr && refMode->isAutomatable() && refAmount->isAutomatable();
+        if (ok)
+        {
+            for (float v : { 0.0f, 0.5f, 1.0f })
+                texts << refMode->getText (v, 32) << (v < 1.0f ? ", " : "");
+            ok = texts == "Off, Learn key, Match" && refMode->getValue() == 0.0f
+                 && std::abs (refMode->getValueForText ("match") - 1.0f) < 1.0e-4f
+                 && std::abs (refMode->getValueForText ("learn") - 0.5f) < 1.0e-4f
+                 && std::abs (refAmount->getValue() - 0.5f) < 1.0e-4f;
+        }
+        check (ok, "Reference parameters through VST3", texts + "; default Off, Amount "
+                   + (refAmount != nullptr ? refAmount->getText (refAmount->getValue(), 16) : juce::String ("missing")));
+
+        // Learn key from a key routed into the sidechain bus, then Match at 100 %.
+        auto layout = plugin->getBusesLayout();
+        layout.inputBuses.getReference (1) = juce::AudioChannelSet::stereo();
+        plugin->releaseResources();
+        bool learned = ok && plugin->setBusesLayout (layout);
+        juce::MemoryBlock state;
+        juce::String refName ("none");
+        std::unique_ptr<juce::XmlElement> saved;
+        if (learned)
+        {
+            plugin->setRateAndBufferSizeDetails (48000.0, 512);
+            plugin->prepareToPlay (48000.0, 512);
+            refMode->setValueNotifyingHost (0.5f);   // Learn key
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            const int n = 3 * 48000;
+            const auto main = testsig::musicLike (48000.0, 3.0, 23);
+            const auto key = testsig::sines (48000.0, n, { { 300.0, 0.1 }, { 2500.0, 0.05 } });
+            juce::AudioBuffer<float> buf (4, 512);
+            juce::MidiBuffer midi;
+            for (int pos = 0; pos + 512 <= n; pos += 512)
+            {
+                for (int c = 0; c < 2; ++c)
+                {
+                    buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                    buf.copyFrom (c + 2, 0, key[(size_t) c].data() + pos, 512);
+                }
+                plugin->processBlock (buf, midi);
+            }
+            refMode->setValueNotifyingHost (1.0f);   // Match
+            refAmount->setValueNotifyingHost (1.0f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            plugin->getStateInformation (state);
+            saved = annealStateOf (state);
+            auto* ref = saved != nullptr ? saved->getChildByName ("Reference") : nullptr;
+            if (ref != nullptr)
+                refName = ref->getStringAttribute ("name");
+            learned = ref != nullptr && refName == "sidechain key" && ref->getIntAttribute ("points") == 1024
+                      && saved->getIntAttribute ("stateVersion") == 2;
+
+            layout.inputBuses.getReference (1) = juce::AudioChannelSet::disabled();
+            plugin->releaseResources();
+            plugin->setBusesLayout (layout);
+            plugin->setPlayConfigDetails (2, 2, 48000.0, 512);
+            plugin->prepareToPlay (48000.0, 512);
+            refMode->setValueNotifyingHost (0.0f);
+            refAmount->setValueNotifyingHost (0.5f);
+        }
+        check (learned, "Learn key through the sidechain bus, saved", "state has reference \"" + refName + "\", stateVersion "
+                   + (saved != nullptr ? juce::String (saved->getIntAttribute ("stateVersion")) : juce::String ("?")));
+
+        // The same state with Heat painted to 0 % everywhere, into new instances.
+        bool travelled = false, acts = false;
+        double soloPainted = 1.0, soloPlain = 0.0, matchMove = 0.0;
+        if (learned)
+        {
+            auto withPaint = std::make_unique<juce::XmlElement> (*saved);
+            juce::StringArray ones, zeros;
+            for (int i = 0; i < 64; ++i)
+            {
+                ones.add ("1");
+                zeros.add ("0");
+            }
+            auto* paintXml = withPaint->createNewChildElement ("Paint");
+            paintXml->setAttribute ("points", 64);
+            paintXml->setAttribute ("eq", ones.joinIntoString (" "));
+            paintXml->setAttribute ("heat", zeros.joinIntoString (" "));
+            const auto paintedState = withAnnealState (state, *withPaint);
+
+            auto painted = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+            auto plain = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+            if (painted != nullptr && plain != nullptr)
+            {
+                painted->setStateInformation (paintedState.getData(), (int) paintedState.getSize());
+                plain->setStateInformation (state.getData(), (int) state.getSize());
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+
+                // Saved again, the new instance still holds the reference (identical) and the paint.
+                juce::MemoryBlock again;
+                painted->getStateInformation (again);
+                const auto resaved = annealStateOf (again);
+                auto* r0 = saved->getChildByName ("Reference");
+                auto* r1 = resaved != nullptr ? resaved->getChildByName ("Reference") : nullptr;
+                auto* p1 = resaved != nullptr ? resaved->getChildByName ("Paint") : nullptr;
+                const auto heat = p1 != nullptr ? numbersOf (p1->getStringAttribute ("heat")) : std::vector<float>();
+                travelled = r1 != nullptr && r1->getStringAttribute ("db") == r0->getStringAttribute ("db")
+                            && heat.size() == 64 && std::all_of (heat.begin(), heat.end(), [] (float v) { return v == 0.0f; })
+                            && std::abs (findParam (*painted, "Reference")->getValue() - 1.0f) < 1.0e-4f;
+
+                // Heat 100 %, Listen: Heat only, Reference Off: the painted instance writes no harmonics.
+                const auto tone = testsig::sines (48000.0, 48000, { { 1000.0, 0.25 } });
+                for (auto [inst, peak] : { std::pair<juce::AudioPluginInstance*, double*> { painted.get(), &soloPainted },
+                                           std::pair<juce::AudioPluginInstance*, double*> { plain.get(), &soloPlain } })
+                {
+                    inst->setPlayConfigDetails (2, 2, 48000.0, 512);
+                    inst->prepareToPlay (48000.0, 512);
+                    findParam (*inst, "Reference")->setValueNotifyingHost (0.0f);
+                    findParam (*inst, "Heat")->setValueNotifyingHost (1.0f);
+                    findParam (*inst, "Listen")->setValueNotifyingHost (1.0f);
+                    testsig::Channels o;
+                    run (*inst, tone, o, [] { return 512; });
+                    *peak = 0.0;
+                    for (auto& ch : o)
+                        for (size_t i = o[0].size() / 2; i < ch.size(); ++i)
+                            *peak = std::max (*peak, (double) std::abs (ch[i]));
+                }
+
+                // Match with the loaded reference changes the output; Off doesn't need it.
+                findParam (*plain, "Heat")->setValueNotifyingHost (0.0f);
+                findParam (*plain, "Listen")->setValueNotifyingHost (0.0f);
+                const auto music = testsig::musicLike (48000.0, 3.0, 29);
+                testsig::Channels off, matched;
+                run (*plain, music, off, [] { return 512; });
+                findParam (*plain, "Reference")->setValueNotifyingHost (1.0f);
+                findParam (*plain, "Reference Amount")->setValueNotifyingHost (1.0f);
+                plain->reset();
+                run (*plain, music, matched, [] { return 512; });
+                for (size_t i = matched[0].size() / 2; i < matched[0].size(); ++i)
+                    matchMove = std::max (matchMove, (double) std::abs (matched[0][i] - off[0][i]));
+                acts = testsig::toDb (soloPainted) < -90.0 && testsig::toDb (soloPlain) > -60.0
+                       && testsig::toDb (matchMove) > -40.0 && peakOf (matched) < 4.0;
+                painted->releaseResources();
+                plain->releaseResources();
+            }
+        }
+        check (travelled && acts, "reference and paint state through VST3",
+               juce::String (travelled ? "reference identical and paint kept in a new instance" : "STATE LOST")
+                   + "; Heat-only at Heat 100 %: painted " + juce::String (testsig::toDb (soloPainted), 1) + " dB, unpainted "
+                   + juce::String (testsig::toDb (soloPlain), 1) + " dB; Match moves the output up to "
+                   + juce::String (testsig::toDb (matchMove), 1) + " dBFS");
     }
 
     // 6b. Factory presets as host programs: listed, selectable, and a saved project keeps both its

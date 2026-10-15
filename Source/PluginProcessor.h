@@ -91,6 +91,9 @@ public:
     };
     ReferenceInfo getReference();
     std::uint32_t getReferenceSerial() const noexcept { return refSerial.load(); }   // changes with each new reference
+    // Collects what Learn key has learned since the last call (the processor's timer does this
+    // too; the editor calls it before checking the serial, so it also works without that timer).
+    void pollLearnedReference();
     // holdLearning: Learn key stops until it is chosen again (a dropped file replaces the key).
     void setReference (const anneal::ReferenceCurve& curve, const juce::String& name, bool holdLearning = false);
     void clearReference() { setReference ({}, {}); }
@@ -104,11 +107,12 @@ public:
     void* getLastAnalysisThread() const noexcept { return analysisThread.load(); }   // tests
 
     // 4.0 Paint (message thread). setPaint between beginPaintStroke() and endPaintStroke() is one
-    // undo step; a paint change outside a stroke isn't recorded.
+    // undo step; a paint change outside a stroke isn't recorded. mergeWithPrevious: the stroke joins
+    // the stroke just before it (a double-click's reset and its first click are one step).
     anneal::PaintCurves getPaint();
     void setPaint (const anneal::PaintCurves& paint);
     void beginPaintStroke();
-    void endPaintStroke();
+    void endPaintStroke (bool mergeWithPrevious = false);
     std::uint32_t getPaintSerial() const noexcept { return paintSerial.load(); }
 
 private:
@@ -197,7 +201,6 @@ private:
 
     // 4.0 Reference and Paint. refLock guards the copies below, the writer side of refToAudio and
     // paintToAudio and the reader side of refLearned; the audio thread never takes it.
-    void pollLearnedReference();
     void applyPaintNow (const anneal::PaintCurves& paint);   // no undo step
     void referenceFailed (const juce::File& file, const juce::String& why);
     anneal::TripleBuffer<anneal::ReferenceCurve> refToAudio, refLearned;
@@ -206,7 +209,7 @@ private:
     anneal::ReferenceCurve refCurve;
     juce::String refName, refError;
     anneal::PaintCurves paint, strokeStart;
-    bool strokeOpen = false;
+    bool strokeOpen = false, lastStepWasStroke = false;
     unsigned int refEpoch = 0;
     std::atomic<std::uint32_t> refSerial { 0 }, paintSerial { 0 };
     std::atomic<bool> analysing { false }, autoMatchPending { false };

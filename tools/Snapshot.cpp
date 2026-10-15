@@ -5,6 +5,8 @@
 #include "PluginProcessor.h"
 #include "Params.h"
 #include "TestSignals.h"
+#include "dsp/ErbScale.h"
+#include "dsp/ReferenceAnalyser.h"
 #include "ui/Icon.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -91,7 +93,49 @@ struct Scenario
     std::function<void (AnnealAudioProcessor&)> configure;
     float readoutHz;
     bool feedAudio;
+    std::function<void (AnnealEditorContent&)> afterEditor = {};   // 4.0: editor-only state (paint mode, a drag over the display)
 };
+
+void enableSidechain (AnnealAudioProcessor& p)
+{
+    juce::AudioProcessor::BusesLayout l;
+    l.inputBuses.add (juce::AudioChannelSet::stereo());
+    l.inputBuses.add (juce::AudioChannelSet::stereo());
+    l.outputBuses.add (juce::AudioChannelSet::stereo());
+    p.setBusesLayout (l);
+}
+
+// 4.0: a reference to match (pink noise: a little darker than the test music) and some paint.
+anneal::ReferenceCurve pinkReference()
+{
+    const double fs = 48000.0;
+    const int n = (int) (4.0 * fs);
+    testsig::Pink pl (21), pr (22);
+    std::vector<float> l ((size_t) n), r ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        l[(size_t) i] = 0.05f * pl.next();
+        r[(size_t) i] = 0.05f * pr.next();
+    }
+    anneal::ReferenceAnalyser a (fs);
+    const float* ptrs[2] = { l.data(), r.data() };
+    a.push (ptrs, 2, n);
+    return a.finish();
+}
+
+anneal::PaintCurves samplePaint()
+{
+    anneal::PaintCurves p;
+    for (int i = 0; i < anneal::PaintCurves::numPoints; ++i)
+    {
+        const double hz = anneal::erb::camToHz (anneal::refgrid::camAt (i, anneal::PaintCurves::numPoints));
+        if (hz < 150.0)                    p.eq[i] = 0.4f;
+        if (hz > 2500.0 && hz < 6000.0)    p.eq[i] = 0.0f;
+        if (hz > 300.0 && hz < 800.0)      p.heat[i] = 0.6f;
+        if (hz > 8000.0)                   p.heat[i] = 0.0f;
+    }
+    return p;
+}
 }
 
 int main (int argc, char* argv[])
@@ -141,11 +185,7 @@ int main (int argc, char* argv[])
         { "empty", [] (AnnealAudioProcessor&) {}, -1.0f, false },
         { "sidechain", [] (AnnealAudioProcessor& p)
           {
-              juce::AudioProcessor::BusesLayout l;
-              l.inputBuses.add (juce::AudioChannelSet::stereo());
-              l.inputBuses.add (juce::AudioChannelSet::stereo());
-              l.outputBuses.add (juce::AudioChannelSet::stereo());
-              p.setBusesLayout (l);
+              enableSidechain (p);
               set (p, ids::scMode, 1); set (p, ids::scAmount, 80);
               set (p, ids::ceiling, 2); set (p, ids::output, 6.0f); set (p, ids::heat, 60);
           }, 1200.0f, true },
@@ -168,6 +208,29 @@ int main (int argc, char* argv[])
           {
               set (p, ids::heat, 70); set (p, ids::flavour, 3);   // Transformer: the longest pill text
           }, 220.0f, true },
+        // 4.0
+        { "reference", [] (AnnealAudioProcessor& p)
+          {
+              p.setReference (pinkReference(), "Pink reference.wav");
+              set (p, ids::refMode, 2); set (p, ids::refAmount, 100); set (p, ids::reveal, 40); set (p, ids::smooth, 40);
+          }, 6000.0f, true },
+        { "learn", [] (AnnealAudioProcessor& p)
+          {
+              enableSidechain (p);
+              set (p, ids::refMode, 1);
+          }, 1200.0f, true },
+        { "paint", [] (AnnealAudioProcessor& p)
+          {
+              p.setPaint (samplePaint());
+              set (p, ids::reveal, 60); set (p, ids::smooth, 70); set (p, ids::heat, 60);
+          }, 3150.0f, true, [] (AnnealEditorContent& c) { c.setPaintMode (true); } },
+        { "painted", [] (AnnealAudioProcessor& p)
+          {
+              p.setPaint (samplePaint());
+              set (p, ids::reveal, 60); set (p, ids::smooth, 70); set (p, ids::heat, 60);
+          }, 3150.0f, true },
+        { "drop", [] (AnnealAudioProcessor&) {}, -1.0f, true,
+          [] (AnnealEditorContent& c) { c.screen.fileDragEnter ({ "reference.wav" }, 300, 150); } },
     };
 
     int failures = 0;
@@ -194,6 +257,8 @@ int main (int argc, char* argv[])
                 content.tick (1.0f / 30.0f);
             }
         }
+        if (s.afterEditor)
+            s.afterEditor (content);
         content.screen.refreshNow();
         content.tick (0.0f);   // live read-outs under the knobs, from the frame just taken
         if (s.readoutHz > 0.0f)
@@ -205,10 +270,10 @@ int main (int argc, char* argv[])
         {
             failures += shoot (*editor, outDir.getChildFile (base + "_150.png"), 1.5f) ? 0 : 1;
             failures += shoot (*editor, outDir.getChildFile (base + "_200.png"), 2.0f) ? 0 : 1;
-            editor->setSize (870, 480);
-            failures += shoot (*editor, outDir.getChildFile (base + "_min_870x480.png")) ? 0 : 1;
-            editor->setSize (1740, 960);
-            failures += shoot (*editor, outDir.getChildFile (base + "_max_1740x960.png")) ? 0 : 1;
+            editor->setSize (984, 480);
+            failures += shoot (*editor, outDir.getChildFile (base + "_min_984x480.png")) ? 0 : 1;
+            editor->setSize (1968, 960);
+            failures += shoot (*editor, outDir.getChildFile (base + "_max_1968x960.png")) ? 0 : 1;
         }
 
         std::printf ("%s: latency %.1f ms, match gain %.2f dB, peaks in last frame %d\n", s.name, proc.getLatencyMs(),

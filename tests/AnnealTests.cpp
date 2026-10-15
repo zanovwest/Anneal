@@ -20,6 +20,8 @@
 #include <functional>
 #include <random>
 
+testsig::Channels pinkNoise (double fs, double seconds, float amp, unsigned seed);   // defined with the 3.0 tests
+
 namespace
 {
 using testsig::Channels;
@@ -1698,8 +1700,31 @@ void testEditorLayout()
                 if (kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
                     overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
         }
-        check (overlaps.isEmpty(), "3.0 layout: all controls inside, none overlapping",
+        check (overlaps.isEmpty(), "4.0 layout: all controls inside, none overlapping",
                overlaps.isEmpty() ? juce::String (kids.size()) + " controls" : overlaps);
+    }
+
+    // 4.0: the REFERENCE group sits between SIDECHAIN and OUTPUT (dividers at 984 and 1136), its
+    // menu follows the parameter, and the Paint pill is in the header.
+    {
+        anneal::ReferenceMenu* refMenu = nullptr;
+        juce::Component* paint = nullptr;
+        for (auto* c : content.getChildren())
+        {
+            if (auto* m = dynamic_cast<anneal::ReferenceMenu*> (c))
+                refMenu = m;
+            if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == "PAINT")
+                paint = c;
+        }
+        r.set (ids::refMode, 2);
+        const bool ok = refMenu != nullptr && paint != nullptr && refMenu->getX() > 984 && refMenu->getRight() < 1136
+                        && refMenu->getChoice() == 2 && anneal::ReferenceMenu::pillText (0) == "Reference: off"
+                        && paint->getBottom() <= 48 && AnnealEditorContent::baseWidth == 1312;
+        check (ok, "REFERENCE group and Paint pill placed, menu follows the parameter",
+               (refMenu != nullptr ? "menu " + refMenu->getBounds().toString() + " shows " + anneal::ReferenceMenu::pillText (refMenu->getChoice())
+                                   : juce::String ("NO MENU"))
+                   + (paint != nullptr ? ", Paint " + paint->getBounds().toString() : juce::String (", NO PAINT PILL")));
+        r.set (ids::refMode, 0);
     }
 }
 
@@ -1709,18 +1734,43 @@ void benchmark()
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; };
+    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; };
     const char* modeNames[] = { "Low", "Normal", "Precise" };
-    for (auto [fs, block, mode, midSide, flavour] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+
+    // 4.0: Reference Match at 100 % (a pink-noise reference) with EQ and Heat paint.
+    anneal::ReferenceCurve pinkRef;
+    {
+        const auto pink = pinkNoise (48000.0, 4.0, 0.05f, 91);
+        anneal::ReferenceAnalyser a (48000.0);
+        const float* ptrs[2] = { pink[0].data(), pink[1].data() };
+        a.push (ptrs, 2, (int) pink[0].size());
+        pinkRef = a.finish();
+    }
+    anneal::PaintCurves somePaint;
+    for (int i = 20; i < 40; ++i)
+    {
+        somePaint.eq[i] = 0.5f;
+        somePaint.heat[i + 10] = 0.25f;
+    }
+
+    for (auto [fs, block, mode, midSide, flavour, matchPaint] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
                                     Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
                                     Case { 96000.0, 512, 0 }, Case { 48000.0, 64, 0, 1 },
                                     Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 },
-                                    Case { 48000.0, 64, 0, 0, 1 }, Case { 48000.0, 512, 2, 0, 1 } })
+                                    Case { 48000.0, 64, 0, 0, 1 }, Case { 48000.0, 512, 2, 0, 1 },
+                                    Case { 48000.0, 64, 0, 0, 0, 1 }, Case { 48000.0, 512, 1, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 1 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
         r.set (ids::latency, (float) mode);
         r.set (ids::stereoMode, (float) midSide);
         r.set (ids::flavour, (float) flavour);   // Tape: the flavour with per-bin work
+        if (matchPaint)
+        {
+            r.proc->setReference (pinkRef, "pink");
+            r.proc->setPaint (somePaint);
+            r.set (ids::refMode, 2.0f);
+            r.set (ids::refAmount, 100.0f);
+        }
         r.prepare (fs, block);
         const auto in = testsig::musicLike (fs, 20.0, 1);
         const int n = (int) in[0].size();
@@ -1746,7 +1796,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;
@@ -2580,6 +2630,201 @@ void testOldProjects30()
                + ", sidechain " + juce::String (v (ids::scMode)) + ", ceiling " + juce::String (v (ids::ceiling)));
 }
 
+void testEditor40()
+{
+    section ("30. 4.0 editor: shortcuts, Paint on the display, dropped reference");
+    Rig r;
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    if (editor == nullptr)
+    {
+        check (false, "editor opens", "no AnnealEditor");
+        return;
+    }
+    auto& content = editor->getContent();
+    auto& screen = content.screen;
+
+    {
+        // Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo (Cmd on macOS); a plain Z does nothing.
+        auto* reveal = r.proc->apvts.getParameter (ids::reveal);
+        auto edit = [reveal] (float v)
+        {
+            reveal->beginChangeGesture();
+            reveal->setValueNotifyingHost (reveal->convertTo0to1 (v));
+            reveal->endChangeGesture();
+        };
+        auto value = [reveal] { return reveal->convertFrom0to1 (reveal->getValue()); };
+        edit (55.0f);
+        edit (70.0f);
+        const auto cmd = juce::ModifierKeys::commandModifier, shift = juce::ModifierKeys::shiftModifier;
+        const bool undone = editor->keyPressed (juce::KeyPress ('z', cmd, 0)) && std::abs (value() - 55.0f) < 0.05f;
+        const bool redoneShiftZ = editor->keyPressed (juce::KeyPress ('Z', juce::ModifierKeys (cmd | shift), 0)) && std::abs (value() - 70.0f) < 0.05f;
+        editor->keyPressed (juce::KeyPress ('z', cmd, 0));
+        const bool redoneY = editor->keyPressed (juce::KeyPress ('y', cmd, 0)) && std::abs (value() - 70.0f) < 0.05f;
+        const bool plainIgnored = ! editor->keyPressed (juce::KeyPress ('z')) && std::abs (value() - 70.0f) < 0.05f;
+        check (undone && redoneShiftZ && redoneY && plainIgnored && editor->getWantsKeyboardFocus(),
+               "Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo and redo",
+               juce::String (undone ? "Ctrl+Z undid" : "CTRL+Z FAILED") + ", " + (redoneShiftZ ? "Ctrl+Shift+Z redid" : "CTRL+SHIFT+Z FAILED")
+                   + ", " + (redoneY ? "Ctrl+Y redid" : "CTRL+Y FAILED") + ", " + (plainIgnored ? "plain Z ignored" : "PLAIN Z USED"));
+    }
+
+    // Paint, through the display's own mouse handling.
+    const auto now = juce::Time::getCurrentTime();
+    auto ev = [&screen, now] (juce::Point<float> at, juce::Point<float> down, bool dragged, juce::ModifierKeys extra = {}, int clicks = 1)
+    {
+        return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at,
+                                 juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier | extra.getRawFlags()),
+                                 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &screen, &screen, now, down, now, clicks, dragged);
+    };
+    auto stroke = [&] (juce::Point<float> from, juce::Point<float> to, juce::ModifierKeys extra = {})
+    {
+        screen.mouseDown (ev (from, from, false, extra));
+        screen.mouseDrag (ev ({ (from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f }, from, true, extra));
+        screen.mouseDrag (ev (to, from, true, extra));
+        screen.mouseUp (ev (to, from, true, extra));
+    };
+    auto pointHz = [] (int i) { return anneal::erb::camToHz (anneal::refgrid::camAt (i, anneal::PaintCurves::numPoints)); };
+    const auto eqLane = screen.getEqLane(), heatLane = screen.getHeatLane();
+
+    {
+        // Paint mode off: a drag in a lane paints nothing.
+        content.setPaintMode (false);
+        stroke ({ screen.xForHz (2000.0f), eqLane.getBottom() - 1.0f }, { screen.xForHz (5000.0f), eqLane.getBottom() - 1.0f });
+        const bool untouched = r.proc->getPaint().isDefault();
+
+        // Paint mode: a drag along the bottom of the EQ lane from 2 to 5 kHz paints 0 % there and
+        // nothing else; it is one undo step; Alt-drag erases back to exactly 100 %.
+        content.setPaintMode (true);
+        while (r.proc->canUndo())   // start from an empty history (the shortcut test left steps)
+            r.proc->undo();
+        stroke ({ screen.xForHz (2000.0f), eqLane.getBottom() - 1.0f }, { screen.xForHz (5000.0f), eqLane.getBottom() - 1.0f });
+        const auto painted = r.proc->getPaint();
+        int zeros = 0, wrong = 0;
+        for (int i = 0; i < anneal::PaintCurves::numPoints; ++i)
+        {
+            const double hz = pointHz (i);
+            const bool inside = hz >= 2000.0 * 0.95 && hz <= 5000.0 * 1.05;   // half a point's spacing
+            zeros += painted.eq[i] == 0.0f ? 1 : 0;
+            if ((! inside && painted.eq[i] != 1.0f) || (hz >= 2100.0 && hz <= 4800.0 && painted.eq[i] != 0.0f) || painted.heat[i] != 1.0f)
+                ++wrong;
+        }
+        const bool oneStep = r.proc->canUndo();
+        r.proc->undo();
+        const bool undone = r.proc->getPaint().isDefault() && ! r.proc->canUndo();
+        r.proc->redo();
+        const bool redone = r.proc->getPaint() == painted;
+
+        // Heat lane, half height at 1 kHz: 50 %.
+        stroke ({ screen.xForHz (1000.0f), heatLane.getCentreY() }, { screen.xForHz (1000.0f), heatLane.getCentreY() });
+        const int i1k = juce::roundToInt ((anneal::erb::hzToCam (1000.0) - anneal::refgrid::zMin())
+                                          / (anneal::refgrid::zMax() - anneal::refgrid::zMin()) * (anneal::PaintCurves::numPoints - 1));
+        const float heatAt1k = r.proc->getPaint().heat[i1k];
+
+        stroke ({ screen.xForHz (1800.0f), eqLane.getCentreY() }, { screen.xForHz (5500.0f), eqLane.getCentreY() },
+                juce::ModifierKeys (juce::ModifierKeys::altModifier));
+        const bool erased = anneal::PaintCurves::isFull (r.proc->getPaint().eq);
+        content.tick (0.0f);
+        const bool shown = screen.getPaint() == r.proc->getPaint();
+        check (untouched && zeros >= 5 && wrong == 0 && oneStep && undone && redone && std::abs (heatAt1k - 0.5f) < 0.05f && erased && shown,
+               "paint strokes on the display: one undo step each, Alt erases",
+               juce::String (untouched ? "off: nothing painted" : "OFF PAINTED") + "; EQ 2-5 kHz: " + juce::String (zeros)
+                   + " points at 0 %, " + juce::String (wrong) + " wrong; " + (undone && redone ? "undo/redo ok" : "UNDO WRONG")
+                   + "; heat at 1 kHz " + juce::String (heatAt1k * 100.0f, 0) + " %; " + (erased ? "erased to 100 %" : "ERASE FAILED"));
+    }
+
+    {
+        // Double-click resets the lane; with the click before it, that is a single undo step.
+        const auto before = r.proc->getPaint();   // heat 50 % around 1 kHz
+        const auto at = juce::Point<float> (screen.xForHz (6000.0f), heatLane.getY() + 4.0f);
+        screen.mouseDown (ev (at, at, false));
+        screen.mouseUp (ev (at, at, false));
+        screen.mouseDown (ev (at, at, false, {}, 2));
+        screen.mouseDoubleClick (ev (at, at, false, {}, 2));
+        screen.mouseUp (ev (at, at, false, {}, 2));
+        const bool reset = anneal::PaintCurves::isFull (r.proc->getPaint().heat);
+        r.proc->undo();
+        const bool oneStep = r.proc->getPaint() == before;
+        r.proc->redo();
+        check (reset && oneStep, "double-click resets a lane as one undo step",
+               juce::String (reset ? "heat lane back to 100 %" : "NOT RESET") + ", " + (oneStep ? "one undo restores it" : "UNDO WRONG"));
+        content.setPaintMode (false);
+    }
+
+    {
+        // A file dropped on the display: only audio files are taken; it is analysed off the audio
+        // thread and becomes the reference, Reference switches to Match and the display shows it.
+        const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AnnealTests-drop");
+        dir.createDirectory();
+        const auto wav = dir.getChildFile ("Drop me.wav");
+        wav.deleteFile();
+        {
+            const auto audio = pinkNoise (48000.0, 2.0, 0.05f, 77);
+            auto stream = wav.createOutputStream();
+            std::unique_ptr<juce::AudioFormatWriter> writer (juce::WavAudioFormat().createWriterFor (stream.get(), 48000.0, 2, 24, {}, 0));
+            if (writer != nullptr)
+            {
+                stream.release();
+                const float* ptrs[2] = { audio[0].data(), audio[1].data() };
+                writer->writeFromFloatArrays (ptrs, 2, (int) audio[0].size());
+            }
+        }
+        const auto text = dir.getChildFile ("notes.txt");
+        text.replaceWithText ("not audio");
+        const bool picky = screen.isInterestedInFileDrag ({ wav.getFullPathName() }) && ! screen.isInterestedInFileDrag ({ text.getFullPathName() });
+        screen.fileDragEnter ({ wav.getFullPathName() }, 10, 10);
+        const bool highlighted = screen.isDropHighlighted();
+        screen.filesDropped ({ text.getFullPathName(), wav.getFullPathName() }, 10, 10);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        r.prepare (48000.0, 512);
+        const auto music = testsig::musicLike (48000.0, 0.25);
+        while ((r.proc->isAnalysingReference() || r.proc->apvts.getRawParameterValue (ids::refMode)->load() < 1.5f)
+               && juce::Time::getMillisecondCounterHiRes() - t0 < 30000.0)
+        {
+            r.run (music, fixedBlocks (512));
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+        }
+        content.tick (0.0f);
+        const auto got = r.proc->getReference();
+        const bool ok = picky && highlighted && ! screen.isDropHighlighted() && got.curve.valid && got.name == "Drop me.wav"
+                        && r.proc->apvts.getRawParameterValue (ids::refMode)->load() > 1.5f;
+        dir.deleteRecursively();
+        check (ok && screen.hasReference() && screen.getReferenceName() == "Drop me.wav", "a dropped audio file becomes the reference (Match)",
+               juce::String (picky ? "audio files only" : "ACCEPTS ANY FILE") + ", " + (highlighted ? "highlighted while dragged" : "NO HIGHLIGHT")
+                   + ", reference \"" + got.name + "\", Reference " + juce::String (r.proc->apvts.getRawParameterValue (ids::refMode)->load(), 0)
+                   + ", display shows \"" + screen.getReferenceName() + "\"");
+    }
+
+    {
+        // While Learn key learns, the display follows the learned reference from the editor's own
+        // timer (before 4.0 shipped it waited for the processor's timer, so a host that runs no
+        // message loop for the processor's timer showed "waiting for the sidechain key").
+        Rig k;
+        juce::AudioProcessor::BusesLayout l;
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.outputBuses.add (juce::AudioChannelSet::stereo());
+        k.proc->setBusesLayout (l);
+        k.set (ids::refMode, 1.0f);
+        k.prepare (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> ked (k.proc->createEditor());
+        auto& kc = dynamic_cast<AnnealEditor&> (*ked).getContent();
+        const auto keySignal = pinkNoise (48000.0, 1.0, 0.05f, 5);
+        juce::AudioBuffer<float> buf (4, 512);
+        juce::MidiBuffer midi;
+        for (int pos = 0; pos + 512 <= (int) keySignal[0].size(); pos += 512)
+        {
+            buf.clear();
+            for (int c = 0; c < 2; ++c)
+                buf.copyFrom (c + 2, 0, keySignal[(size_t) c].data() + pos, 512);
+            k.proc->processBlock (buf, midi);
+        }
+        kc.tick (0.0f);
+        check (kc.screen.hasReference() && kc.screen.getReferenceName() == "sidechain key",
+               "the display follows Learn key without the processor's timer",
+               kc.screen.hasReference() ? "shows \"" + kc.screen.getReferenceName() + "\"" : juce::String ("NOTHING SHOWN"));
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -2614,6 +2859,7 @@ int main()
     testReference();
     testPaint();
     testReferenceState();
+    testEditor40();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

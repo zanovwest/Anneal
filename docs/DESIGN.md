@@ -28,8 +28,9 @@ secondary.
 ## Signal path and control groups
 
 ```
-key ── STFT ─► key spectrum ─┐ (3.0, only while Sidechain is on)
-in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve (Freeze holds it) ─┐
+file ─► (background thread) long-term spectrum ─┐ (4.0 reference, or learned from the key)
+key ── STFT ─► key spectrum ─┬──────────────────┤ (3.0, only while Sidechain or Learn key is on)
+in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► auto-EQ gain curve (Freeze holds it) × Paint ─┐
     │            │                                                      ├─► ×gain + harmonics ─► iSTFT ─► match ─► mix/Δ ─► output ─► ceiling ─► bypass xfade ─► out
     │            └─► heat-need map ─► harmonic synth ───────────────────┘
     └─ latency-matched dry (STFT + ceiling look-ahead) ──────────────────────────────────────────────────────────────┘
@@ -40,10 +41,11 @@ in ─┬─ STFT ─► perceptual model ─► auto-EQ gain curve (Freeze hold
 | AUTO EQ | Reveal, Smooth | Freeze (3.0, title row), Tilt, Response, Guard (transients) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | SIDECHAIN (3.0) | Amount | Mode (Off / Make room / Unmask) |
+| REFERENCE (4.0) | Amount | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) |
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
-| Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0), Match (loudness), Δ (delta listen), Bypass |
+| Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
-| On the display | Range low / high handles (limits where Anneal acts) | |
+| On the display | Range low / high handles (limits where Anneal acts) | Drop an audio file (4.0 reference); in paint mode, draw the EQ and Heat weights (4.0) |
 
 ## Visual direction (v3, 0.2.0): temper accents on cool graphite
 
@@ -58,6 +60,8 @@ to a cool, near-black neutral so the accents carry the information.
 | Heat / harmonics | bronze `#FF8B3D` | harmonic energy written, Heat ring, harmonic bars |
 | Smooth / cut | temper blue `#6FA7FF` | reduced bands, Smooth ring |
 | Sidechain / key | violet `#A57BE0` (3.0) | key spectrum line, SIDECHAIN title dot, Amount ring. Annealed steel goes violet just before blue, so the key sits in the temper family |
+| Reference / target | teal `#5FCDBB` (4.0) | the reference's spectrum line, REF legend tag, REFERENCE title dot, Amount ring, the Reference menu when on, the drop outline. The last temper colour, the grey-teal steel takes past light blue: the tone you are tempering toward |
+| Paint (the user's hand) | text `#ECEEF1` (4.0) | the Paint pill when on, the weight lines and their points in paint mode. Neutral on purpose: it is not one of the processes, it is where you let them act |
 | Deck | `#111215` | |
 | Screen | `#0A0B0D`, grid `#1B1E23`, divider `#24272D` | |
 | Raised (buttons, menus) | `#191B1F` | |
@@ -79,10 +83,12 @@ on hue alone; even vs. odd harmonics are solid vs. lighter bars.
   the engine; the same amount is a thin inner arc. Secondary controls are compact rows: a
   42 px ring with title and value beside it. Color and Focus are faders with their two
   ends named (even/odd, body/air). Buttons are pills; on = tinted in the role colour.
-- **Layout (3.0: 1160 × 640):** header 48 px (wordmark, latency, undo/redo, presets centred,
-  compare cluster right); the display takes 56 % of the height; the deck follows the signal:
-  AUTO EQ → HEAT → SIDECHAIN → OUTPUT (dividers at x 490 / 832 / 984), hairlines between groups,
-  no cards. The output meter is a tall bar at the right edge of the deck.
+- **Layout (4.0: 1312 × 640, resizable 984 × 480 to 1968 × 960, fixed aspect):** header 48 px
+  (wordmark, latency, undo/redo, presets centred, Stereo/Mid-Side and the Paint pill, compare cluster
+  right); the display takes 56 % of the height; the deck follows the signal: AUTO EQ → HEAT →
+  SIDECHAIN → REFERENCE → OUTPUT (dividers at x 490 / 832 / 984 / 1136), hairlines between groups,
+  no cards. The output meter is a tall bar at the right edge of the deck. (3.0 was 1160 × 640; the
+  REFERENCE group added 152 px, the width of SIDECHAIN, and nothing else moved.)
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
@@ -120,6 +126,26 @@ only while a key is arriving, with a KEY legend under AUTO EQ. Freeze is a pill 
 row, tinted straw when on, and the display then shows an "AUTO EQ FROZEN" tag so a held curve is never
 mistaken for a live one. The Ceiling's reduction is a short bronze bar and number under the meter's
 peak, holding its deepest value for 1.5 s so a brief catch is readable.
+
+**Reference, Paint, shortcuts (4.0).** The REFERENCE group mirrors SIDECHAIN: a pill menu (Off is a
+plain raised pill, "Reference: off"; Learn key and Match are tinted teal) over a teal Amount ring
+whose live line says what is happening ("learned 12 s", "matching −2.4 dB", "no reference yet",
+"analysing the file"). The menu also has *Load a reference file…* and *Clear the reference*. On the
+display the reference is a teal line with a soft halo, drawn on the spectrum scale where the output
+would sit at the same normalised level, only while Reference is Learn key or Match; a REF tag in the
+legend names it (the file, or "learning the sidechain key — 12 s"), or says what to do, or why a
+dropped file wasn't used (in the warning red, for 6 s). Dragging a file over the display outlines it
+in dashed teal with "DROP TO USE AS THE REFERENCE". The legend's tags stack (AUTO EQ, KEY, REF, PAINT)
+and the hover read-out sits under them.
+
+Paint is a header pill (neutral white when on). In paint mode each lane shows its weight as a white
+line through 64 points (top of the lane = 100 %, bottom = none) and a PAINT tag explains the gestures:
+drag to paint, Alt- or right-drag to erase, double-click to reset the lane; the range handles are then
+taken by their grips above the plot only. With paint mode off the lines go, but painted-out regions
+stay dimmed exactly like outside the Range (the same screen colour at 72 % × (1 − weight)), so a
+painted project never hides it. The hover read-out adds "paint EQ 40 % / heat 100 %" wherever a
+weight is below 100 %. Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (Cmd on macOS) undo and redo once the editor
+has focus (click it), and Escape leaves paint mode.
 
 In Mid/Side mode the centre and sides are analysed independently. The EQ curve is solid for Mid
 and dashed for Side, with the same straw-above / blue-below colour convention. Hover reports

@@ -24,16 +24,6 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 11. **Show the guard on the display**: a faint mark in the bands where Guard is holding an attack,
     and a live line under the Guard knob, so you can see it working.
 
-## Reserved for 4.0
-
-The user asked for a major 4.0 on 2026-10-14. These belong to that run; daily updates don't take them.
-
-1. **Reference match**: learn a reference's long-term ERB spectrum (from the sidechain key, or an
-   audio file dropped on the display) and steer the auto EQ toward it, with a Match amount.
-2. **Paint where it acts**: draw a per-band amount on the display (beyond the two Range handles),
-   for the EQ and Heat separately.
-3. **Keyboard shortcuts** for Undo/Redo (Ctrl+Z / Ctrl+Shift+Z) where the host passes keys through.
-
 ## Waiting on the user
 
 These need the user's own accounts or decisions. Daily updates don't take them.
@@ -62,6 +52,18 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 4.0.0 (2026-10-14), the major update the user asked for on 2026-10-13/14:
+  - **Reference match**: learn a reference's long-term ERB spectrum from the sidechain key (Learn
+    key) or from an audio file dropped on the display (or loaded from the Reference menu), and steer
+    the auto EQ toward it (Match, with Amount; ±6 dB, smoothed ±1.5 Cam). New REFERENCE group, teal
+    line on the display, saved in the project.
+  - **Paint where it acts**: in paint mode, draw how much of the auto EQ and of Heat acts in each
+    region, directly on the display's two lanes (64 points each, saved in the project; each stroke
+    one undo step).
+  - **Keyboard shortcuts**: Ctrl+Z undo, Ctrl+Shift+Z / Ctrl+Y redo (Cmd on macOS), Escape leaves
+    paint mode.
+  - Fixed: a frozen curve was lost when the host stopped and started or the latency mode changed;
+    switching the Ceiling on again could dip quiet audio for ~80 ms.
 - 3.1.0 (2026-10-13): **CLAP for Windows** (zip on the release, ClapCheck 10/10); macOS universal
   (AU / VST3 / CLAP) and Linux (VST3 / LV2 / CLAP) build setup, workflow and install scripts (not
   running yet, see above); platform fonts; docs/DISTRIBUTION.md (DAW matrix, KVR kit).
