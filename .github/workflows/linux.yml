@@ -1,0 +1,104 @@
+name: Linux
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/linux-build]
+    paths:
+      - .github/workflows/linux.yml
+      - CMakeLists.txt
+      - Source/**
+      - tests/**
+      - tools/**
+      - packaging/linux/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anneal-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux audio, GUI and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libjack-jackd2-dev \
+            libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev \
+            libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+            xvfb xauth fonts-dejavu-core
+
+      - name: Configure Linux formats
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DANNEAL_CLAP=ON
+
+      - name: Build plugins, standalone and verification tools
+        run: >-
+          cmake --build build --parallel 2 --target
+          Anneal_VST3 Anneal_LV2 Anneal_CLAP Anneal_Standalone
+          AnnealTests AnnealHostCheck AnnealSnapshot
+
+      - name: DSP and processor acceptance tests
+        run: |
+          set -o pipefail
+          xvfb-run -a build/AnnealTests_artefacts/Release/AnnealTests | tee linux-tests.log
+
+      - name: VST3 host verification
+        run: |
+          set -o pipefail
+          xvfb-run -a build/AnnealHostCheck_artefacts/Release/AnnealHostCheck \
+            build/Anneal_artefacts/Release/VST3/Anneal.vst3 | tee linux-host.log
+
+      - name: CLAP host verification
+        run: |
+          set -o pipefail
+          xvfb-run -a python3 tools/ClapCheck.py \
+            build/Anneal_artefacts/Release/CLAP/Anneal.clap | tee linux-clap.log
+
+      - name: Render native Linux editor
+        run: xvfb-run -a build/AnnealSnapshot_artefacts/Release/AnnealSnapshot linux-snapshots
+
+      - name: Package verified Linux binaries
+        id: package
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^project\(Anneal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          package="Anneal-$version-Linux-x86_64"
+          artifacts=build/Anneal_artefacts/Release
+          mkdir "$package"
+          cp -R "$artifacts/VST3/Anneal.vst3" "$artifacts/LV2/Anneal.lv2" \
+            "$artifacts/CLAP/Anneal.clap" "$artifacts/Standalone/Anneal" "$package/"
+          sed "s/@VERSION@/$version/g" packaging/linux/INSTALL.txt > "$package/INSTALL.txt"
+          sed 's/\r$//' packaging/linux/install.sh > "$package/install.sh"
+          chmod +x "$package/install.sh" "$package/Anneal"
+          file "$package/Anneal" "$package/Anneal.clap"
+          find "$package" -type f -name '*.so' -exec file {} \;
+          ldd "$package/Anneal" | tee linux-dependencies.log
+          if grep -q 'not found' linux-dependencies.log; then exit 1; fi
+          tar -czf "$package.tar.gz" "$package"
+          sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
+          echo "archive=$package.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anneal-Linux-x86_64
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Anneal-Linux-validation
+          path: |
+            linux-*.log
+            linux-snapshots/*.png
+          if-no-files-found: warn
+
