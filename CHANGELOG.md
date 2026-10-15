@@ -4,7 +4,74 @@ Newest first. Each completed, tested update gets a versioned entry (see README �
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
-## 3.1.0 — 2026-10-13 23:06
+## 4.0.0 — @@WHEN@@
+
+The second major update. Anneal can now match the tone of a reference, and you can draw where it
+works. With the new controls left alone, everything sounds exactly as in 3.1 (tested: bit-identical).
+
+New
+- **Reference match** (new REFERENCE group, teal). Give Anneal a reference and it steers its auto EQ
+  toward that reference's long-term tone:
+  - **Drop an audio file** (wav, aiff, flac, mp3, ogg) on the display, or use *Load a reference
+    file…* in the Reference menu. It's analysed in the background, never in the audio thread, and
+    Reference switches to Match. The display outlines itself in teal while you drag a file over it.
+  - **Learn key**: learns the tone of whatever plays into the sidechain input (another mix, a
+    bounce, a reference track on its own channel). The live line under Amount counts the seconds
+    learned. Choosing it with nothing routed keeps the reference you had.
+  - **Match** compares the reference with the last ~3 s of this track, both at the same overall
+    level, and adds the smoothed difference (about 1.5 ERB either side, at most ±6 dB × Amount) to
+    the auto EQ. Range, Freeze and Paint treat it like the rest of the curve. Measured: a mix with a
+    +6 dB shelf at 4 kHz (5.5 dB brighter than a flat reference) comes out **5.3 dB closer** to it at
+    Amount 100 % (8 kHz −3.6 dB, 500 Hz +2.0 dB), in Stereo and in Mid/Side. A reference learned from
+    the key is within 0.28 dB of the same audio analysed as a file (200 Hz – 16 kHz).
+  - **Amount** 0–100 % (default 50 %): how far Match steers. The live line says how far it is
+    steering now ("matching −2.4 dB").
+  - The reference is a teal line on the display at the level of the output, with a REF tag naming it.
+    It's saved with the project. *Clear the reference* is in the menu.
+  - Off is the default; projects from before 4.0 open Off with no reference. Off, Learn key and
+    Amount 0 % are bit-identical to 3.1 (max difference 0).
+- **Paint** (pill in the header): draw on the display how much of the auto EQ and of Heat acts in
+  each region, beyond the two Range handles.
+  - Drag in the EQ lane or the Heat lane: the top of the lane is 100 %, the bottom none. Alt-drag or
+    right-drag erases back to 100 %, a double-click resets that lane, Escape leaves paint mode. Each
+    stroke is one undo step.
+  - The EQ amount covers everything the auto EQ does there (Reveal, Smooth, Tilt, sidechain and
+    reference). Measured: painting the EQ to 0 % over 2–5 kHz takes a −9.0 dB Smooth cut at 3150 Hz to
+    0.0 dB and leaves the −7.7 dB cut at 800 Hz alone. Painting Heat to 0 % there takes a 1.5 kHz
+    tone's 2nd and 3rd harmonics from −6 / −10 dB to below −170 dB and leaves its 4th (6 kHz) as it was.
+  - Painted-out regions stay dimmed, like outside the Range, and the hover read-out shows the amounts.
+    Saved with the project (64 points per lane); 100 % everywhere is the default and bit-identical to 3.1.
+- **Keyboard shortcuts**: Ctrl+Z undo, Ctrl+Shift+Z or Ctrl+Y redo (Cmd on macOS), once you've
+  clicked in Anneal's window and if the DAW passes keys to plug-ins. Keys Anneal doesn't use go back
+  to the DAW.
+
+Changed
+- **Wider window**: 1312 × 640 (was 1160 × 640) for the REFERENCE group, resizable from 984 × 480 to
+  1968 × 960. Everything else is where it was.
+- The project format is version 2: it adds the reference and the paint. 3.x projects open as they
+  were; projects saved by 4.0 don't open their reference or paint in 3.x (the knobs do).
+
+Fixes
+- **Freeze** lost the held curve when the DAW stopped and started playback (the curve was re-learned
+  from the first moment after the restart) or when the latency mode changed. A frozen curve now
+  stays exactly where it was (−9.0 dB before and after both).
+- Switching the **Ceiling** back on could pull quiet audio down for about 80 ms: its detector still
+  remembered loud audio from the last time it was on. It now follows the audio while off.
+
+Tests: 112/112 acceptance checks (19 new: the two fixes above, Reference match (identical when off,
+the shelf moved 5.3 dB, Learn key, files analysed off the audio thread, Freeze holds the match), Paint
+(identical at 100 %, EQ and Heat paint, a stroke is one undo step), reference and paint in saved projects
+and older projects, the shortcuts, paint strokes and a double-click reset on the display, a dropped file,
+the display following Learn key, and the REFERENCE group in the layout). @@HOST@@ host checks on the built
+VST3 (new: the Reference parameters, Learn key through the sidechain bus, and the reference and paint
+travelling in the VST3 state into a new instance: Heat painted to 0 % there writes nothing, −300 dB,
+against −15.3 dB unpainted). @@SETUP@@ isolated installer checks. Editor rendered at 100/150/200 % and
+at the new minimum and maximum sizes, plus Reference, Learn key, Paint, painted and file-drop snapshots.
+CPU at 48 kHz on this machine: Stereo Low 2.0 %, Normal 1.8 %, Precise 2.7 % of one core; Mid/Side
+Low 3.7 % (64), Normal 2.8 % (512), Precise 4.3 % (64), the same as 3.1.0. With Reference Match at
+100 % and Paint on: Low 2.2 %, Normal 1.9 %, Precise 2.8 %. Slowest 0.1 % of 64-sample blocks: Stereo
+Low 8 %, Precise 25 %; Mid/Side Low 19 %, Precise 36 % of the deadline.
+
 
 New
 - **CLAP for Windows**: `Anneal-3.1.0-Windows-CLAP.zip` on the release, for Bitwig, Reaper,
