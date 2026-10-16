@@ -11,6 +11,9 @@ Add ideas anywhere in the list and reorder freely. Never add anything listed und
 
 ## Next up
 
+Linux support and the KVR listing were completed in 4.0.1 at the user's request on 2026-10-15.
+The one-minute Codex schedule is paused. The remaining feature ideas below are unchanged.
+
 Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (0.2.4), Listen
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
@@ -28,8 +31,8 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
 These need the user's own accounts or decisions. Daily updates don't take them.
 
-- **Public downloads, KVR listing, Plugin Alliance**: making releases public, and licence choices
-  (JUCE, VST3). See docs/DISTRIBUTION.md. The user will do KVR later (2026-10-13).
+- **Plugin Alliance and source/licence choices** (JUCE, VST3): see docs/DISTRIBUTION.md.
+  KVR now hosts the free Windows/Linux downloads; the GitHub repository remains private.
 - **Pro Tools (AAX)**: Avid developer account and AAX SDK, plus PACE signing (iLok).
 
 ## Not now
@@ -38,9 +41,10 @@ The user is on Windows and dropped the Mac plans on 2026-10-13 ("im on windows i
 coding was free"). The setup stays in the repo, untouched, in case that changes. Keep the code
 portable, but don't work on these:
 
-- **Switch on the macOS / Linux / CLAP workflow**: it needs the gh login's `workflow` scope
+- **Switch on the combined macOS / CLAP workflow**: it needs the gh login's `workflow` scope
   (`gh auth refresh -h github.com -s workflow`), then `packaging/ci/platforms.yml` moves to
   `.github/workflows/`.
+  Linux now has its own `.github/workflows/linux.yml`; this does not enable the parked Mac jobs.
 - **Notarized macOS builds**: Apple Developer Program membership (99 USD a year).
 
 ## Not wanted
@@ -51,6 +55,15 @@ The user said no to these on 2026-10-13. Don't add them.
 - A/B compare.
 
 ## Done
+
+- 4.0.1 (2026-10-15): **Linux support**: native Ubuntu 24.04 VST3, CLAP, LV2 and Standalone
+  builds, local build/package scripts, checksum archives and correct VST3 copy defaults.
+  Fixed the Linux installer's deletion of the previous plugin on a copy failure. The headless
+  desktop includes Openbox; the test host initialises Xlib and detaches the editor before
+  destroying its parent window. Passed 112 acceptance, 20 VST3 host, 10 CLAP and 23 packaging
+  checks, plus LV2 metadata/dependency inspection and Linux editor renders. Windows regression:
+  112 acceptance, 20 host and 25 setup checks. **KVR listing** with free Windows/Linux downloads
+  and current screenshots: https://www.kvraudio.com/product/anneal-by-qulic.
 
 - 4.0.0 (2026-10-14), the major update the user asked for on 2026-10-13/14:
   - **Reference match**: learn a reference's long-term ERB spectrum from the sidechain key (Learn

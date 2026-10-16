@@ -6,11 +6,15 @@ Anneal @VERSION@ for Linux (x86_64)
   Anneal.clap    CLAP: Bitwig, Reaper, ...
   Anneal         standalone app (JACK or ALSA)
 
-Install for your user:  bash install.sh
+Extract the complete archive, then install for your user:  bash install.sh
 That copies them to ~/.vst3, ~/.lv2, ~/.clap and ~/.local/bin, the folders hosts scan by
 default. Then restart your DAW.
+Updates stage each replacement before replacing the previous copy. A failed copy keeps the
+previous plugin. No administrator access is needed, and building never installs automatically.
 
 Built on Ubuntu 24.04. It needs the usual desktop libraries: ALSA, FreeType, fontconfig, X11.
+Use an X11 desktop or XWayland. Native Wayland-only plugin embedding is not supported by JUCE 8.0.4.
+Build/runtime logs and a SHA-256 checksum accompany the GitHub Actions package.
 
 Uninstall: delete ~/.vst3/Anneal.vst3, ~/.lv2/Anneal.lv2, ~/.clap/Anneal.clap and
 ~/.local/bin/Anneal.

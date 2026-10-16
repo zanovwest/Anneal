@@ -110,6 +110,10 @@ std::vector<float> numbersOf (const juce::String& text)
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+#if JUCE_LINUX
+    // XInitThreads must run in the host before a plugin opens its own X connection.
+    juce::XWindowSystem::getInstance();
+#endif
     if (argc < 2)
     {
         std::printf ("usage: AnnealHostCheck <path to Anneal.vst3>\n");
@@ -605,9 +609,12 @@ int main (int argc, char* argv[])
             run (*plugin, music, out, [] { return 512; });
             juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
             sizes << editor->getWidth() << "x" << editor->getHeight() << " ";
-            holder.removeFromDesktop();
+            // Detach the native VST3 child before destroying its parent X11 window.
+            // XDestroyWindow destroys all children; removing the parent first made
+            // the editor's later teardown fail with BadWindow on Linux.
             holder.removeChildComponent (editor.get());
             editor.reset();
+            holder.removeFromDesktop();
             juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
         }
         check (ok, "editor attach/run/detach x3 while processing", "editor sizes " + sizes);
