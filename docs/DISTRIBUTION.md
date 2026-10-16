@@ -7,10 +7,10 @@ and apple silicon".
 
 | Platform | Formats | Built by | Tested |
 |---|---|---|---|
-| Windows x64 | VST3 + Standalone (in `Anneal-<v>-Setup.exe`) | `build.ps1` on the author's PC, every release | 93 acceptance + 17 host + 25 installer checks |
+| Windows x64 | VST3 + Standalone (in `Anneal-<v>-Setup.exe`) | `build.ps1` on the author's PC, every release | 4.0.1: 112 acceptance + 20 host + 25 installer checks |
 | Windows x64 | CLAP (`Anneal-<v>-Windows-CLAP.zip`) | the author's PC for 3.1.0 and 4.0.0; GitHub Actions once switched on | `tools/ClapCheck.py`: 10/10 (main + sidechain ports, 27 parameters since 4.0, latency 1091 samples at 48 kHz, 2 s of audio); not tried in a DAW |
 | macOS 10.15+, **Apple Silicon and Intel** (one universal binary) | AU, VST3, CLAP, Standalone (`Anneal-<v>-macOS.zip`) | GitHub Actions, **not switched on yet** | the workflow runs: acceptance tests, host check on the VST3, ClapCheck, `auval -strict` on the AU, `lipo` check for arm64 + x86_64 |
-| Linux x86_64 | VST3, LV2, CLAP, Standalone (`Anneal-<v>-Linux-x86_64.tar.gz`) | Dedicated `.github/workflows/linux.yml` (Ubuntu 24.04) | acceptance tests, built-VST3 host check, ClapCheck, LV2 metadata inspection, dependency checks and editor renders under Xvfb; first native run pending |
+| Linux x86_64 | VST3, LV2, CLAP, Standalone (`Anneal-<v>-Linux-x86_64.tar.gz`; ZIP on KVR) | Dedicated `.github/workflows/linux.yml` (Ubuntu 24.04) | 4.0.1: 112 acceptance, 20 VST3 host, 10 CLAP, 23 packaging checks; LV2 metadata, dependencies and 24 editor renders |
 
 The parked combined workflow runs for each published x.y.0 release and by hand (Actions → Platforms → Run workflow,
 optionally with a release tag to attach the files to). It skips patch releases: on a private
@@ -18,7 +18,7 @@ repository GitHub counts macOS minutes ten times.
 
 ### Linux builds (4.0.1)
 
-The dedicated **Linux** workflow runs on main, the Linux development branch, pull requests,
+The dedicated **Linux** workflow runs on main pushes, pull requests,
 manual dispatch and every published release, including patch releases. It builds the release's
 exact tag before attaching its package. Ordinary builds have read-only repository access; only
 the release upload job can write release assets. macOS jobs remain parked.
@@ -30,9 +30,10 @@ installs per user and stages replacements before touching the old plugin. A pack
 preserves the old installation; 23 fixture packaging checks cover that regression and archive integrity.
 
 The headless desktop includes a window manager and waits for its X11 properties before starting
-JUCE. The VST3 test host also initialises its own Xlib before loading the plugin. The initial native
-run compiled all formats and passed 112 acceptance checks, but bare Xvfb failed with `BadAtom` at
-the editor attach check. That failure is kept visible until the full host check passes.
+JUCE. The VST3 test host also initialises its own Xlib before loading the plugin, and detaches the
+native editor before closing the parent window. These fix `BadAtom` from bare Xvfb and
+`BadWindow` from destroying the parent first. The full host check, including three editor cycles,
+passed in [the native Linux run](https://github.com/zanovwest/Anneal/actions/runs/38837427218).
 
 Native Linux build and runtime results must be checked in Actions before describing a release as
 Linux-tested. LV2 inspection checks metadata/discovery, rather than claiming an LV2 DAW audio test.
@@ -84,15 +85,13 @@ require enabling the parked Mac jobs. macOS builds have not yet been verified.
   The workflow can do it once the certificate and an app-specific password are stored as
   repository secrets.
 
-## Before anything goes public
+## Public downloads
 
-The repository and its releases are **private**. People outside your GitHub account can't download
-anything yet, so a KVR listing would have no working link. Nothing has been made public. That's
-your decision. Options:
-
-1. Make `zanovwest/Anneal` public. The source becomes public too.
-2. A separate public repository (e.g. `zanovwest/anneal-releases`) that holds only the release files.
-3. Host the files elsewhere: your own site, Gumroad / Payhip with a 0 price, or itch.io.
+The repository and its GitHub releases remain **private**. At the user's request on 2026-10-15,
+KVR hosts free public Windows and Linux downloads on
+[Anneal's product page](https://www.kvraudio.com/product/anneal-by-qulic).
+The KVR Linux ZIP contains the same 16 entries as the tested native tar archive, preserving Unix
+permissions. Both public downloads were downloaded again and checked against the local SHA-256.
 
 **Licences to sort out first** (not legal advice):
 - **JUCE 8** is dual-licensed: AGPLv3 (you must publish your source under AGPLv3) or a JUCE
@@ -105,21 +104,19 @@ your decision. Options:
 
 ## KVR Audio listing kit
 
-KVR lists products that developers submit. To list Anneal:
-
-1. From your own KVR account, register as a developer ("Qulic" or your name).
-2. Add a product, using the text below.
-3. Attach the screenshots and a public download link.
-
-You submit it; I can't sign in or create accounts for you.
+The listing is live under the user's existing Qulic developer account:
+https://www.kvraudio.com/product/anneal-by-qulic.
+It includes three current screenshots and free Windows/Linux downloads hosted by KVR.
+The fields below are reference material for later edits. macOS builds remain unverified and
+are not advertised as available on the listing.
 
 - **Product name:** Anneal
 - **Developer:** Qulic
 - **Type / category:** Effect › EQ (also Distortion / Saturation, Spectral)
-- **Formats:** VST3, AU, CLAP, LV2, Standalone
-- **Platforms:** Windows x64; macOS 10.15+ (Apple Silicon and Intel, universal); Linux x86_64
+- **Formats:** Windows VST3 + Standalone; Linux VST3, CLAP, LV2 + Standalone
+- **Platforms:** Windows x64; Linux x86_64
 - **Price:** Free
-- **Version:** 3.1.0 (or the newest at the time)
+- **Version:** 4.0.1
 - **Short description (one line):** An automatic perceptual EQ and spectral saturator in one:
   Reveal what's masked, Smooth what dominates, and add harmonics that never alias.
 - **Description:**

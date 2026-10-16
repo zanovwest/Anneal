@@ -10,7 +10,7 @@ Linux support
 - A dedicated Linux workflow builds VST3, LV2, CLAP and Standalone on Ubuntu 24.04, runs
   acceptance and built-plugin host checks under Xvfb, inspects LV2 metadata and runtime
   dependencies, and packages the binaries with SHA-256 checksums. It runs on pull requests,
-  development/main pushes, manual dispatch and published releases, including patch releases.
+  main pushes, pull requests, manual dispatch and published releases, including patch releases.
 - `bash build.sh --test --snapshot --package` provides the same local build path, including a
   display for JUCE's bundle metadata helpers. Building does not install a live plugin.
 - Linux and macOS get their own correct default VST3 copy folders rather than a Windows path.
@@ -25,9 +25,19 @@ Fixes
   staged on the destination filesystem and the old copy can be restored if replacement fails.
   Running install.sh without any extracted binaries now reports an error.
 
-Verification: 23 shell packaging checks pass with fixture payloads, including paths with spaces,
-copy failures, update preservation and archive integrity (two checks failed before the installer
-fix). Native Linux build and runtime verification are pending the first workflow run.
+Distribution
+- [Anneal is listed on KVR](https://www.kvraudio.com/product/anneal-by-qulic) with free Windows
+  and Linux downloads and three current editor screenshots. KVR hosts the public binaries;
+  source visibility is unchanged. The one-minute Codex schedule is paused at the user's request.
+
+Verification: Ubuntu 24.04/GCC 13.3: 112/112 acceptance, 20/20 built-VST3 host (including three
+editor attach/detach cycles) and 10/10 CLAP checks. LV2 discovery/metadata and runtime dependency
+inspection passed. 24 Linux editor snapshots rendered; default, reference and minimum-size views
+inspected. 23/23 packaging fixture checks cover paths with spaces, copy failures and archive
+integrity (two failed before the installer fix). Windows regression: 112/112 acceptance,
+20/20 built-VST3 host and 25/25 isolated setup checks. KVR's Linux ZIP preserves all 16 entries and
+Unix permissions from the tested tar archive; downloaded Windows and Linux files match local SHA-256.
+LV2 audio in a DAW and macOS builds remain unverified.
 
 ## 4.0.0 — 2026-10-14 17:46
 
