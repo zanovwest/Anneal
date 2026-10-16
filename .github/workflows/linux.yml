@@ -2,7 +2,7 @@ name: Linux
 
 on:
   push:
-    branches: [main, codex/linux-support]
+    branches: [main]
   pull_request:
   workflow_dispatch:
   release:
@@ -32,6 +32,12 @@ jobs:
             xvfb xauth openbox x11-utils lilv-utils
       - name: Test Linux install and packaging scripts
         run: bash tests/LinuxPackagingTests.sh
+      - uses: actions/cache/restore@v4
+        id: build-cache
+        with:
+          path: build-linux
+          key: anneal-linux-gcc13-v1-${{ github.sha }}
+          restore-keys: anneal-linux-gcc13-v1-
       - name: Build VST3, LV2, CLAP and Standalone; test and package
         env:
           CMAKE_GENERATOR: Ninja
@@ -61,6 +67,11 @@ jobs:
           name: Anneal-Linux-snapshots
           path: build-linux/snapshots/*.png
           if-no-files-found: ignore
+      - uses: actions/cache/save@v4
+        if: always() && steps.build-cache.outputs.cache-hit != 'true'
+        with:
+          path: build-linux
+          key: anneal-linux-gcc13-v1-${{ github.sha }}
 
   release:
     if: github.event_name == 'release'

@@ -609,9 +609,12 @@ int main (int argc, char* argv[])
             run (*plugin, music, out, [] { return 512; });
             juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
             sizes << editor->getWidth() << "x" << editor->getHeight() << " ";
-            holder.removeFromDesktop();
+            // Detach the native VST3 child before destroying its parent X11 window.
+            // XDestroyWindow destroys all children; removing the parent first made
+            // the editor's later teardown fail with BadWindow on Linux.
             holder.removeChildComponent (editor.get());
             editor.reset();
+            holder.removeFromDesktop();
             juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
         }
         check (ok, "editor attach/run/detach x3 while processing", "editor sizes " + sizes);

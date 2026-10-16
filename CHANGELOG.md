@@ -17,6 +17,8 @@ Linux support
 - Headless checks use Xvfb with a ready Openbox window manager, and the VST3 test host
   initialises Xlib before loading a plugin. Bare Xvfb previously crashed at editor attachment
   with `BadAtom`; editor creation and repeated attachment remain required host checks.
+- The VST3 test host detaches and destroys the editor before closing its parent window.
+  Reversing that order destroyed the native child first and raised `BadWindow` on Linux.
 
 Fixes
 - A failed Linux update copy no longer deletes the previous plugin first. Replacements are
