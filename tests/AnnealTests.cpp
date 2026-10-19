@@ -1701,8 +1701,18 @@ void testEditorLayout()
                 if (kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
                     overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
         }
-        check (overlaps.isEmpty(), "4.0 layout: all controls inside, none overlapping",
+        check (overlaps.isEmpty(), "5.0 layout: all controls inside, none overlapping",
                overlaps.isEmpty() ? juce::String (kids.size()) + " controls" : overlaps);
+    }
+
+    // 5.0: the SHAPE group (Punch, Width, Mono bass) between REFERENCE and OUTPUT (dividers 1136, 1288).
+    {
+        int inShape = 0;
+        for (auto* c : content.getChildren())
+            if (dynamic_cast<anneal::Knob*> (c) != nullptr && c->getX() > 1136 && c->getRight() < 1288)
+                ++inShape;
+        check (inShape == 3 && AnnealEditorContent::baseWidth == 1464, "SHAPE group: Punch, Width and Mono bass between REFERENCE and OUTPUT",
+               juce::String (inShape) + " knobs, base width " + juce::String (AnnealEditorContent::baseWidth));
     }
 
     // 4.0: the REFERENCE group sits between SIDECHAIN and OUTPUT (dividers at 984 and 1136), its
@@ -1720,7 +1730,7 @@ void testEditorLayout()
         r.set (ids::refMode, 2);
         const bool ok = refMenu != nullptr && paint != nullptr && refMenu->getX() > 984 && refMenu->getRight() < 1136
                         && refMenu->getChoice() == 2 && anneal::ReferenceMenu::pillText (0) == "Reference: off"
-                        && paint->getBottom() <= 48 && AnnealEditorContent::baseWidth == 1312;
+                        && paint->getBottom() <= 48 && AnnealEditorContent::baseWidth == 1464;
         check (ok, "REFERENCE group and Paint pill placed, menu follows the parameter",
                (refMenu != nullptr ? "menu " + refMenu->getBounds().toString() + " shows " + anneal::ReferenceMenu::pillText (refMenu->getChoice())
                                    : juce::String ("NO MENU"))
@@ -1735,7 +1745,7 @@ void benchmark()
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; };
+    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; int shape = 0; };
     const char* modeNames[] = { "Low", "Normal", "Precise" };
 
     // 4.0: Reference Match at 100 % (a pink-noise reference) with EQ and Heat paint.
@@ -1754,12 +1764,13 @@ void benchmark()
         somePaint.heat[i + 10] = 0.25f;
     }
 
-    for (auto [fs, block, mode, midSide, flavour, matchPaint] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+    for (auto [fs, block, mode, midSide, flavour, matchPaint, shape] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
                                     Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
                                     Case { 96000.0, 512, 0 }, Case { 48000.0, 64, 0, 1 },
                                     Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 },
                                     Case { 48000.0, 64, 0, 0, 1 }, Case { 48000.0, 512, 2, 0, 1 },
-                                    Case { 48000.0, 64, 0, 0, 0, 1 }, Case { 48000.0, 512, 1, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 1 } })
+                                    Case { 48000.0, 64, 0, 0, 0, 1 }, Case { 48000.0, 512, 1, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 1 },
+                                    Case { 48000.0, 64, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 1 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
         r.set (ids::latency, (float) mode);
@@ -1771,6 +1782,12 @@ void benchmark()
             r.proc->setPaint (somePaint);
             r.set (ids::refMode, 2.0f);
             r.set (ids::refAmount, 100.0f);
+        }
+        if (shape)   // 5.0: Punch, Width and Mono bass all working
+        {
+            r.set (ids::punch, 50.0f);
+            r.set (ids::width, 150.0f);
+            r.set (ids::monoBass, 120.0f);
         }
         r.prepare (fs, block);
         const auto in = testsig::musicLike (fs, 20.0, 1);
@@ -1797,7 +1814,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + (shape ? "Shape " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;
@@ -3071,6 +3088,315 @@ void testEditor40()
     }
 }
 
+//==============================================================================
+// 5.0: SHAPE (Punch, Width, Mono bass) and user presets.
+void testPunch50()
+{
+    section ("33. 5.0 Punch");
+    const double fs = 48000.0;
+    std::vector<int> onsets;
+    const auto plucks = pluckTrain (fs, 4.0, 2000.0, onsets);
+    const int attackLen = (int) (0.015 * fs);
+    auto measure = [&] (float punch, float rangeLo, double& att, double& body)
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.punch = punch;
+        p.rangeLoHz = rangeLo;
+        e->setParameters (p);
+        const auto out = runEngine (*e, plucks, fixedBlocks (256));
+        const int L = e->getLatencySamples();
+        att = windowGainDb (out, plucks, onsets, L, 0, attackLen, 2000.0, fs);
+        body = windowGainDb (out, plucks, onsets, L, (int) (0.08 * fs), (int) (0.08 * fs), 2000.0, fs);
+    };
+    double att[3] {}, body[3] {}, attRange = 0.0, bodyRange = 0.0;
+    measure (0.0f, 20.0f, att[0], body[0]);
+    measure (1.0f, 20.0f, att[1], body[1]);
+    measure (-1.0f, 20.0f, att[2], body[2]);
+    measure (1.0f, 5000.0f, attRange, bodyRange);
+    info ("Low, 2 kHz plucks: attack (first 15 ms) Punch off " + db (att[0], 2) + ", +100 % " + db (att[1], 2) + ", -100 % "
+          + db (att[2], 2) + ";  body (80-160 ms) " + db (body[0], 2) + " / " + db (body[1], 2) + " / " + db (body[2], 2));
+    check (att[1] - att[0] >= 3.0 && att[0] - att[2] >= 3.0, "Punch +100 % makes attacks louder, -100 % softer",
+           "attack " + db (att[1] - att[0], 2) + " / " + db (att[2] - att[0], 2));
+    check (std::abs (body[1] - body[0]) <= 1.0 && std::abs (body[2] - body[0]) <= 1.0, "Punch leaves the body of the sound alone",
+           "body " + db (body[1] - body[0], 2) + " / " + db (body[2] - body[0], 2));
+    check (std::abs (attRange - att[0]) <= 0.5, "Punch works inside Range only (Range 5-20 kHz, 2 kHz plucks untouched)",
+           "attack " + db (attRange - att[0], 2));
+}
+
+void testWidth50()
+{
+    section ("34. 5.0 Width and Mono bass");
+    const double fs = 48000.0;
+    const int n = (int) (2.0 * fs);
+    const double twoPi = 6.283185307179586;
+    // Centre (Mid) tones at 300 Hz and 3 kHz, side tones at 60 Hz and 1 kHz, each 0.1.
+    Channels in (2, std::vector<float> ((size_t) n));
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = i / fs;
+        const double m = 0.1 * std::sin (twoPi * 300.0 * t) + 0.1 * std::sin (twoPi * 3000.0 * t);
+        const double s = 0.1 * std::sin (twoPi * 60.0 * t) + 0.1 * std::sin (twoPi * 1000.0 * t);
+        in[0][(size_t) i] = (float) (m + s);
+        in[1][(size_t) i] = (float) (m - s);
+    }
+    struct Image { double mid300, mid3k, side60, side1k; };
+    auto measure = [&] (int mode, float width, float monoHz)
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, mode);
+        auto p = neutral();
+        p.width = width;
+        p.monoHz = monoHz;
+        e->setParameters (p);
+        const auto out = runEngine (*e, in, fixedBlocks (512));
+        const int L = e->getLatencySamples(), from = L + n / 4, len = n / 2;
+        std::vector<float> mid ((size_t) len), side ((size_t) len);
+        for (int i = 0; i < len; ++i)
+        {
+            const float l = out[0][(size_t) (from + i)], r = out[1][(size_t) (from + i)];
+            mid[(size_t) i] = 0.5f * (l + r);
+            side[(size_t) i] = 0.5f * (l - r);
+        }
+        auto a = [&] (const std::vector<float>& x, double hz) { return toDb (testsig::toneAmplitude (x.data(), len, hz, fs) / 0.1); };
+        return Image { a (mid, 300.0), a (mid, 3000.0), a (side, 60.0), a (side, 1000.0) };
+    };
+    auto midKept = [] (const Image& im) { return std::abs (im.mid300) <= 0.05 && std::abs (im.mid3k) <= 0.05; };
+    auto show = [] (const Image& im)
+    {
+        return "mid 300 Hz " + db (im.mid300, 2) + ", 3 kHz " + db (im.mid3k, 2) + "; side 60 Hz " + db (im.side60, 1) + ", 1 kHz " + db (im.side1k, 2);
+    };
+    const auto w100 = measure (anneal::SpectralEngine::low, 1.0f, 0.0f);
+    const auto w0 = measure (anneal::SpectralEngine::low, 0.0f, 0.0f);
+    const auto w200 = measure (anneal::SpectralEngine::low, 2.0f, 0.0f);
+    const auto mono = measure (anneal::SpectralEngine::low, 1.0f, 200.0f);
+    const auto monoP = measure (anneal::SpectralEngine::precise, 1.0f, 120.0f);
+    check (midKept (w100) && std::abs (w100.side60) <= 0.05 && std::abs (w100.side1k) <= 0.05, "Width 100 %: the image as it was", show (w100));
+    check (midKept (w0) && w0.side60 < -90.0 && w0.side1k < -90.0, "Width 0 %: mono, the centre unchanged", show (w0));
+    check (midKept (w200) && std::abs (w200.side1k - 6.02) <= 0.1 && std::abs (w200.side60 - 6.02) <= 0.2,
+           "Width 200 %: sides +6 dB, the centre unchanged", show (w200));
+    check (midKept (mono) && mono.side60 < -35.0 && std::abs (mono.side1k) <= 0.1, "Mono bass 200 Hz (Low): 60 Hz sides gone, 1 kHz kept", show (mono));
+    check (midKept (monoP) && monoP.side60 < -40.0 && std::abs (monoP.side1k) <= 0.1, "Mono bass 120 Hz (Precise): 60 Hz sides gone, 1 kHz kept", show (monoP));
+
+    // Width 0 % with Heat, Reveal and Smooth working (the defaults): still mono, harmonics included.
+    {
+        Channels wide (2, std::vector<float> ((size_t) n));
+        for (int i = 0; i < n; ++i)
+        {
+            wide[0][(size_t) i] = 0.2f * (float) std::sin (twoPi * 500.0 * i / fs);
+            wide[1][(size_t) i] = 0.2f * (float) std::sin (twoPi * 700.0 * i / fs);
+        }
+        double sideDb[2] {};
+        for (int heatOn = 0; heatOn < 2; ++heatOn)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            anneal::EngineParams p;   // defaults
+            p.reveal = 0.4f;
+            p.smooth = 0.4f;
+            p.heat = heatOn ? 0.3f : 0.0f;
+            p.width = 0.0f;
+            e->setParameters (p);
+            const auto out = runEngine (*e, wide, fixedBlocks (512));
+            double side = 0.0, level = 0.0;
+            for (size_t i = (size_t) n / 2; i < (size_t) n; ++i)
+            {
+                side = std::max (side, (double) std::abs (out[0][i] - out[1][i]) * 0.5);
+                level = std::max (level, (double) std::abs (out[0][i]));
+            }
+            sideDb[heatOn] = toDb ((side + 1.0e-12) / (level + 1.0e-12));
+        }
+        check (sideDb[0] < -90.0 && sideDb[1] < -90.0, "Width 0 % with Reveal, Smooth and Heat working: still mono",
+               "sides " + db (sideDb[0], 1) + " (Heat 0), " + db (sideDb[1], 1) + " (Heat 30 %) under the signal");
+    }
+
+    // A mono track has no sides: Width does nothing to it.
+    {
+        Channels one (1, in[0]);
+        auto e0 = std::make_unique<anneal::SpectralEngine>();
+        auto e1 = std::make_unique<anneal::SpectralEngine>();
+        e0->prepare (fs, 1, anneal::SpectralEngine::low);
+        e1->prepare (fs, 1, anneal::SpectralEngine::low);
+        auto p = neutral();
+        e0->setParameters (p);
+        p.width = 0.0f;
+        p.monoHz = 300.0f;
+        e1->setParameters (p);
+        const auto a = runEngine (*e0, one, fixedBlocks (512)), b = runEngine (*e1, one, fixedBlocks (512));
+        double m = 0.0;
+        for (size_t i = 0; i < a[0].size(); ++i)
+            m = std::max (m, (double) std::abs (a[0][i] - b[0][i]));
+        check (m == 0.0, "mono track: Width and Mono bass change nothing", "max diff " + juce::String (m, 12));
+    }
+}
+
+void testShapeParams50()
+{
+    section ("35. 5.0 SHAPE parameters, older projects, factory presets");
+    Rig r;
+    auto* punch = r.proc->apvts.getParameter (ids::punch);
+    auto* width = r.proc->apvts.getParameter (ids::width);
+    auto* mono = r.proc->apvts.getParameter (ids::monoBass);
+    auto plain = [] (juce::RangedAudioParameter* p, const juce::String& t) { return p->convertFrom0to1 (p->getValueForText (t)); };
+    const juce::String minus40 = juce::String::fromUTF8 ("\xe2\x88\x92") + "40 %";
+    const float a = plain (punch, minus40), b = plain (punch, "+25"), c = plain (width, "mono"), d = plain (width, "150"),
+                e = plain (mono, "off"), f = plain (mono, "150 Hz");
+    const bool texts = punch->getText (punch->convertTo0to1 (-40.0f), 32) == minus40 && punch->getText (0.5f, 32) == "Off"
+                       && width->getText (0.0f, 32) == "Mono" && mono->getText (0.0f, 32) == "Off";
+    check (std::abs (a + 40.0f) < 0.05f && std::abs (b - 25.0f) < 0.05f && c < 0.05f && std::abs (d - 150.0f) < 0.05f
+               && e < anneal::monoBassMinHz && std::abs (f - 150.0f) < 0.6f && texts,
+           "Punch, Width and Mono bass: typed values and read-outs",
+           juce::String (a, 1) + ", " + juce::String (b, 1) + ", " + juce::String (c, 1) + ", " + juce::String (d, 1) + ", "
+               + juce::String (e, 1) + ", " + juce::String (f, 1) + (texts ? "" : " (read-outs differ)"));
+
+    // Projects from before 5.0 open with Punch off, Width 100 % and Mono bass off, whatever this
+    // instance had.
+    {
+        juce::MemoryBlock blob;
+        r.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        for (auto id : { ids::punch, ids::width, ids::monoBass })
+            if (auto* el = xml->getChildByAttribute ("id", id))
+                xml->removeChildElement (el, true);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig o;
+        o.set (ids::punch, 60.0f);
+        o.set (ids::width, 0.0f);
+        o.set (ids::monoBass, 200.0f);
+        o.proc->setStateInformation (old.getData(), (int) old.getSize());
+        auto v = [&o] (const char* id) { return o.proc->apvts.getRawParameterValue (id)->load(); };
+        check (std::abs (v (ids::punch)) < 0.05f && std::abs (v (ids::width) - 100.0f) < 0.05f && v (ids::monoBass) < anneal::monoBassMinHz,
+               "older projects open with Punch off, Width 100 %, Mono bass off",
+               juce::String (v (ids::punch), 1) + ", " + juce::String (v (ids::width), 1) + ", " + juce::String (v (ids::monoBass), 1));
+    }
+
+    // Width 0 % through the whole processor (default settings, Reveal 15 %): the output is mono.
+    {
+        Rig w;
+        w.set (ids::reveal, 15.0f);
+        w.set (ids::width, 0.0f);
+        w.prepare (48000.0, 512);
+        const int n = 48000;
+        Channels wide (2, std::vector<float> ((size_t) n));
+        for (int i = 0; i < n; ++i)
+        {
+            wide[0][(size_t) i] = 0.2f * (float) std::sin (6.283185307179586 * 500.0 * i / 48000.0);
+            wide[1][(size_t) i] = 0.2f * (float) std::sin (6.283185307179586 * 700.0 * i / 48000.0);
+        }
+        const auto out = w.run (wide, fixedBlocks (512));
+        double side = 0.0, level = 0.0;
+        for (size_t i = (size_t) n / 2; i < (size_t) n; ++i)
+        {
+            side = std::max (side, (double) std::abs (out[0][i] - out[1][i]) * 0.5);
+            level = std::max (level, (double) std::abs (out[0][i]));
+        }
+        const double sideDb = toDb ((side + 1.0e-12) / (level + 1.0e-12));
+        check (sideDb < -90.0, "Width 0 % through the processor: mono", "sides " + db (sideDb, 1) + " under the signal");
+    }
+
+    // Factory presets set the new controls to neutral, so every preset sounds as it did.
+    {
+        Rig q;
+        q.set (ids::punch, 50.0f);
+        q.set (ids::width, 180.0f);
+        q.set (ids::monoBass, 150.0f);
+        q.proc->setCurrentProgram (4);
+        auto v = [&q] (const char* id) { return q.proc->apvts.getRawParameterValue (id)->load(); };
+        check (std::abs (v (ids::punch)) < 0.05f && std::abs (v (ids::width) - 100.0f) < 0.05f && v (ids::monoBass) < anneal::monoBassMinHz
+                   && q.proc->getPresetDisplayName() == "Vocal air",
+               "factory presets set Punch off, Width 100 %, Mono bass off", q.proc->getPresetDisplayName());
+    }
+}
+
+void testUserPresets50()
+{
+    section ("36. 5.0 user presets");
+    const auto folder = juce::File::createTempFile ("anneal-presets");
+    folder.createDirectory();
+    Rig r;
+    r.proc->setUserPresetFolder (folder, false);
+    auto v = [&r] (const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+
+    r.set (ids::reveal, 63.0f);
+    r.set (ids::heat, 72.0f);
+    r.set (ids::punch, 35.0f);
+    r.set (ids::width, 140.0f);
+    r.set (ids::monoBass, 110.0f);
+    const bool saved = r.proc->saveUserPreset ("My: bus/glue?");
+    const auto names = r.proc->getUserPresetNames();
+    check (saved && names.size() == 1 && names[0] == "My bus glue" && folder.getChildFile ("My bus glue.annealpreset").existsAsFile()
+               && r.proc->getPresetDisplayName() == "My bus glue",
+           "save: a file named after the preset, the bar shows its name",
+           names.joinIntoString (", ") + " / shows " + r.proc->getPresetDisplayName());
+
+    // Edited, then loaded again: every value returns, the "*" goes, and loading is one undo step.
+    r.set (ids::reveal, 10.0f);
+    r.set (ids::width, 60.0f);
+    const auto edited = r.proc->getPresetDisplayName();
+    const bool loaded = r.proc->loadUserPreset ("My bus glue");
+    const bool back = std::abs (v (ids::reveal) - 63.0f) < 0.1f && std::abs (v (ids::heat) - 72.0f) < 0.1f
+                      && std::abs (v (ids::punch) - 35.0f) < 0.1f && std::abs (v (ids::width) - 140.0f) < 0.1f
+                      && std::abs (v (ids::monoBass) - 110.0f) < 0.6f;
+    const auto shown = r.proc->getPresetDisplayName();
+    r.proc->undo();
+    const bool undone = std::abs (v (ids::reveal) - 10.0f) < 0.1f && std::abs (v (ids::width) - 60.0f) < 0.1f;
+    check (edited == "My bus glue *" && loaded && back && shown == "My bus glue" && undone,
+           "load restores every value and the name; one undo step",
+           "edited shows " + edited + ", loaded shows " + shown + (back ? "" : ", values differ") + (undone ? "" : ", undo failed"));
+
+    // A project remembers the user preset it was set from.
+    {
+        r.proc->loadUserPreset ("My bus glue");
+        juce::MemoryBlock blob;
+        r.proc->getStateInformation (blob);
+        Rig b;
+        b.proc->setUserPresetFolder (folder, false);
+        b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        check (b.proc->getPresetDisplayName() == "My bus glue" && b.proc->getUserPresetName() == "My bus glue",
+               "a project remembers the user preset it was set from", b.proc->getPresetDisplayName());
+    }
+
+    // A broken file loads nothing; a preset without the newer values leaves those as they are.
+    folder.getChildFile ("Broken.annealpreset").replaceWithText ("not a preset");
+    folder.getChildFile ("Older.annealpreset").replaceWithText ("<AnnealPreset version=\"1\"><PARAM id=\"reveal\" value=\"22\"/></AnnealPreset>");
+    r.set (ids::heat, 50.0f);
+    const bool broken = ! r.proc->loadUserPreset ("Broken") && std::abs (v (ids::heat) - 50.0f) < 0.1f;
+    const bool older = r.proc->loadUserPreset ("Older") && std::abs (v (ids::reveal) - 22.0f) < 0.1f && std::abs (v (ids::heat) - 50.0f) < 0.1f;
+    check (broken && older, "a broken file loads nothing; values a preset lacks stay as they are",
+           juce::String (broken ? "broken ok" : "broken LOADED") + ", " + (older ? "older ok" : "older wrong"));
+
+    const bool clean = anneal::presets::sanitiseName ("  a/b:c*?  ") == "a b c" && anneal::presets::sanitiseName ("con") == "con preset"
+                       && anneal::presets::sanitiseName ("///").isEmpty() && ! r.proc->saveUserPreset ("  //  ");
+    check (clean, "names: path and wildcard characters dropped, reserved names made safe, empty names refused",
+           "'" + anneal::presets::sanitiseName ("  a/b:c*?  ") + "', '" + anneal::presets::sanitiseName ("con") + "'");
+
+    // The editor's preset bar: factory presets (the host's programs) first, then the user's.
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        bool wired = editor != nullptr;
+        const int nf = r.proc->getNumPrograms();
+        if (wired)
+        {
+            auto& bar = editor->getContent().presets;
+            wired = nf == anneal::presets::count() && bar.getCount() == nf + 3 && bar.getFactoryCount() == nf
+                    && bar.getName (nf) == "Broken" && bar.getName (nf + 2) == "Older" && bar.getChosen() == nf + 2
+                    && bar.onSaveAs != nullptr && bar.onDelete != nullptr && bar.onOpenFolder != nullptr;
+            bar.onChoose (nf + 1);   // "My bus glue", chosen in the bar
+        }
+        check (wired && r.proc->getPresetDisplayName() == "My bus glue", "the preset bar lists factory then user presets and loads them",
+               r.proc->getPresetDisplayName());
+    }
+
+    const bool deleted = r.proc->deleteUserPreset ("My bus glue") && ! folder.getChildFile ("My bus glue.annealpreset").exists()
+                         && ! r.proc->getUserPresetNames().contains ("My bus glue") && r.proc->getPresetDisplayName() != "My bus glue"
+                         && std::abs (v (ids::reveal) - 63.0f) < 0.1f;
+    check (deleted, "delete removes the file; the settings stay", "now shows " + r.proc->getPresetDisplayName());
+    folder.deleteRecursively();
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -3121,6 +3447,10 @@ int main (int argc, char** argv)
     testEditor40();
     testRealFft();
     testFixes402();
+    testPunch50();
+    testWidth50();
+    testShapeParams50();
+    testUserPresets50();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

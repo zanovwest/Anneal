@@ -147,7 +147,8 @@ int main (int argc, char* argv[])
         names.add (prm->getName (64));
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
-                    "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount" })
+                    "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
+                    "Punch", "Width", "Mono Bass" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -314,6 +315,52 @@ int main (int argc, char* argv[])
                "Flavour through VST3", names2 + "; 220 Hz harmonics: Tube " + juce::String (testsig::toDb (soloTube), 1)
                    + " dB, Exciter " + juce::String (testsig::toDb (soloExciter), 1) + " dB; sweep peak "
                    + juce::String (testsig::toDb (flavourSweep), 1) + " dB");
+
+        // SHAPE (5.0) through VST3: typed values, Width 0 % makes a wide signal mono, and Punch,
+        // Width and Mono bass swept during playback stay well behaved.
+        auto* punchP = findParam (*plugin, "Punch");
+        auto* widthP = findParam (*plugin, "Width");
+        auto* monoP = findParam (*plugin, "Mono Bass");
+        bool shapeOk = punchP != nullptr && widthP != nullptr && monoP != nullptr;
+        double sideDb = 0.0, shapeSweep = 0.0;
+        if (shapeOk)
+        {
+            shapeOk = std::abs (widthP->getValueForText ("mono")) < 1.0e-4f && std::abs (punchP->getValueForText ("-40") - 0.3f) < 1.0e-3f
+                      && monoP->getValueForText ("off") < 1.0e-4f;
+            testsig::Channels wide (2, std::vector<float> (48000));
+            for (int i = 0; i < 48000; ++i)
+            {
+                wide[0][(size_t) i] = 0.2f * (float) std::sin (6.283185307179586 * 500.0 * i / 48000.0);
+                wide[1][(size_t) i] = 0.2f * (float) std::sin (6.283185307179586 * 700.0 * i / 48000.0);
+            }
+            // Width changes are smoothed over ~40 ms of the plug-in's own time; it last ran at 96 kHz
+            // here, so one second settles it and the next second is measured.
+            widthP->setValueNotifyingHost (0.0f);
+            run (*plugin, wide, out, [] { return 512; });
+            run (*plugin, wide, out, [] { return 512; });
+            double side = 0.0, level = 0.0;
+            for (size_t i = 0; i < out[0].size(); ++i)
+            {
+                side = std::max (side, (double) std::abs (out[0][i] - out[1][i]) * 0.5);
+                level = std::max (level, (double) std::abs (out[0][i]));
+            }
+            sideDb = testsig::toDb ((side + 1.0e-12) / (level + 1.0e-12));
+            int block = 0;
+            shapeOk = shapeOk && run (*plugin, music, out, [&]
+            {
+                const int k = block++;
+                punchP->setValueNotifyingHost ((float) ((k / 3) % 5) / 4.0f);
+                widthP->setValueNotifyingHost ((float) ((k / 5) % 3) / 2.0f);
+                monoP->setValueNotifyingHost ((float) ((k / 7) % 2) * 0.4f);
+                return 300;
+            });
+            shapeSweep = peakOf (out);
+            punchP->setValueNotifyingHost (0.5f);
+            widthP->setValueNotifyingHost (0.5f);
+            monoP->setValueNotifyingHost (0.0f);
+        }
+        check (shapeOk && sideDb < -90.0 && shapeSweep < 4.0, "Punch, Width and Mono bass through VST3",
+               "Width 0 %: sides " + juce::String (sideDb, 1) + " dB under the signal; sweep peak " + juce::String (testsig::toDb (shapeSweep), 1) + " dB");
     }
 
     // 6a. Latency mode through the host: switch to Precise, the host sees the new latency and the

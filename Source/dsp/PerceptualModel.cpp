@@ -105,7 +105,7 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
     auto alloc = [] (std::vector<float>& v, size_t n) { v.assign (n, 0.0f); };
     for (auto* v : { &earW, &noiseSlice, &noiseBox, &flatNormDb, &slices, &smoothed, &place, &context,
                      &fwd, &bwd, &prom, &target, &targetSmoothed, &gain, &promSlow, &gainOut, &needOut, &tmp,
-                     &raw, &fastPlace, &slowPlace, &transient, &autoOut })
+                     &raw, &fastPlace, &slowPlace, &transient, &punchW, &autoOut })
         alloc (*v, (size_t) numBands);
     for (auto* v : { &keySlices, &keySmoothed, &keyPlace })
         alloc (*v, (size_t) numBands);
@@ -151,7 +151,7 @@ void PerceptualModel::reset (bool keepCurve)
 {
     primed = false;
     liftPeakDb = cutPeakDb = transientPeak = matchPeakDb = 0.0f;
-    for (auto* v : { &smoothed, &prom, &slowPlace, &transient, &matchDb })
+    for (auto* v : { &smoothed, &prom, &slowPlace, &transient, &punchW, &matchDb })
         std::fill (v->begin(), v->end(), 0.0f);
     keyPrimed = false;
     longFrames = 0;   // the main's long-term spectrum is measured again (the reference itself stays)
@@ -256,6 +256,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float aLevel = 1.0f - std::exp (-1.0f / (0.150f * fps));
         const float decay = std::exp (-1.0f / (0.050f * fps));
         const int holdFrames = std::max (1, (int) std::lround (fftSize / sampleRate * fps));
+        const float punchDecay = std::exp (-1.0f / (0.015f * fps));
         for (int b = 0; b < numBands; ++b)
         {
             const float f = fastPlace[(size_t) b];
@@ -287,6 +288,10 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
             {
                 tr = std::max (onset, tr * decay);
             }
+            // 5.0 Punch shapes the attack itself: as strong as the detector while it holds the
+            // attack, then gone within ~15 ms (Guard's own 50 ms decay would reach into the body).
+            float& pw = punchW[(size_t) b];
+            pw = age < holdFrames ? tr : pw * punchDecay;
             if (age < holdFrames)
                 ++age;
         }
@@ -392,7 +397,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     const double zLo = erb::hzToCam (std::max (20.0f, s.rangeLoHz));
     const double zHi = std::max (zLo + 0.5, erb::hzToCam (s.rangeHiHz));
 
-    liftPeakDb = cutPeakDb = transientPeak = matchPeakDb = 0.0f;
+    liftPeakDb = cutPeakDb = transientPeak = matchPeakDb = punchPeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
         const double z = z0 + b * dz;
@@ -402,7 +407,12 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
         const float autoDb = guarded ? gain[(size_t) b] * relax : gain[(size_t) b];
-        float eqOut = rg * (autoDb + tilt), eqAuto = rg * autoDb;
+        // 5.0 Punch: attacks louder or softer in the bands they hit (up to 8 dB), like the rest of the
+        // EQ inside Range and Paint. Punch 0 adds exactly 0, so the curve is unchanged.
+        const float punchDb = s.punch * 8.0f * punchW[(size_t) b];
+        float eqOut = rg * (autoDb + tilt + punchDb), eqAuto = rg * autoDb;
+        if (std::abs (rg * punchDb) > std::abs (punchPeakDb))
+            punchPeakDb = rg * punchDb;
         if (paintEqOn)   // Paint: the painted share of the whole change, on top of Range
         {
             eqOut *= paintEq[(size_t) b];

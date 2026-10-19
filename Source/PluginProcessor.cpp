@@ -204,6 +204,9 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pCeiling    = apvts.getRawParameterValue (ids::ceiling);
     pRefMode    = apvts.getRawParameterValue (ids::refMode);
     pRefAmount  = apvts.getRawParameterValue (ids::refAmount);
+    pPunch      = apvts.getRawParameterValue (ids::punch);
+    pWidth      = apvts.getRawParameterValue (ids::width);
+    pMonoBass   = apvts.getRawParameterValue (ids::monoBass);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -402,6 +405,9 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.listen = juce::jlimit (0, 3, juce::roundToInt (pListen->load()));
     p.flavour = juce::jlimit (0, anneal::HarmonicSynth::numFlavours - 1, juce::roundToInt (pFlavour->load()));
     p.freeze = pFreeze->load() > 0.5f;
+    p.punch = pPunch->load() / 100.0f;
+    p.width = pWidth->load() / 100.0f;
+    p.monoHz = pMonoBass->load() >= anneal::monoBassMinHz ? pMonoBass->load() : 0.0f;
     p.scMode = juce::jlimit (0, 2, juce::roundToInt (pScMode->load()));
     p.scAmount = pScAmount->load() * 0.01f;
     p.refMode = juce::jlimit (0, 2, juce::roundToInt (pRefMode->load()));
@@ -583,9 +589,47 @@ void AnnealAudioProcessor::setCurrentProgram (int index)
         return;
     currentPreset = index;
     presetChosen = true;
+    userChosen = false;
     beginUndoGroup();   // a preset is one undo step
     anneal::presets::apply (apvts, index);
     endUndoGroup();
+}
+
+bool AnnealAudioProcessor::saveUserPreset (const juce::String& name)
+{
+    const auto clean = anneal::presets::sanitiseName (name);
+    const auto values = anneal::presets::currentValues (apvts);
+    if (clean.isEmpty() || ! anneal::presets::writeUser (userFolder, clean, values))
+        return false;
+    userName = clean;
+    userValues = values;
+    userChosen = true;
+    presetChosen = false;
+    return true;
+}
+
+bool AnnealAudioProcessor::loadUserPreset (const juce::String& name)
+{
+    auto values = anneal::presets::currentValues (apvts);
+    if (! anneal::presets::readUser (userFolder, name, values))
+        return false;
+    beginUndoGroup();   // a preset is one undo step
+    anneal::presets::applyValues (apvts, values);
+    endUndoGroup();
+    userName = anneal::presets::sanitiseName (name);
+    userValues = anneal::presets::currentValues (apvts);   // as the parameters hold them (clamped, rounded)
+    userChosen = true;
+    presetChosen = false;
+    return true;
+}
+
+bool AnnealAudioProcessor::deleteUserPreset (const juce::String& name)
+{
+    if (! anneal::presets::deleteUser (userFolder, name, userTrash))
+        return false;
+    if (userChosen && userName.equalsIgnoreCase (anneal::presets::sanitiseName (name)))
+        userChosen = false;   // the settings stay; the bar shows "Custom" (or a factory preset they equal)
+    return true;
 }
 
 //==============================================================================
@@ -816,6 +860,8 @@ const juce::String AnnealAudioProcessor::getProgramName (int index)
 
 juce::String AnnealAudioProcessor::getPresetDisplayName()
 {
+    if (userChosen)
+        return anneal::presets::equals (apvts, userValues) ? userName : userName + " *";
     const int chosen = currentPreset.load();
     const int matching = anneal::presets::findMatching (apvts, presetChosen ? chosen : -1);
     if (matching >= 0)
@@ -833,6 +879,10 @@ void AnnealAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         state.setProperty ("preset", currentPreset.load(), nullptr);
     else
         state.removeProperty ("preset", nullptr);
+    if (userChosen)
+        state.setProperty ("userPreset", userName, nullptr);
+    else
+        state.removeProperty ("userPreset", nullptr);
     pollLearnedReference();
     {
         const juce::ScopedLock sl (refLock);
@@ -871,6 +921,10 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasCeiling = tree.getChildWithProperty ("id", anneal::ids::ceiling).isValid();
             const bool hasRefMode = tree.getChildWithProperty ("id", anneal::ids::refMode).isValid();
             const bool hasRefAmount = tree.getChildWithProperty ("id", anneal::ids::refAmount).isValid();
+            const bool hasPunch = tree.getChildWithProperty ("id", anneal::ids::punch).isValid();
+            const bool hasWidth = tree.getChildWithProperty ("id", anneal::ids::width).isValid();
+            const bool hasMonoBass = tree.getChildWithProperty ("id", anneal::ids::monoBass).isValid();
+            const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
             currentPreset = presetChosen ? preset : 0;
@@ -926,6 +980,28 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasRefAmount)
                 if (auto* ap = apvts.getParameter (anneal::ids::refAmount))
                     ap->setValueNotifyingHost (ap->getDefaultValue());
+
+            // Projects saved before 5.0: no Punch, Width 100 %, no Mono bass, as they were made (not
+            // whatever this instance had).
+            for (auto [id, present] : { std::pair { anneal::ids::punch, hasPunch },
+                                       std::pair { anneal::ids::width, hasWidth },
+                                       std::pair { anneal::ids::monoBass, hasMonoBass } })
+                if (! present)
+                    if (auto* np = apvts.getParameter (id))
+                        np->setValueNotifyingHost (np->getDefaultValue());
+
+            // 5.0: the user preset the project was last set from, if its file is still there.
+            userChosen = false;
+            if (user.isNotEmpty())
+            {
+                auto values = anneal::presets::currentValues (apvts);
+                if (anneal::presets::readUser (userFolder, user, values))
+                {
+                    userName = anneal::presets::sanitiseName (user);
+                    userValues = values;
+                    userChosen = true;
+                }
+            }
             {
                 juce::String name;
                 const auto curve = referenceFromTree (refTree, name);

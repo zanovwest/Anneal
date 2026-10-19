@@ -9,7 +9,7 @@
 namespace anneal::presets
 {
     // The parameters a preset sets, in the order of Preset::values.
-    inline constexpr int numValues = 12;
+    inline constexpr int numValues = 15;
     extern const std::array<const char*, numValues> paramIds;
 
     struct Preset
@@ -26,4 +26,21 @@ namespace anneal::presets
 
     // The preset the current settings equal (preferring `preferred` when several do), or -1.
     int findMatching (juce::AudioProcessorValueTreeState& state, int preferred = -1);
+
+    // 5.0 user presets: one XML file per preset (<name>.annealpreset) in a folder, by default the
+    // user's application-data folder (Windows: %APPDATA%\Qulic\Anneal\Presets). They hold the same
+    // values a factory preset sets. Message thread.
+    using Values = std::array<float, numValues>;
+    inline constexpr const char* userExtension = ".annealpreset";
+    juce::File defaultUserFolder();
+    juce::String sanitiseName (const juce::String& name);    // what a file name can hold; empty if nothing usable
+    juce::StringArray userNames (const juce::File& folder);   // sorted, case-insensitive
+    Values currentValues (juce::AudioProcessorValueTreeState& state);
+    bool equals (juce::AudioProcessorValueTreeState& state, const Values& values);
+    void applyValues (juce::AudioProcessorValueTreeState& state, const Values& values);   // one gesture per parameter
+    bool writeUser (const juce::File& folder, const juce::String& name, const Values& values);
+    // Fills in the values the file has (a preset from an older version may lack some: those keep
+    // what `values` held). False when the file is missing or isn't an Anneal preset.
+    bool readUser (const juce::File& folder, const juce::String& name, Values& values);
+    bool deleteUser (const juce::File& folder, const juce::String& name, bool toTrash = true);   // recycle bin when possible
 }

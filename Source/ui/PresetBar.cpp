@@ -139,20 +139,39 @@ void PresetBar::showMenu()
     juce::PopupMenu menu;
     menu.addSectionHeader ("FACTORY PRESETS");
     const int chosen = getChosen ? getChosen() : -1;
-    for (int i = 0; i < n; ++i)
+    const int nf = getFactoryCount ? juce::jlimit (0, n, getFactoryCount()) : n;
+    for (int i = 0; i < nf; ++i)
         menu.addItem (i + 1, getName (i), true, i == chosen);
+    if (n > nf)
+    {
+        menu.addSectionHeader ("YOUR PRESETS");
+        for (int i = nf; i < n; ++i)
+            menu.addItem (i + 1, getName (i), true, i == chosen);
+    }
+    constexpr int saveId = 100001, deleteId = 100002, folderId = 100003;
+    if (onSaveAs != nullptr || onOpenFolder != nullptr)
+        menu.addSeparator();
+    if (onSaveAs != nullptr)
+        menu.addItem (saveId, juce::String::fromUTF8 ("Save current settings as\xe2\x80\xa6"));
+    if (onDelete != nullptr && chosen >= nf && chosen < n)
+        menu.addItem (deleteId, juce::String::fromUTF8 ("Delete \xe2\x80\x9c") + getName (chosen) + juce::String::fromUTF8 ("\xe2\x80\x9d\xe2\x80\xa6"));
+    if (onOpenFolder != nullptr)
+        menu.addItem (folderId, "Open the presets folder");
 
     juce::Component::SafePointer<PresetBar> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this)
                                                   .withMinimumWidth (getWidth())
                                                   .withStandardItemHeight (24),
-                        [safe] (int result)
+                        [safe, chosen] (int result)
                         {
-                            if (safe != nullptr && result > 0 && safe->onChoose)
-                            {
-                                safe->onChoose (result - 1);
+                            if (safe == nullptr || result <= 0)
+                                return;
+                            if (result == saveId)        { if (safe->onSaveAs) safe->onSaveAs(); }
+                            else if (result == deleteId) { if (safe->onDelete) safe->onDelete (chosen); }
+                            else if (result == folderId) { if (safe->onOpenFolder) safe->onOpenFolder(); }
+                            else if (safe->onChoose)     safe->onChoose (result - 1);
+                            if (safe != nullptr)
                                 safe->refresh();
-                            }
                         });
 }
 }

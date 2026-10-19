@@ -18,6 +18,7 @@ namespace anneal
         float rangeHiHz    = 20000.0f;
         float focus        = 0.0f;     // -1 body .. +1 air (heat placement)
         float guard        = 0.0f;     // 0..1 transient guard (0 = off: exactly the old behaviour)
+        float punch        = 0.0f;     // 5.0: -1..1, attacks softer (-) or louder (+), up to 8 dB (0 = off)
         bool freeze        = false;    // hold the auto-EQ curve where it is (3.0)
         int scMode         = 0;        // sidechain: 0 off, 1 make room (duck where the key needs space), 2 unmask
         float scAmount     = 0.5f;     // 0..1
@@ -65,6 +66,8 @@ namespace anneal
         // analysis frame, then a ~50 ms decay). Always measured.
         const float* getBandTransient() const noexcept { return transient.data(); }
         float getMaxTransient() const noexcept { return transientPeak; }   // inside the range
+        float getPunchPeakDb() const noexcept { return punchPeakDb; }       // 5.0: strongest Punch move, dB
+        const float* getBandPunch() const noexcept { return punchW.data(); } // 5.0: 0..1 per band, the attack Punch shapes
 
         // Display helper: level within one ERB around each band centre, dBFS. Real-time safe.
         void bandLevelsDb (const float* binPower, float* outDb);
@@ -126,6 +129,7 @@ namespace anneal
         float liftPeakDb = 0.0f, cutPeakDb = 0.0f;   // (not maxCutDb/maxBoostDb: those are the limits)
         float sidePeakDb = 0.0f;
         float transientPeak = 0.0f;
+        float punchPeakDb = 0.0f;
 
         // band -> bin partition (CSR)
         std::vector<int> partStart, partBin;
@@ -141,6 +145,7 @@ namespace anneal
         std::vector<float> slices, smoothed, place, context, fwd, bwd, prom, target, targetSmoothed,
                            gain, promSlow, gainOut, needOut, tmp;
         std::vector<float> raw, fastPlace, slowPlace, transient;   // transient guard
+        std::vector<float> punchW;   // 5.0 Punch: the attack itself (held with it, then gone in ~15 ms)
         std::vector<int> transientAge;                             // frames since the band's last rise
         std::vector<float> binGainDb, binGain, binNeed;
         std::vector<float> autoOut, binAutoDb, binAutoGain;        // listen modes (no Tilt)

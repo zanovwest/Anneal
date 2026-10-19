@@ -42,6 +42,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | SIDECHAIN (3.0) | Amount | Mode (Off / Make room / Unmask) |
 | REFERENCE (4.0) | Amount | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) |
+| SHAPE (5.0) | — | Punch, Width, Mono bass (compact rows, like Tilt / Response / Guard) |
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
@@ -61,6 +62,7 @@ to a cool, near-black neutral so the accents carry the information.
 | Smooth / cut | temper blue `#6FA7FF` | reduced bands, Smooth ring |
 | Sidechain / key | violet `#A57BE0` (3.0) | key spectrum line, SIDECHAIN title dot, Amount ring. Annealed steel goes violet just before blue, so the key sits in the temper family |
 | Reference / target | teal `#5FCDBB` (4.0) | the reference's spectrum line, REF legend tag, REFERENCE title dot, Amount ring, the Reference menu when on, the drop outline. The last temper colour, the grey-teal steel takes past light blue: the tone you are tempering toward |
+| Shape (punch and stereo image) | rose `#E8849A` (5.0) | SHAPE title dot, the Punch / Width / Mono bass rings, the attack marks at the foot of the EQ lane. Outside the temper family on purpose: it shapes the sound's movement and space, not its tone |
 | Paint (the user's hand) | text `#ECEEF1` (4.0) | the Paint pill when on, the weight lines and their points in paint mode. Neutral on purpose: it is not one of the processes, it is where you let them act |
 | Deck | `#111215` | |
 | Screen | `#0A0B0D`, grid `#1B1E23`, divider `#24272D` | |
@@ -83,12 +85,12 @@ on hue alone; even vs. odd harmonics are solid vs. lighter bars.
   the engine; the same amount is a thin inner arc. Secondary controls are compact rows: a
   42 px ring with title and value beside it. Color and Focus are faders with their two
   ends named (even/odd, body/air). Buttons are pills; on = tinted in the role colour.
-- **Layout (4.0: 1312 × 640, resizable 984 × 480 to 1968 × 960, fixed aspect):** header 48 px
+- **Layout (5.0: 1464 × 640, resizable 1098 × 480 to 2196 × 960, fixed aspect):** header 48 px
   (wordmark, latency, undo/redo, presets centred, Stereo/Mid-Side and the Paint pill, compare cluster
   right); the display takes 56 % of the height; the deck follows the signal: AUTO EQ → HEAT →
-  SIDECHAIN → REFERENCE → OUTPUT (dividers at x 490 / 832 / 984 / 1136), hairlines between groups,
-  no cards. The output meter is a tall bar at the right edge of the deck. (3.0 was 1160 × 640; the
-  REFERENCE group added 152 px, the width of SIDECHAIN, and nothing else moved.)
+  SIDECHAIN → REFERENCE → SHAPE → OUTPUT (dividers at x 490 / 832 / 984 / 1136 / 1288), hairlines
+  between groups, no cards. The output meter is a tall bar at the right edge of the deck. (3.0 was
+  1160 × 640; REFERENCE (4.0) and SHAPE (5.0) each added 152 px, the width of SIDECHAIN.)
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
@@ -126,6 +128,14 @@ only while a key is arriving, with a KEY legend under AUTO EQ. Freeze is a pill 
 row, tinted straw when on, and the display then shows an "AUTO EQ FROZEN" tag so a held curve is never
 mistaken for a live one. The Ceiling's reduction is a short bronze bar and number under the meter's
 peak, holding its deepest value for 1.5 s so a brief catch is readable.
+
+**SHAPE and presets (5.0).** SHAPE is three compact rows in rose: Punch (bipolar ring, its inner
+arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the
+display draws a short rose bar at the foot of the EQ lane in each band where an attack is happening
+(height and opacity grow with its strength, fading over ~0.1 s), so you see what they act on without
+another lane. The preset menu keeps the factory list first; your presets follow under YOUR PRESETS,
+then *Save current settings as…*, *Delete “…”* (only when one of yours is chosen) and *Open the
+presets folder*. Saving asks for a name in a small dialog; deleting asks first.
 
 **Reference, Paint, shortcuts (4.0).** The REFERENCE group mirrors SIDECHAIN: a pill menu (Off is a
 plain raised pill, "Reference: off"; Learn key and Match are tinted teal) over a teal Amount ring

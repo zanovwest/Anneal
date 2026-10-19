@@ -27,8 +27,12 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
     That's fine for Anneal alone (Low: 10 % of a 64-sample block), but spreading it over the hop
     would leave more headroom for other plugins at tiny buffers. Costs one hop of latency, so only
     as a switch.
-11. **Show the guard on the display**: a faint mark in the bands where Guard is holding an attack,
-    and a live line under the Guard knob, so you can see it working.
+12. **Paint the width**: draw the stereo width per region on the display, like Paint does for the
+    EQ and Heat (a third lane, or a mode of the EQ lane).
+13. **Show the stereo image on the display**: the side/mid balance per band, behind the curve, so
+    Width and Mono bass can be seen working.
+14. **Import and export presets**: drop an `.annealpreset` file on the preset bar to add it, and copy
+    the folder path from the menu.
 
 ## Waiting on the user
 
@@ -59,6 +63,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.0.0 (2026-10-18, a major update the user asked for): **SHAPE** group with **Punch** (spectral
+  transient shaper, ±8 dB on attacks only), **Width** (0–200 %, per bin, linear phase) and **Mono
+  bass** (Off / 20–400 Hz); **attack marks** on the display (item 11, "show the guard"); **your own
+  presets** (save, delete, folder, remembered by projects). Window 1464 × 640.
 - 4.0.2 (2026-10-18): **Faster engine**, part 1 of the CPU item: Anneal's own real FFT (N/2-point
   split radix-4 Stockham, JUCE's layout and scaling) instead of JUCE's portable fallback, ~4×
   faster per transform. Stereo Low 2.0 → 1.7 %, Normal 1.8 → 1.2 %, Precise 2.7 → 1.8 %; Mid/Side

@@ -230,6 +230,58 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
             return parseReference (t);
         })));
     layout.add (percent (ids::refAmount, "Reference Amount", 50.0f));
+    // 5.0 SHAPE. Each defaults to what earlier versions did (Punch off, Width 100 %, Mono bass off),
+    // and older projects load with exactly that (AnnealAudioProcessor::setStateInformation).
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::punch, 1 }, "Punch",
+        juce::NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f,
+        Attr().withLabel ("%")
+              .withStringFromValueFunction ([] (float v, int)
+              {
+                  const int a = juce::roundToInt (v);
+                  if (a == 0) return juce::String ("Off");
+                  return (a > 0 ? juce::String ("+") : juce::String::fromUTF8 ("\xe2\x88\x92")) + juce::String (std::abs (a)) + " %";
+              })
+              .withValueFromStringFunction ([] (const juce::String& t)
+              {
+                  const auto l = t.toLowerCase().replace (juce::String::fromUTF8 ("\xe2\x88\x92"), "-");
+                  if (! l.containsAnyOf ("0123456789"))
+                      return 0.0f;
+                  return leadingNumber (l);
+              })));
+
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::width, 1 }, "Width",
+        juce::NormalisableRange<float> (0.0f, 200.0f, 0.1f), 100.0f,
+        Attr().withLabel ("%")
+              .withStringFromValueFunction ([] (float v, int)
+              {
+                  const int a = juce::roundToInt (v);
+                  return a == 0 ? juce::String ("Mono") : juce::String (a) + " %";
+              })
+              .withValueFromStringFunction ([] (const juce::String& t)
+              {
+                  const auto l = t.toLowerCase();
+                  if (! l.containsAnyOf ("0123456789"))
+                      return l.contains ("mono") ? 0.0f : 100.0f;
+                  return leadingNumber (l);
+              })));
+
+    {
+        juce::NormalisableRange<float> r (0.0f, 400.0f, 1.0f);
+        r.setSkewForCentre (120.0f);
+        layout.add (std::make_unique<Float> (juce::ParameterID { ids::monoBass, 1 }, "Mono Bass", r, 0.0f,
+            Attr().withLabel ("Hz")
+                  .withStringFromValueFunction ([] (float v, int)
+                  {
+                      return v < monoBassMinHz ? juce::String ("Off") : formatHz (v);
+                  })
+                  .withValueFromStringFunction ([] (const juce::String& t)
+                  {
+                      if (! t.containsAnyOf ("0123456789"))
+                          return 0.0f;
+                      return parseHz (t);
+                  })));
+    }
+
     return layout;
 }
 }

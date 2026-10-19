@@ -18,13 +18,13 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 // Everything laid out at a fixed base size; the editor scales it uniformly.
-// Layout (docs/DESIGN.md, 4.0): header with Undo/Redo, presets, Paint and the compare cluster
+// Layout (docs/DESIGN.md, 5.0): header with Undo/Redo, presets, Paint and the compare cluster
 // (Match, Delta, Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT,
-// SIDECHAIN, REFERENCE, OUTPUT.
+// SIDECHAIN, REFERENCE, SHAPE, OUTPUT.
 class AnnealEditorContent : public juce::Component
 {
 public:
-    static constexpr int baseWidth = 1312, baseHeight = 640;
+    static constexpr int baseWidth = 1464, baseHeight = 640;
 
     explicit AnnealEditorContent (AnnealAudioProcessor&);
 
@@ -38,6 +38,8 @@ public:
 
 private:
     void updateActivity();
+    void showSavePresetDialog();          // 5.0 user presets
+    void confirmDeletePreset (int index);
 
     AnnealAudioProcessor& processor;
 
@@ -59,6 +61,9 @@ private:
     anneal::ReferenceMenu refMenu;
     anneal::Knob refAmount;
     juce::TextButton paintButton { "PAINT" };
+    // 5.0
+    anneal::Knob punch, width, monoBass;
+    std::unique_ptr<juce::AlertWindow> presetDialog;
 
     juce::String shownMatchText, shownRefError;
     std::uint32_t shownRefSerial = ~0u, shownPaintSerial = ~0u;

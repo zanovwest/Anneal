@@ -32,6 +32,9 @@ namespace anneal::ids
     inline constexpr const char* ceiling    = "ceiling";    // 3.0: true-peak ceiling Off / 0.0 / -0.3 / -1.0 dBTP
     inline constexpr const char* refMode    = "refMode";    // 4.0: reference Off / Learn key / Match
     inline constexpr const char* refAmount  = "refAmount";  // 4.0: how far Match steers, %
+    inline constexpr const char* punch      = "punch";      // 5.0: spectral transient shaper, -100..+100 %, 0 = off
+    inline constexpr const char* width      = "width";      // 5.0: stereo width of the processed sound, %, 100 = as is
+    inline constexpr const char* monoBass   = "monoBass";   // 5.0: mono below this frequency, Hz, under 20 = off
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -59,4 +62,7 @@ namespace anneal
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };
     inline constexpr float ceilingDbtp[] = { 0.0f, 0.0f, -0.3f, -1.0f };   // index 0 = Off
+
+    // 5.0 Mono bass: values under this (the knob's bottom end) mean Off.
+    inline constexpr float monoBassMinHz = 20.0f;
 }

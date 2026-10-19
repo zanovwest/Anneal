@@ -12,7 +12,7 @@ namespace
     // REFERENCE -> OUTPUT.
     constexpr int titleY = 418, dividerTop = 424, dividerBottom = 628;
     constexpr int routingY = 412;   // 26 px pills centred on the 15 px title row
-    constexpr int dividerX[] = { 490, 832, 984, 1136 };
+    constexpr int dividerX[] = { 490, 832, 984, 1136, 1288 };
 
     juce::String minus() { return juce::String::fromUTF8 ("\xe2\x88\x92"); }
 
@@ -74,12 +74,21 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       redoButton (anneal::IconButton::Glyph::redo, "Redo (Ctrl+Shift+Z or Ctrl+Y)"),
       refMenu (p.apvts, ids::refMode),
       refAmount (p.apvts, ids::refAmount, "Amount", colour::teal, Size::primary, false, "drop a reference",
-                 "Reference amount: how far Match steers the auto EQ toward the reference's tone, up to 6 dB either way")
+                 "Reference amount: how far Match steers the auto EQ toward the reference's tone, up to 6 dB either way"),
+      punch (p.apvts, ids::punch, "Punch", colour::rose, Size::secondary, true, {},
+             "Punch: makes attacks louder (+) or softer (-) in the bands they hit, up to 8 dB, and leaves the body of the "
+             "sound alone. Sharpest in Low latency. Off = as before"),
+      width (p.apvts, ids::width, "Width", colour::rose, Size::secondary, false, {},
+             "Width: the stereo width of Anneal's output, from mono (0 %) to twice as wide (200 %). 100 % = as before"),
+      monoBass (p.apvts, ids::monoBass, "Mono bass", colour::rose, Size::secondary, false, {},
+                "Mono bass: makes everything below this frequency mono (a quarter octave either side fades in), "
+                "so the low end stays centred and mono-safe. Off = as before")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
-             &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton })
+             &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton,
+             &punch, &width, &monoBass })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
@@ -103,14 +112,43 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
     screen.onPaintChange = [&p] (const anneal::PaintCurves& c) { p.setPaint (c); };
     screen.onPaintEnd = [&p] (bool merge) { p.endPaintStroke (merge); };
 
-    presets.getCount = [&p] { return p.getNumPrograms(); };
-    presets.getName = [&p] (int i) { return p.getProgramName (i); };
-    presets.getChosen = [&p] { return p.getCurrentProgram(); };
+    // Factory presets first (also the host's programs), then the user's own (5.0).
+    presets.getFactoryCount = [&p] { return p.getNumPrograms(); };
+    presets.getCount = [&p] { return p.getNumPrograms() + p.getUserPresetNames().size(); };
+    presets.getName = [&p] (int i)
+    {
+        const int nf = p.getNumPrograms();
+        return i < nf ? p.getProgramName (i) : p.getUserPresetNames()[i - nf];
+    };
+    presets.getChosen = [&p]
+    {
+        const auto user = p.getUserPresetName();
+        if (user.isNotEmpty())
+            if (const int i = p.getUserPresetNames().indexOf (user, true); i >= 0)
+                return p.getNumPrograms() + i;
+        return p.getCurrentProgram();
+    };
     presets.getDisplayText = [&p] { return p.getPresetDisplayName(); };
     presets.onChoose = [&p] (int i)
     {
-        p.setCurrentProgram (i);
-        p.updateHostDisplay (juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
+        const int nf = p.getNumPrograms();
+        if (i < nf)
+        {
+            p.setCurrentProgram (i);
+            p.updateHostDisplay (juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
+        }
+        else
+        {
+            p.loadUserPreset (p.getUserPresetNames()[i - nf]);
+        }
+    };
+    presets.onSaveAs = [this] { showSavePresetDialog(); };
+    presets.onDelete = [this] (int i) { confirmDeletePreset (i); };
+    presets.onOpenFolder = [&p]
+    {
+        const auto folder = p.getUserPresetFolder();
+        folder.createDirectory();
+        folder.startAsProcess();
     };
     presets.refresh();
     harmonics.refresh();
@@ -124,14 +162,14 @@ void AnnealEditorContent::resized()
     latency.setBounds (182, 11, anneal::LatencyMenu::captionWidth + 92, 26);
     undoButton.setBounds (348, 11, 32, 26);
     redoButton.setBounds (384, 11, 32, 26);
-    presets.setBounds (536, 10, 240, 28);
-    stereoMode.setBounds (788, 11, 80, 26);
-    paintButton.setBounds (880, 11, 76, 26);
-    match.setBounds (1034, 11, 100, 26);
-    delta.setBounds (1142, 11, 72, 26);
-    bypass.setBounds (1222, 11, 78, 26);
+    presets.setBounds (612, 10, 240, 28);
+    stereoMode.setBounds (864, 11, 80, 26);
+    paintButton.setBounds (956, 11, 76, 26);
+    match.setBounds (1186, 11, 100, 26);
+    delta.setBounds (1294, 11, 72, 26);
+    bypass.setBounds (1374, 11, 78, 26);
 
-    screen.setBounds (12, 50, 1288, 356);
+    screen.setBounds (12, 50, 1440, 356);
 
     const int primaryW = anneal::Knob::preferredWidth (Size::primary), primaryH = anneal::Knob::preferredHeight (Size::primary);
     const int heroW = anneal::Knob::preferredWidth (Size::hero), heroH = anneal::Knob::preferredHeight (Size::hero);
@@ -164,11 +202,16 @@ void AnnealEditorContent::resized()
     refAmount.setBounds (990, 474, primaryW, primaryH);
 
     // OUTPUT: what you hear (Listen), the ceiling, then Mix and Output; the meter at the edge.
-    listen.setBounds (1148, 438, 112, 26);
-    ceiling.setBounds (1148, 472, 112, 26);
-    mix.setBounds (1150, 510, 104, smallH);
-    output.setBounds (1150, 566, 104, smallH);
-    meter.setBounds (1268, 438, 32, 190);
+    // 5.0 SHAPE: Punch, Width and Mono bass as compact rows (like Tilt, Response and Guard).
+    punch.setBounds (1148, 442, 132, smallH);
+    width.setBounds (1148, 498, 132, smallH);
+    monoBass.setBounds (1148, 554, 132, smallH);
+
+    listen.setBounds (1300, 438, 112, 26);
+    ceiling.setBounds (1300, 472, 112, 26);
+    mix.setBounds (1302, 510, 104, smallH);
+    output.setBounds (1302, 566, 104, smallH);
+    meter.setBounds (1420, 438, 32, 190);
 }
 
 void AnnealEditorContent::paint (juce::Graphics& g)
@@ -199,11 +242,58 @@ void AnnealEditorContent::paint (juce::Graphics& g)
     groupTitle (506, "HEAT", { colour::bronze });
     groupTitle (848, "SIDECHAIN", { colour::violet });
     groupTitle (1000, "REFERENCE", { colour::teal });
-    groupTitle (1152, "OUTPUT", { colour::muted });
+    groupTitle (1152, "SHAPE", { colour::rose });
+    groupTitle (1304, "OUTPUT", { colour::muted });
 
     g.setColour (colour::divider);
     for (int x : dividerX)
         g.drawVerticalLine (x, (float) dividerTop, (float) dividerBottom);
+}
+
+void AnnealEditorContent::showSavePresetDialog()
+{
+    // 5.0: name the current settings; saving under an existing name replaces that preset.
+    const auto current = processor.getUserPresetName();
+    presetDialog = std::make_unique<juce::AlertWindow> ("Save preset",
+                                                        "Name for the current settings (an existing preset with this name is replaced):",
+                                                        juce::MessageBoxIconType::NoIcon, this);
+    presetDialog->addTextEditor ("name", current.isNotEmpty() ? current : juce::String ("My preset"));
+    presetDialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    presetDialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<AnnealEditorContent> safe (this);
+    presetDialog->enterModalState (true, juce::ModalCallbackFunction::create ([safe] (int result)
+    {
+        if (safe == nullptr || safe->presetDialog == nullptr)
+            return;
+        const auto name = safe->presetDialog->getTextEditorContents ("name");
+        safe->presetDialog->setVisible (false);
+        if (result == 1 && ! safe->processor.saveUserPreset (name))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Preset not saved",
+                "Use a name with letters or numbers, and check that this folder can be written:\n"
+                    + safe->processor.getUserPresetFolder().getFullPathName(),
+                "OK", safe.getComponent());
+        safe->presets.refresh();
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->presetDialog.reset(); });
+    }), false);
+}
+
+void AnnealEditorContent::confirmDeletePreset (int index)
+{
+    const int nf = processor.getNumPrograms();
+    const auto name = processor.getUserPresetNames()[index - nf];
+    if (index < nf || name.isEmpty())
+        return;
+    juce::Component::SafePointer<AnnealEditorContent> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Delete preset",
+        "Delete \"" + name + "\"? The file goes to the recycle bin; the current settings stay as they are.",
+        "Delete", "Cancel", this,
+        juce::ModalCallbackFunction::create ([safe, name] (int result)
+        {
+            if (safe == nullptr || result != 1)
+                return;
+            safe->processor.deleteUserPreset (name);
+            safe->presets.refresh();
+        }));
 }
 
 void AnnealEditorContent::updateActivity()
@@ -211,6 +301,12 @@ void AnnealEditorContent::updateActivity()
     // Short sentences: they must fit under the ring at every size.
     const auto a = screen.getActivity();
     auto param = [this] (const char* id) { return processor.apvts.getRawParameterValue (id)->load(); };
+
+    // 5.0 Punch: how hard the latest attack is shaped (the compact knob's inner arc).
+    if (std::abs (param (ids::punch)) < 0.5f)
+        punch.setActivity (0.0f, {});
+    else
+        punch.setActivity (juce::jlimit (0.0f, 1.0f, std::abs (a.punchDb) / 8.0f), juce::String (a.punchDb, 1) + " dB");
 
     if (param (ids::reveal) < 0.05f)        reveal.setActivity (0.0f, "off");
     else if (! a.live)                      reveal.setActivity (0.0f, {});
@@ -328,7 +424,7 @@ AnnealEditor::AnnealEditor (AnnealAudioProcessor& p)
     setLookAndFeel (&lookAndFeel);
 
     setResizable (true, true);
-    setResizeLimits (984, 480, 1968, 960);   // 0.75x to 1.5x of 1312 x 640
+    setResizeLimits (1098, 480, 2196, 960);   // 0.75x to 1.5x of 1464 x 640
     setWantsKeyboardFocus (true);            // clicking the editor lets Ctrl+Z / Ctrl+Y reach it
     getConstrainer()->setFixedAspectRatio ((double) AnnealEditorContent::baseWidth / AnnealEditorContent::baseHeight);
     setSize (AnnealEditorContent::baseWidth, AnnealEditorContent::baseHeight);

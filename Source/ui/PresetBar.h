@@ -18,6 +18,11 @@ namespace anneal
         std::function<int()> getChosen;                    // index the list ticks / the arrows step from
         std::function<juce::String()> getDisplayText;      // what the box shows, e.g. "Vocal air *"
         std::function<void (int)> onChoose;
+        // 5.0 user presets: entries from getFactoryCount() on are the user's.
+        std::function<int()> getFactoryCount;
+        std::function<void()> onSaveAs;          // show the save dialog
+        std::function<void (int)> onDelete;      // delete entry i (one of the user's)
+        std::function<void()> onOpenFolder;
 
         void refresh();   // call from a timer: repaints only when the shown text changes
 

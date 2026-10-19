@@ -174,6 +174,11 @@ void PerceptionScreen::timerCallback()
                          : activity.matchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
         activity.refSeconds = f->refSeconds;
         activity.refValid = f->refValid;
+        activity.punchDb = std::abs (f->punchDb) >= std::abs (activity.punchDb) ? f->punchDb
+                         : activity.punchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
+        attacksOn = f->attacks;
+        for (int b = 0; b < nb; ++b)
+            attack[(size_t) b] = attacksOn ? juce::jmax (f->transient[b], attack[(size_t) b] * 0.7f) : 0.0f;
         for (int b = 0; b < nb; ++b)
         {
             keyDb[(size_t) b] = keyActive ? juce::jmax (f->keyDb[b], keyDb[(size_t) b] - levelFallPerTick) : floorDb;
@@ -205,6 +210,7 @@ void PerceptionScreen::timerCallback()
             heatDb[(size_t) b] = juce::jmax (floorDb, heatDb[(size_t) b] - heatFallPerTick);
             gainDb[(size_t) b] *= 0.85f;
             sideGainDb[(size_t) b] *= 0.85f;
+            attack[(size_t) b] *= 0.7f;
         }
         if (idleTicks > refreshHz / 2)
             activity = {};
@@ -234,7 +240,9 @@ void PerceptionScreen::refreshNow()
         keyActive = f->keyActive;
         frozen = f->frozen;
         std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
-        activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid };
+        activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid, f->punchDb };
+        attacksOn = f->attacks;
+        std::copy (f->transient, f->transient + nb, attack.begin());
         haveFrame = true;
         updateViews();
         updateReferenceOffset (true);
@@ -274,6 +282,7 @@ void PerceptionScreen::paint (juce::Graphics& g)
     paintSpectrum (g);
     paintReference (g);
     paintEq (g);
+    paintAttacks (g);
     paintHeat (g);
     paintWeights (g);
     paintRange (g);
@@ -420,6 +429,25 @@ void PerceptionScreen::paintEq (juce::Graphics& g)
     };
     side (above, colour::straw, eqRangeDb * 0.5f);
     side (below, colour::blue, -eqRangeDb * 0.5f);
+}
+
+void PerceptionScreen::paintAttacks (juce::Graphics& g)
+{
+    // 5.0: with Guard or Punch on, a short rose bar at the foot of the EQ lane in each band where an
+    // attack is happening now (taller = stronger), so you can see what they work on.
+    if (! attacksOn)
+        return;
+    const float base = mainLane.getBottom() - 1.0f;
+    for (int b = 0; b < nb; ++b)
+    {
+        const float a = attack[(size_t) b];
+        if (a < 0.05f)
+            continue;
+        const float x0 = xForCam (z0 + ((float) b - 0.5f) * dz), x1 = xForCam (z0 + ((float) b + 0.5f) * dz);
+        const float h = 3.0f + 9.0f * a;
+        g.setColour (colour::rose.withAlpha (0.25f + 0.55f * a));
+        g.fillRect (juce::Rectangle<float> (x0, base - h, juce::jmax (1.0f, x1 - x0), h));
+    }
 }
 
 void PerceptionScreen::paintHeat (juce::Graphics& g)

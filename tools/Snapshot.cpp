@@ -191,6 +191,10 @@ int main (int argc, char* argv[])
           }, 1200.0f, true },
         { "frozen", [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); set (p, ids::smooth, 70); }, 3150.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
+        { "shape", [] (AnnealAudioProcessor& p)   // 5.0: Punch, Width, Mono bass, with the attack marks
+          {
+              set (p, ids::punch, 60); set (p, ids::width, 150); set (p, ids::monoBass, 120); set (p, ids::guard, 40);
+          }, 3150.0f, true },
         { "midside", [] (AnnealAudioProcessor& p)
           {
               set (p, ids::stereoMode, 1); set (p, ids::eqTarget, 2); set (p, ids::heatTarget, 1);
@@ -270,10 +274,10 @@ int main (int argc, char* argv[])
         {
             failures += shoot (*editor, outDir.getChildFile (base + "_150.png"), 1.5f) ? 0 : 1;
             failures += shoot (*editor, outDir.getChildFile (base + "_200.png"), 2.0f) ? 0 : 1;
-            editor->setSize (984, 480);
-            failures += shoot (*editor, outDir.getChildFile (base + "_min_984x480.png")) ? 0 : 1;
-            editor->setSize (1968, 960);
-            failures += shoot (*editor, outDir.getChildFile (base + "_max_1968x960.png")) ? 0 : 1;
+            editor->setSize (1098, 480);
+            failures += shoot (*editor, outDir.getChildFile (base + "_min_1098x480.png")) ? 0 : 1;
+            editor->setSize (2196, 960);
+            failures += shoot (*editor, outDir.getChildFile (base + "_max_2196x960.png")) ? 0 : 1;
         }
 
         std::printf ("%s: latency %.1f ms, match gain %.2f dB, peaks in last frame %d\n", s.name, proc.getLatencyMs(),

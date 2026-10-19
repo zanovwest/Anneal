@@ -22,6 +22,7 @@ namespace anneal::theme
         inline const juce::Colour blue    { 0xff6fa7ff };
         inline const juce::Colour violet  { 0xffa57be0 };   // sidechain key (temper purple)
         inline const juce::Colour teal    { 0xff5fcdbb };   // reference / target (4.0: the grey-teal past light blue)
+        inline const juce::Colour rose    { 0xffe8849a };   // 5.0 SHAPE: Punch and Width, attack marks on the display
         inline const juce::Colour warning { 0xffff5a4e };
     }
 

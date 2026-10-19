@@ -40,6 +40,9 @@ namespace anneal
         float scAmount     = 0.5f;
         int refMode        = refOff;         // 4.0 reference: off / learn the key / match
         float refAmount    = 0.5f;
+        float punch        = 0.0f;           // 5.0: -1..1 (0 = off)
+        float width        = 1.0f;           // 5.0: 0..2 (1 = as is)
+        float monoHz       = 0.0f;           // 5.0: mono below this, Hz (under 20 = off)
     };
 
     // STFT host for the perceptual model and the harmonic synth.
@@ -100,6 +103,7 @@ namespace anneal
         void smoothParameters() noexcept;
         void processMidSide (const ModelSettings&, float blend, const float* keyPower) noexcept;
         void applyListen (float msBlend) noexcept;
+        void applyWidth (bool harmonics) noexcept;   // 5.0 Width and Mono bass
 
         double sampleRate = 48000.0;
         int fftSize = 4096, hop = 512, numBins = 2049, channels = 2, pos = 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Presets.h"
 #include "dsp/LoudnessMatch.h"
 #include "dsp/Reference.h"
 #include "dsp/SpectralEngine.h"
@@ -47,6 +48,17 @@ public:
     // What the preset bar shows: the preset the settings equal, "<last chosen> *" once edited,
     // or "Custom" for settings that never came from a preset (e.g. projects from before 0.1.1).
     juce::String getPresetDisplayName();
+
+    // 5.0 user presets (message thread). Files in getUserPresetFolder(): the user's application-data
+    // folder unless a test sets another. Loading one is one undo step; it shows by name, with "*"
+    // once edited.
+    void setUserPresetFolder (const juce::File& folder, bool deletedToTrash = true) { userFolder = folder; userTrash = deletedToTrash; }
+    juce::File getUserPresetFolder() const { return userFolder; }
+    juce::StringArray getUserPresetNames() const { return anneal::presets::userNames (userFolder); }
+    bool saveUserPreset (const juce::String& name);   // false: no usable name, or the file couldn't be written
+    bool loadUserPreset (const juce::String& name);   // false: missing or not an Anneal preset
+    bool deleteUserPreset (const juce::String& name);
+    juce::String getUserPresetName() const { return userChosen ? userName : juce::String(); }
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
@@ -198,6 +210,15 @@ private:
     std::atomic<float>* pCeiling = nullptr;
     std::atomic<float>* pRefMode = nullptr;
     std::atomic<float>* pRefAmount = nullptr;
+    std::atomic<float>* pPunch = nullptr;      // 5.0
+    std::atomic<float>* pWidth = nullptr;
+    std::atomic<float>* pMonoBass = nullptr;
+
+    // 5.0 user presets
+    juce::File userFolder { anneal::presets::defaultUserFolder() };
+    juce::String userName;
+    anneal::presets::Values userValues {};
+    bool userChosen = false, userTrash = true;
 
     // 4.0 Reference and Paint. refLock guards the copies below, the writer side of refToAudio and
     // paintToAudio and the reader side of refLearned; the audio thread never takes it.

@@ -4,6 +4,75 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.0.0 — 2026-10-18 20:10
+
+The third major update: a SHAPE group for the punch and the stereo image of the sound, and your own
+presets. With the new controls left alone, everything sounds as in 4.0.2.
+
+New
+- **SHAPE** (new group, rose, between REFERENCE and OUTPUT):
+  - **Punch** −100 … +100 % (Off by default): a spectral transient shaper. In the bands where an
+    attack happens it makes the attack louder (+) or softer (−), up to 8 dB, and leaves the body of
+    the sound alone. It uses Guard's per-band attack detector but follows only the attack itself:
+    held while the detector holds the attack, gone within about 15 ms after. It works inside Range and
+    Paint like the rest of the auto EQ, and in Mid/Side it follows the EQ routing. It's sharpest in Low
+    latency; in Precise, the 85 ms frames hold an attack longer. Measured on 2 kHz plucks in Low:
+    - attacks (first 15 ms): +7.9 dB at +100 %, −7.9 dB at −100 %;
+    - the body (80–160 ms): moves 0.01 dB;
+    - with Range at 5–20 kHz the 2 kHz plucks are untouched.
+  - **Width** 0–200 % (100 % by default): the stereo width of what Anneal outputs, set per frequency
+    bin, so it's linear phase with no crossover filters. 0 % is mono; 200 % doubles the sides
+    (+6.0 dB). The centre stays where it was (within 0.01 dB), and mono tracks are left alone.
+  - **Mono bass** Off / 20–400 Hz (Off by default): everything below the frequency becomes mono,
+    fading in over a quarter octave either side, so the low end stays centred and mono-safe while the
+    rest keeps its width. Measured:
+    - sides at 60 Hz: −85 dB with Mono bass at 200 Hz (Low), −122 dB at 120 Hz (Precise);
+    - sides at 1 kHz: unchanged (0.00 dB).
+  - Width and Mono bass shape everything you hear, harmonics and Listen solos included. Mix blends
+    them with the dry signal like the rest.
+- **Attack marks on the display** (roadmap item 11): with Guard or Punch on, short rose bars at the
+  foot of the EQ lane show the bands where an attack is happening right now (taller = stronger).
+- **Your own presets.** The preset menu lists them under YOUR PRESETS, after the factory ones (the
+  arrows step through both), and has three new commands: *Save current settings as…*,
+  *Delete “…”* and *Open the presets folder*.
+  - A preset holds what the factory presets set: Reveal, Smooth, Tilt, Response, Range, Heat, Color,
+    Focus, Mix, Output, Flavour, Punch, Width and Mono bass.
+  - Each is a small XML file, `%APPDATA%\Qulic\Anneal\Presets\<name>.annealpreset`, shared by every
+    project and every instance. Saving under an existing name replaces that preset; deleting sends
+    the file to the Recycle Bin. Characters Windows doesn't allow in names (`\ / : * ? " < > |`)
+    become spaces.
+  - The bar shows the preset's name, with `*` once you change something. Loading one is one undo
+    step. A project remembers which of your presets it was set from, as long as the file is still there.
+  - The DAW's own preset list (host programs) still holds the 8 factory presets.
+
+Changed
+- **Wider window**: 1464 × 640 (was 1312 × 640) for the SHAPE group, resizable from 1098 × 480 to
+  2196 × 960.
+- Factory presets also set Punch off, Width 100 % and Mono bass off, so each sounds as before.
+  Projects from earlier versions open with those settings too.
+
+Tests: 142/142 acceptance checks, 22 of them new:
+- Punch: louder and softer, body untouched, inside Range only;
+- Width: 100 %, 0 % and 200 %, with Heat working, through the whole processor, and mono tracks
+  untouched;
+- Mono bass in Low and Precise;
+- typed values and read-outs, older projects, factory presets;
+- user presets: save, load and undo, remembered by a project, broken and older files, safe names,
+  the preset bar, delete;
+- the SHAPE layout.
+
+22/22 host checks on the built VST3, 1 new: Punch, Width and Mono bass through VST3. Width 0 %
+leaves the sides 107 dB under the signal, and all three were swept while playing. 25/25 setup
+checks.
+
+CPU at 48 kHz with the new controls off, as in 4.0.2:
+- Stereo: Low 1.7 %, Normal 1.2 %, Precise 1.8 %;
+- Mid/Side: Low 3.7 %, Normal 2.5 %, Precise 3.6 %.
+
+With Punch, Width and Mono bass on, Low and Precise at 64 samples measured 1.4 % and 1.6 %, against
+1.8 % and 1.6 % without them in the same run: no measurable cost. Linux was not rebuilt on this PC;
+the Linux workflow runs on GitHub for the push.
+
 ## 4.0.2 — 2026-10-18 19:39
 
 Lighter on the CPU: Anneal now runs its spectral transforms on its own FFT, about four times faster

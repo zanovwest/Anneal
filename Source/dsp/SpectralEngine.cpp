@@ -216,6 +216,9 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.heatSide, target.heatSide);
     lin (current.scAmount, target.scAmount);
     lin (current.refAmount, target.refAmount);
+    lin (current.punch, target.punch);
+    lin (current.width, target.width);
+    lin (current.monoHz, target.monoHz);
     current.freeze = target.freeze;
     current.scMode = target.scMode;
     current.refMode = target.refMode;
@@ -384,6 +387,7 @@ void SpectralEngine::processFrame() noexcept
     ms.scAmount = current.scAmount;
     ms.refMode = current.refMode;
     ms.refAmount = current.refAmount;
+    ms.punch = current.punch;
     model.analyse (power.data(), ms, framesPerSecond, keyPtr);
 
     const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
@@ -444,6 +448,12 @@ void SpectralEngine::processFrame() noexcept
         f.refValid = model.hasReference();
         f.refSeconds = getLearnedSeconds();
         f.matchDb = model.getMatchPeakDb();
+        f.attacks = current.guard > 0.0f || std::abs (current.punch) > 1.0e-4f;
+        f.punchDb = msActive ? (std::abs (msModel[0].getPunchPeakDb()) > std::abs (msModel[1].getPunchPeakDb())
+                                    ? msModel[0].getPunchPeakDb() : msModel[1].getPunchPeakDb())
+                             : model.getPunchPeakDb();
+        if (f.attacks)
+            std::copy (model.getBandPunch(), model.getBandPunch() + DisplayFrame::numBands, f.transient);
         if (keyHasSignal)
             model.bandLevelsDb (keyPower.data(), f.keyDb);
         if (msActive)
@@ -480,6 +490,11 @@ void SpectralEngine::processFrame() noexcept
         if (listenEq)
             harmonicsWritten = false;   // the harmonic stream's overlap-add tail just fades out
     }
+
+    // 5.0 Width and Mono bass shape the stereo image of what is heard. Width 100 % with Mono bass
+    // off skips this entirely, so the sound is exactly as before.
+    if (channels == 2 && (std::abs (current.width - 1.0f) > 1.0e-4f || current.monoHz >= 20.0f))
+        applyWidth (harmonicsWritten);
 
     auto synthesise =[this, half, mask] (float* s, float* acc, float* fifo)
     {
@@ -532,6 +547,7 @@ void SpectralEngine::processMidSide (const ModelSettings& settings, float blend,
         ms.reveal *= eqAmount;
         ms.smooth *= eqAmount;
         ms.tiltDbPerOct *= eqAmount;
+        ms.punch *= eqAmount;
         // Reference match: the stereo (linked) match curve, applied to each routed component.
         ms.refMode = refOff;
         if (model.isMatching())
@@ -576,6 +592,41 @@ void SpectralEngine::processMidSide (const ModelSettings& settings, float blend,
         harmPower[(size_t) k] = hEnergy * scale * scale * 0.5f;
         outPower[(size_t) k] = outEnergy * scale * scale * 0.5f;
     }
+}
+
+void SpectralEngine::applyWidth (bool harmonics) noexcept
+{
+    // Per bin, linear phase (no crossover filters): Side = (L - R) / 2 scaled by the width, Mid kept.
+    // Mono bass: fully mono a quarter octave below its frequency, the full width a quarter octave above.
+    const float binHz = (float) (sampleRate / fftSize);
+    const bool mono = current.monoHz >= 20.0f;
+    const float lo = mono ? current.monoHz * 0.84089642f : 0.0f;
+    const float hi = mono ? current.monoHz * 1.18920712f : 0.0f;
+    const float width = current.width;
+    auto apply = [&] (float* l, float* r)
+    {
+        for (int k = 0; k < numBins; ++k)
+        {
+            float w = width;
+            const float f = (float) k * binHz;
+            if (f < hi)
+            {
+                float t = f <= lo ? 0.0f : 2.0f * std::log2 (f / lo);   // 0..1 across the half octave
+                t = std::clamp (t, 0.0f, 1.0f);
+                w *= t * t * (3.0f - 2.0f * t);
+            }
+            for (int ri = 0; ri < 2; ++ri)
+            {
+                const auto i = (size_t) (2 * k + ri);
+                const float m = 0.5f * (l[i] + r[i]), s = 0.5f * (l[i] - r[i]) * w;
+                l[i] = m + s;
+                r[i] = m - s;
+            }
+        }
+    };
+    apply (spec[0].data(), spec[1].data());
+    if (harmonics)
+        apply (harmSpec[0].data(), harmSpec[1].data());
 }
 
 void SpectralEngine::applyListen (float msBlend) noexcept

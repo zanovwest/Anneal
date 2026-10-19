@@ -51,6 +51,7 @@ namespace anneal
             bool live = false, keyActive = false;
             float matchDb = 0.0f, refSeconds = 0.0f;   // 4.0 reference: strongest Match move, seconds learned
             bool refValid = false;
+            float punchDb = 0.0f;   // 5.0: strongest Punch move, dB
         };
         Activity getActivity() const noexcept { return activity; }
 
@@ -100,6 +101,7 @@ namespace anneal
         void paintSpectrum (juce::Graphics&);
         void paintReference (juce::Graphics&);
         void paintEq (juce::Graphics&);
+        void paintAttacks (juce::Graphics&);   // 5.0: where Guard and Punch see an attack
         float eqY (float db) const noexcept;
         float specY (float db) const noexcept;
         void paintHeat (juce::Graphics&);
@@ -119,6 +121,8 @@ namespace anneal
         // content reads as a flowing line rather than one-ERB-wide plateaus. Display only.
         std::array<float, nb> inView {}, outView {}, heatView {};
         std::array<float, nb> keyDb {}, keyView {};   // sidechain key (3.0)
+        std::array<float, nb> attack {};               // 5.0: attack per band, 0..1 (held briefly)
+        bool attacksOn = false;
         bool keyActive = false, frozen = false;
         void updateViews();
         float z0 = 0.0f, dz = 0.0f;
