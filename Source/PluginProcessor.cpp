@@ -301,8 +301,12 @@ bool AnnealAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     preparedChannels = juce::jlimit (1, 2, getMainBusNumInputChannels());
+    // Hosts prepare again for a new buffer size or rate and often for an export (JUCE's VST3
+    // wrapper: every setActive (true)). A frozen curve and the loudness-match gain are measurements
+    // and come through it, as through reset() (4.0.2; before, the export started from new ones).
+    const bool frozen = pFreeze->load() > 0.5f;
     for (int m = 0; m < anneal::SpectralEngine::numModes; ++m)
-        engines[(size_t) m]->prepare (sampleRate, preparedChannels, m);
+        engines[(size_t) m]->prepare (sampleRate, preparedChannels, m, frozen);
     limiter.prepare (sampleRate, preparedChannels);
     bypassRing.setSize (2, limiter.getLatency());
     bypassRing.clear();
@@ -332,7 +336,7 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     listenSmoothed.setCurrentAndTargetValue (pListen->load() > 0.5f ? 1.0f : 0.0f);
     matchHold = 0;
     matchSmoothed.reset (sampleRate, 0.5);
-    matchSmoothed.setCurrentAndTargetValue (1.0f);
+    matchSmoothed.setCurrentAndTargetValue (pMatch->load() > 0.5f ? match.getGain() : 1.0f);
 
     pushParametersToEngine();
 }

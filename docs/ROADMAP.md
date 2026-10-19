@@ -18,8 +18,11 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-8. **CPU under the 3 % budget in Precise** (3.4 % in 3.0; Low is 2.5 %): SIMD FFT (PFFFT) and
-   batched log/exp, as in Morphfall (8.8 % → 1.5 %).
+8. **CPU under the 3 % budget in Mid/Side Precise too** (part 2 of the CPU item; part 1, the FFT,
+   is done in 4.0.2: Stereo Precise 1.8 %, Mid/Side Precise 3.6 %): batched, vectorisable log10 /
+   exp in the perceptual model. `model.analyse` is now the largest cost per frame (36–44 µs, most of
+   it ~5,000 log10/pow calls) and Mid/Side runs three models. Keep the curve within 0.001 dB of
+   4.0.2. `AnnealTests profile` shows the split.
 10. **Spread the frame work across blocks** (optional): each STFT frame lands in one host block.
     That's fine for Anneal alone (Low: 10 % of a 64-sample block), but spreading it over the hop
     would leave more headroom for other plugins at tiny buffers. Costs one hop of latency, so only
@@ -56,6 +59,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 4.0.2 (2026-10-18): **Faster engine**, part 1 of the CPU item: Anneal's own real FFT (N/2-point
+  split radix-4 Stockham, JUCE's layout and scaling) instead of JUCE's portable fallback, ~4×
+  faster per transform. Stereo Low 2.0 → 1.7 %, Normal 1.8 → 1.2 %, Precise 2.7 → 1.8 %; Mid/Side
+  Precise 4.3 → 3.6 %. Written in-house rather than adding PFFFT: the daily runs add no libraries,
+  and the KVR binaries would need its licence notice. Fixed: a frozen curve and the loudness-match
+  gain were lost when the host prepared Anneal again (new buffer size or rate, many exports).
 - 4.0.1 (2026-10-15): **Linux support**: native Ubuntu 24.04 VST3, CLAP, LV2 and Standalone
   builds, local build/package scripts, checksum archives and correct VST3 copy defaults.
   Fixed the Linux installer's deletion of the previous plugin on a copy failure. The headless

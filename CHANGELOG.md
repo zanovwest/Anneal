@@ -4,6 +4,43 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 4.0.2 — 2026-10-18 19:39
+
+Lighter on the CPU: Anneal now runs its spectral transforms on its own FFT, about four times faster
+than the one it used, so every mode costs less. The sound, the latency and your projects are
+unchanged.
+
+New
+- **Faster engine** (the first part of the CPU item on the roadmap). Anneal's own FFT replaces
+  JUCE's portable one, which Windows and Linux builds get: 6.6 µs instead of 24.7 µs per 4096-point
+  transform, and as accurate (within −133 dB of the old one, as close to an exact calculation).
+  - CPU at 48 kHz on the build machine, of one core: Stereo Low 2.0 → 1.7 %, Normal 1.8 → 1.2 %,
+    Precise 2.7 → 1.8 %. Mid/Side Low 3.7 → 3.6 %, Normal 2.8 → 2.4 %, Precise 4.3 → 3.6 %. With
+    Reference Match and Paint on: Low 2.2 → 2.0 %, Normal 1.9 → 1.3 %, Precise 2.8 → 2.0 %.
+  - Slowest 0.1 % of 64-sample blocks: Stereo Precise 25 → 14 % of the deadline, Mid/Side Precise
+    36 → 29 %, Mid/Side Low 19 → 15 %; Stereo Low stays at 8 %.
+  - Reference files are analysed faster too.
+  - Mid/Side Precise is still above 3 %: the perceptual model is now the largest cost there (three
+    models per frame). That is the next part of the item.
+  - For development: `AnnealTests profile` shows where one frame's time goes.
+
+Fixes
+- **Freeze survives the host preparing Anneal again.** Hosts do this when you change the buffer
+  size or the sample rate, and many when an export starts (a VST3 plug-in is prepared every time
+  it's activated). Until now a frozen curve was thrown away there and re-made from the first moment
+  of audio afterwards, so an export could sound different from what you had frozen. Now it holds,
+  also when the rate changes (44.1 kHz and up). Measured: a −9.0 dB cut stays −9.0 dB after a new
+  buffer size and after 48 → 44.1 kHz; through the built VST3, −8.9 dB before and after the host
+  deactivates and activates it (4.0.0: back to 0.0 dB).
+- **Loudness Match keeps its gain when the host prepares again.** Before, it started over at 0 dB
+  and swelled to the matched level over half a second, for example at the start of an export. Now it
+  carries on from what it had measured (−0.65 dB stays −0.65 dB).
+
+Tests: 120/120 acceptance checks (new: the FFT against JUCE's and an exact DFT, and both fixes,
+which failed before them), 21/21 built-VST3 host checks (new: Freeze through deactivate/activate,
+which fails on 4.0.0), 25/25 setup checks. The Linux build was not re-run for this update; the new
+code is plain portable C++ with no new libraries.
+
 ## 4.0.1 — 2026-10-15
 
 Linux support

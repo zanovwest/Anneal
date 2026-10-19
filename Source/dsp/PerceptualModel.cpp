@@ -22,8 +22,18 @@ namespace
     inline float powToDb (double p) noexcept { return 10.0f * (float) std::log10 (std::max (p, 1.0e-20)); }
 }
 
-void PerceptualModel::prepare (double newSampleRate, int newFftSize)
+void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCurve)
 {
+    // keepCurve: a frozen curve comes through preparing again (4.0.2), as through reset(), when the
+    // bands stay where they are (every rate from 40.8 kHz up). It is kept in bands, not bins.
+    const double oldZ0 = z0, oldDz = dz;
+    std::vector<float> keptGain, keptProm;
+    if (keepCurve && curvePrimed)
+    {
+        keptGain = gain;
+        keptProm = promSlow;
+    }
+
     sampleRate = newSampleRate;
     fftSize = newFftSize;
     numBins = fftSize / 2 + 1;
@@ -43,8 +53,12 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
     aDnM = std::pow (aDn, exclusion);
 
     bandHz.resize (numBands);
+    bandOct.resize (numBands);
     for (int b = 0; b < numBands; ++b)
+    {
         bandHz[(size_t) b] = erb::camToHz (z0 + b * dz);
+        bandOct[(size_t) b] = (float) std::log2 (bandHz[(size_t) b] / 1000.0);   // Tilt's octaves from 1 kHz
+    }
 
     // Band -> bin partition by exact frequency overlap.
     partStart.assign (numBands + 1, 0);
@@ -125,6 +139,12 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize)
         flatNormDb[(size_t) b] = powToDb ((double) place[(size_t) b] / context[(size_t) b]);
 
     reset();
+    if (keptGain.size() == (size_t) numBands && z0 == oldZ0 && dz == oldDz)
+    {
+        gain = keptGain;
+        promSlow = keptProm;
+        curvePrimed = true;   // the next frame turns it into this rate's per-bin gains
+    }
 }
 
 void PerceptualModel::reset (bool keepCurve)
@@ -378,7 +398,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const double z = z0 + b * dz;
         const float rg = smoothstep ((float) ((z - (zLo - 0.25)) / 0.5))
                        * smoothstep ((float) (((zHi + 0.25) - z) / 0.5));
-        const float tilt = std::clamp (s.tiltDbPerOct * (float) std::log2 (bandHz[(size_t) b] / 1000.0), -9.0f, 9.0f);
+        const float tilt = std::clamp (s.tiltDbPerOct * bandOct[(size_t) b], -9.0f, 9.0f);
         // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
         const float autoDb = guarded ? gain[(size_t) b] * relax : gain[(size_t) b];

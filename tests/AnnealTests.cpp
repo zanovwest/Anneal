@@ -5,6 +5,7 @@
 #include "PluginEditor.h"
 #include "Params.h"
 #include "Presets.h"
+#include "dsp/RealFft.h"
 #include "dsp/ReferenceAnalyser.h"
 #include "dsp/SpectralEngine.h"
 #include "dsp/TruePeakLimiter.h"
@@ -1805,6 +1806,251 @@ void benchmark()
     }
     juce::Process::setPriority (juce::Process::NormalPriority);
 }
+
+// 4.0.2: Anneal's own real FFT against JUCE's (same layout and scaling) and an exact DFT.
+void testRealFft()
+{
+    section ("31. Real FFT (4.0.2)");
+    std::mt19937 rng (17);
+    std::uniform_real_distribution<float> u (-1.0f, 1.0f);
+    double worstJuceFwd = 0.0, worstJuceInv = 0.0, worstRound = 0.0, worstExact = 0.0, juceExact = 0.0;
+    bool untouched = true;
+    for (int order = 3; order <= 15; ++order)
+    {
+        const int n = 1 << order;
+        anneal::RealFft mine;
+        mine.prepare (n);
+        juce::dsp::FFT theirs (order);
+
+        std::vector<float> x ((size_t) n);
+        for (auto& v : x) v = u (rng);
+        std::vector<float> a ((size_t) n * 2 + 8, 12345.0f), b ((size_t) n * 2, 0.0f);
+        std::copy (x.begin(), x.end(), a.begin());
+        std::copy (x.begin(), x.end(), b.begin());
+        mine.forward (a.data());
+        theirs.performRealOnlyForwardTransform (b.data(), true);
+        for (size_t i = (size_t) n + 2; i < a.size(); ++i)
+            untouched = untouched && a[i] == 12345.0f;   // only bins 0..N/2 are written
+        double peak = 0.0, diff = 0.0;
+        for (int i = 0; i < n + 2; ++i)
+        {
+            peak = std::max (peak, (double) std::abs (b[(size_t) i]));
+            diff = std::max (diff, (double) std::abs (a[(size_t) i] - b[(size_t) i]));
+        }
+        worstJuceFwd = std::max (worstJuceFwd, diff / peak);
+
+        if (n <= 1024)   // exact DFT in double precision
+        {
+            double errMine = 0.0, errJuce = 0.0, top = 0.0;
+            for (int k = 0; k <= n / 2; ++k)
+            {
+                double re = 0.0, im = 0.0;
+                for (int t = 0; t < n; ++t)
+                {
+                    const double ph = -2.0 * juce::MathConstants<double>::pi * (double) ((long long) k * t % n) / n;
+                    re += x[(size_t) t] * std::cos (ph);
+                    im += x[(size_t) t] * std::sin (ph);
+                }
+                top = std::max (top, std::hypot (re, im));
+                errMine = std::max (errMine, std::hypot (a[2 * (size_t) k] - re, a[2 * (size_t) k + 1] - im));
+                errJuce = std::max (errJuce, std::hypot (b[2 * (size_t) k] - re, b[2 * (size_t) k + 1] - im));
+            }
+            worstExact = std::max (worstExact, errMine / top);
+            juceExact = std::max (juceExact, errJuce / top);
+        }
+
+        // Inverse of an arbitrary spectrum, including imaginary parts at DC and Nyquist (ignored).
+        std::vector<float> s ((size_t) n + 2);
+        for (auto& v : s) v = u (rng);
+        std::vector<float> c ((size_t) n * 2, 0.0f), d ((size_t) n * 2, 0.0f);
+        std::copy (s.begin(), s.end(), c.begin());
+        std::copy (s.begin(), s.end(), d.begin());
+        mine.inverse (c.data());
+        theirs.performRealOnlyInverseTransform (d.data());
+        peak = diff = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            peak = std::max (peak, (double) std::abs (d[(size_t) i]));
+            diff = std::max (diff, (double) std::abs (c[(size_t) i] - d[(size_t) i]));
+        }
+        worstJuceInv = std::max (worstJuceInv, diff / peak);
+
+        mine.inverse (a.data());   // the forward result back to the samples
+        double rt = 0.0;
+        for (int i = 0; i < n; ++i)
+            rt = std::max (rt, (double) std::abs (a[(size_t) i] - x[(size_t) i]));
+        worstRound = std::max (worstRound, rt);
+    }
+    check (worstJuceFwd < 1.0e-5, "forward = JUCE's, sizes 8 to 32768",
+           "largest difference " + db (toDb (worstJuceFwd)) + " re the peak bin");
+    check (worstExact < 2.0e-6 && worstExact <= 2.0 * juceExact + 1.0e-7, "forward = exact DFT (sizes 8 to 1024)",
+           "error " + db (toDb (worstExact)) + " (JUCE's " + db (toDb (juceExact)) + ")");
+    check (worstJuceInv < 1.0e-5, "inverse = JUCE's (scale 1/N, DC/Nyquist imag ignored)",
+           "largest difference " + db (toDb (worstJuceInv)) + " re the peak sample");
+    check (worstRound < 1.0e-5, "inverse (forward (x)) = x", "largest error " + db (toDb (worstRound)) + " (full scale 1)");
+    check (untouched, "forward writes only bins 0..N/2", untouched ? juce::String ("N+2.. untouched") : juce::String ("WROTE PAST N+1"));
+}
+
+// 4.0.2 bug fixes: the host preparing Anneal again. JUCE's VST3 wrapper calls prepareToPlay on every
+// setActive (true); hosts do that when the buffer size or the sample rate changes, and many when an
+// export starts. Measurements (a frozen curve, the loudness match) must come through it, as they do
+// through reset().
+void testFixes402()
+{
+    section ("32. 4.0.2 bug fixes");
+    const double fs = 48000.0;
+
+    // Freeze: before 4.0.2 preparing again re-primed the held curve from the first frame afterwards.
+    {
+        const int n = (int) (2 * fs);
+        Channels ringy = testsig::silence (2, n);
+        testsig::Pink pl (1), pr (2);
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+            ringy[0][(size_t) i] = 0.03f * pl.next() + ring;
+            ringy[1][(size_t) i] = 0.03f * pr.next() + ring;
+        }
+
+        Rig r;
+        r.setNeutral();
+        r.set (ids::smooth, 100.0f);
+        r.prepare (fs, 512);
+        r.run (ringy, fixedBlocks (512));
+        r.set (ids::freeze, 1.0f);
+        r.run (pinkNoise (fs, 0.1, 0.03f, 4), fixedBlocks (512));
+        const float held = bandGain (r.proc->getEngine(), 3150.0);
+        r.prepare (fs, 256);   // the host activates Anneal again with another buffer size
+        r.run (pinkNoise (fs, 1.0, 0.03f, 9), fixedBlocks (256));
+        const float afterPrepare = bandGain (r.proc->getEngine(), 3150.0);
+        r.prepare (44100.0, 512);   // and at 44.1 kHz (the same bands)
+        r.run (pinkNoise (44100.0, 1.0, 0.03f, 9), fixedBlocks (512));
+        const float afterRate = bandGain (r.proc->getEngine(), 3150.0);
+        check (held <= -3.0f && std::abs (afterPrepare - held) < 0.05f && std::abs (afterRate - held) < 0.05f,
+               "Freeze holds when the host prepares again",
+               "held " + db (held) + ", after prepareToPlay " + db (afterPrepare) + ", at 44.1 kHz " + db (afterRate));
+
+        // Unfrozen, the curve follows the new audio as before.
+        r.set (ids::freeze, 0.0f);
+        r.prepare (fs, 512);
+        r.run (pinkNoise (fs, 1.0, 0.03f, 9), fixedBlocks (512));
+        const float released = bandGain (r.proc->getEngine(), 3150.0);
+        check (released > held + 2.0f, "unfrozen, the curve follows the audio again",
+               "3150 Hz " + db (released) + " (was held at " + db (held) + ")");
+    }
+
+    // Loudness Match: before 4.0.2 preparing again started the match gain over at 0 dB (a 0.5 s
+    // swell at the start of an export).
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::reveal, 100.0f);
+        r.set (ids::heat, 100.0f);
+        r.set (ids::output, 0.0f);
+        r.set (ids::match, 1.0f);
+        r.prepare (fs, 512);
+        const auto music = testsig::musicLike (fs, 6.0, 3);
+        r.run (music, fixedBlocks (512));
+        const float settled = r.proc->getMatchGainDb();
+        r.prepare (fs, 1024);
+        Channels shortPart = testsig::silence (2, (int) (0.1 * fs));
+        for (int c = 0; c < 2; ++c)
+            std::copy (music[(size_t) c].begin(), music[(size_t) c].begin() + (long) shortPart[0].size(), shortPart[(size_t) c].begin());
+        r.run (shortPart, fixedBlocks (1024));
+        const float afterPrepare = r.proc->getMatchGainDb();
+        check (std::abs (settled) > 0.5f && std::abs (afterPrepare - settled) < 0.15f,
+               "loudness Match keeps its gain when the host prepares again",
+               "settled " + db (settled, 2) + ", 0.1 s after prepareToPlay " + db (afterPrepare, 2));
+    }
+}
+
+// `AnnealTests profile`: where one STFT frame's time goes (Release build, this machine). Not a
+// check; run it by hand before and after performance work.
+void profile()
+{
+    section ("Profile: microseconds per STFT frame, 48 kHz stereo, default settings");
+    juce::Process::setPriority (juce::Process::HighPriority);
+    const double fs = 48000.0;
+    const auto music = testsig::musicLike (fs, 20.0, 1);
+    auto usPer = [] (int reps, const std::function<void()>& f)
+    {
+        f();   // warm up
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < reps; ++i)
+            f();
+        return 1.0e6 * std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() / reps;
+    };
+
+    for (int mode : { 0, 1, 2 })
+    {
+        const int n = anneal::SpectralEngine::fftSizeFor (fs, mode);
+        const int bins = n / 2 + 1;
+        int order = 0;
+        while ((1 << order) < n)
+            ++order;
+
+        // One windowed frame of the music and its spectrum.
+        std::vector<float> frame ((size_t) n * 2, 0.0f), work ((size_t) n * 2), power ((size_t) bins), outDb (1024);
+        for (int i = 0; i < n; ++i)
+            frame[(size_t) i] = music[0][(size_t) (fs * 5.0) + (size_t) i] * (float) (0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * i / n));
+        juce::dsp::FFT jfft (order);
+        work = frame;
+        jfft.performRealOnlyForwardTransform (work.data(), true);
+        const float scale = 4.0f / (float) n;
+        for (int k = 0; k < bins; ++k)
+            power[(size_t) k] = (work[2 * (size_t) k] * work[2 * (size_t) k] + work[2 * (size_t) k + 1] * work[2 * (size_t) k + 1]) * scale * scale;
+        const std::vector<float> spectrum = work;
+
+        const double fwd = usPer (2000, [&] { work = frame; jfft.performRealOnlyForwardTransform (work.data(), true); });
+        const double inv = usPer (2000, [&] { work = spectrum; jfft.performRealOnlyInverseTransform (work.data()); });
+        const double copy = usPer (2000, [&] { work = frame; });
+        anneal::RealFft own;
+        own.prepare (n);
+        const double ownFwd = usPer (2000, [&] { work = frame; own.forward (work.data()); });
+        const double ownInv = usPer (2000, [&] { work = spectrum; own.inverse (work.data()); });
+
+        anneal::PerceptualModel model;
+        model.prepare (fs, n);
+        anneal::ModelSettings ms;
+        ms.reveal = 0.4f; ms.smooth = 0.4f;
+        const float fps = (float) (fs / (mode == 2 ? n / 8 : n / 4));
+        const double analyse = usPer (2000, [&] { model.analyse (power.data(), ms, fps); });
+        const double levels = usPer (2000, [&] { model.bandLevelsDb (power.data(), outDb.data()); });
+
+        anneal::HarmonicSynth synth;
+        synth.prepare (n, fs);
+        std::vector<float> harm0 ((size_t) bins * 2), harm1 ((size_t) bins * 2), harmPower ((size_t) bins);
+        const float* specs[2] = { spectrum.data(), spectrum.data() };
+        float* harms[2] = { harm0.data(), harm1.data() };
+        anneal::HeatSettings hs;
+        hs.heat = 0.3f;
+        const double heat = usPer (2000, [&] { synth.process (specs, 2, power.data(), model.getBinNeed(), hs, harms, harmPower.data()); });
+
+        // The whole engine on the music, per frame.
+        anneal::SpectralEngine e;
+        e.prepare (fs, 2, mode);
+        auto p = neutral();
+        p.reveal = 0.4f; p.smooth = 0.4f; p.heat = 0.3f;
+        e.setParameters (p);
+        auto x = music;
+        const auto t0 = std::chrono::steady_clock::now();
+        runEngine (e, x, fixedBlocks (512));
+        const double total = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+        const double frames = (double) music[0].size() / e.getHopSize();
+        const double perFrame = 1.0e6 * total / frames;
+
+        const char* names[] = { "Low", "Normal", "Precise" };
+        info (juce::String (names[mode]) + " (N " + juce::String (n) + ", " + juce::String (fps, 1) + " frames/s): engine "
+              + juce::String (perFrame, 1) + " us/frame = " + juce::String (100.0 * total / 20.0, 2) + " % of one core");
+        info ("  JUCE FFT forward " + juce::String (fwd - copy, 1) + " us, inverse " + juce::String (inv - copy, 1)
+              + " us (6 per stereo frame with Heat: " + juce::String (2 * (fwd - copy) + 4 * (inv - copy), 1) + " us)");
+        info ("  RealFft forward " + juce::String (ownFwd - copy, 1) + " us, inverse " + juce::String (ownInv - copy, 1)
+              + " us (6: " + juce::String (2 * (ownFwd - copy) + 4 * (ownInv - copy), 1) + " us)");
+        info ("  model.analyse " + juce::String (analyse, 1) + " us, bandLevelsDb " + juce::String (levels, 1)
+              + " us (x3 for the display), synth.process " + juce::String (heat, 1) + " us");
+    }
+    juce::Process::setPriority (juce::Process::NormalPriority);
+}
 }
 
 //==============================================================================
@@ -2825,9 +3071,22 @@ void testEditor40()
     }
 }
 
-int main()
+int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
+
+    if (argc > 1 && juce::String (argv[1]) == "profile")
+    {
+        testRealFft();
+        profile();
+        return 0;
+    }
+    if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
+    {
+        testFixes402();
+        std::printf ("\n%d checks, %d failed\n", checks, failures);
+        return failures;
+    }
 
     testIdentity();
     testLatency();
@@ -2860,6 +3119,8 @@ int main()
     testPaint();
     testReferenceState();
     testEditor40();
+    testRealFft();
+    testFixes402();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

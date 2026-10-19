@@ -27,8 +27,8 @@ namespace anneal
     class LoudnessMatch
     {
     public:
-        void prepare (double sampleRate);
-        void reset();
+        void prepare (double sampleRate);   // keeps the measurement and the gain (4.0.2)
+        void reset();                       // starts the measurement over
 
         // Returns the target gain for the wet signal after this block.
         float process (const float* const* dry, const float* const* wet, int numChannels, int numSamples) noexcept;

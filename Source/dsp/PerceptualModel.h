@@ -38,7 +38,9 @@ namespace anneal
     public:
         static constexpr int numBands = 1024;
 
-        void prepare (double sampleRate, int fftSize);
+        // keepCurve: an auto-EQ curve that is there stays (a frozen curve when the host prepares
+        // again), unless the new rate moves the bands (below 40.8 kHz).
+        void prepare (double sampleRate, int fftSize, bool keepCurve = false);
         // keepCurve: the auto-EQ curve (a measurement, not audio) stays where it is, e.g. a frozen
         // curve when the host stops and starts again. Everything else starts over.
         void reset (bool keepCurve = false);
@@ -134,6 +136,7 @@ namespace anneal
         std::vector<float> binFrac, binEdge;
 
         std::vector<double> bandHz, prefix;
+        std::vector<float> bandOct;   // log2 (band Hz / 1000), for Tilt
         std::vector<float> earW, noiseSlice, noiseBox, flatNormDb;
         std::vector<float> slices, smoothed, place, context, fwd, bwd, prom, target, targetSmoothed,
                            gain, promSlow, gainOut, needOut, tmp;

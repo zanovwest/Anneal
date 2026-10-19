@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PerceptualModel.h"
+#include "RealFft.h"
 #include "Reference.h"
 
 #include <juce_dsp/juce_dsp.h>
@@ -32,7 +33,7 @@ namespace anneal
         double sampleRate;
         int fftSize = 8192, hop = 4096, fill = 0, channelsSeen = 1;
         long long samplesIn = 0, frames = 0;
-        std::unique_ptr<juce::dsp::FFT> fft;
+        RealFft fft;
         std::vector<float> window, scratch;
         std::vector<float> fifo[maxChannels];
         std::vector<double> powerSum;

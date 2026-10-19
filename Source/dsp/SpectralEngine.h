@@ -3,6 +3,7 @@
 #include "DisplayFrame.h"
 #include "HarmonicSynth.h"
 #include "PerceptualModel.h"
+#include "RealFft.h"
 #include "TripleBuffer.h"
 
 #include <juce_dsp/juce_dsp.h>
@@ -54,7 +55,8 @@ namespace anneal
         static constexpr int numModes = 3;
         static int fftSizeFor (double sampleRate, int mode = precise) noexcept;
 
-        void prepare (double sampleRate, int numChannels, int mode = precise);
+        // keepCurve: a frozen auto-EQ curve survives (the host preparing again, 4.0.2).
+        void prepare (double sampleRate, int numChannels, int mode = precise, bool keepCurve = false);
         // keepCurve: a frozen auto-EQ curve survives (the host stopping and starting again).
         void reset (bool keepCurve = false);
         // Takes over another engine's auto-EQ curve (same sample rate), e.g. a frozen curve when
@@ -103,7 +105,7 @@ namespace anneal
         int fftSize = 4096, hop = 512, numBins = 2049, channels = 2, pos = 0;
         float framesPerSecond = 93.75f, olaNorm = 1.0f / 3.0f, lastHeatGuard = 1.0f;
 
-        std::unique_ptr<juce::dsp::FFT> fft;
+        RealFft fft;   // 4.0.2: Anneal's own (JUCE's layout and scaling, ~4x faster than its fallback)
         std::vector<float> window;
         std::vector<float> inFifo[maxChannels], outAcc[maxChannels], outFifo[maxChannels],
                            spec[maxChannels], harm[maxChannels];

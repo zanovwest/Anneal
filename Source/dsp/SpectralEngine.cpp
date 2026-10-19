@@ -12,7 +12,7 @@ int SpectralEngine::fftSizeFor (double sr, int mode) noexcept
     return mode == low ? base / 4 : mode == normal ? base / 2 : base;
 }
 
-void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
+void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, bool keepCurve)
 {
     sampleRate = newSampleRate;
     channels = std::clamp (numChannels, 1, maxChannels);
@@ -23,10 +23,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
     numBins = fftSize / 2 + 1;
     framesPerSecond = (float) (sampleRate / hop);
 
-    int order = 0;
-    while ((1 << order) < fftSize)
-        ++order;
-    fft = std::make_unique<juce::dsp::FFT> (order);
+    fft.prepare (fftSize);
 
     // Periodic Hann for analysis and synthesis. Overlap-add of w^2 sums to 3N/8 / hop (3 at N/8,
     // 1.5 at N/4); olaNorm scales it to unity either way.
@@ -54,7 +51,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
         msHarm[c].assign ((size_t) numBins * 2, 0.0f);
         msPower[c].assign ((size_t) numBins, 0.0f);
         msHarmPower[c].assign ((size_t) numBins, 0.0f);
-        msModel[c].prepare (sampleRate, fftSize);
+        msModel[c].prepare (sampleRate, fftSize, keepCurve);
         msSynth[c].prepare (fftSize, sampleRate);
         rawSpec[c].assign ((size_t) numBins * 2, 0.0f);
     }
@@ -68,9 +65,9 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode)
     envRelease = (float) std::exp (-1.0 / (0.060 * sampleRate));
     gateCoeff  = (float) (1.0 - std::exp (-1.0 / (0.001 * sampleRate)));
 
-    model.prepare (sampleRate, fftSize);
+    model.prepare (sampleRate, fftSize, keepCurve);
     synth.prepare (fftSize, sampleRate);
-    reset();
+    reset (keepCurve);
 }
 
 void SpectralEngine::reset (bool keepCurve)
@@ -258,8 +255,7 @@ void SpectralEngine::processFrame() noexcept
             s[i] = v;
             (n < half ? earlyEnergy : lateEnergy) += (double) v * v;
         }
-        std::fill (s + fftSize, s + 2 * fftSize, 0.0f);
-        fft->performRealOnlyForwardTransform (s, true);
+        fft.forward (s);
     }
 
     // Listening to Reveal or Smooth needs this frame's spectrum before the EQ.
@@ -316,8 +312,7 @@ void SpectralEngine::processFrame() noexcept
             const int n = (i + half) & mask;
             s[i] = keyFifo[(size_t) n] * window[(size_t) n];
         }
-        std::fill (s + fftSize, s + 2 * fftSize, 0.0f);
-        fft->performRealOnlyForwardTransform (s, true);
+        fft.forward (s);
         const float keyScale = ampScale * ampScale;
         double total = 0.0;
         for (int k = 0; k < numBins; ++k)
@@ -488,7 +483,7 @@ void SpectralEngine::processFrame() noexcept
 
     auto synthesise =[this, half, mask] (float* s, float* acc, float* fifo)
     {
-        fft->performRealOnlyInverseTransform (s);   // JUCE scales the inverse by 1/N
+        fft.inverse (s);   // scaled by 1/N, like JUCE's; reads bins 0..N/2 only
         for (int i = 0; i < fftSize; ++i)
         {
             const int n = (i + half) & mask;
@@ -505,7 +500,6 @@ void SpectralEngine::processFrame() noexcept
 
         if (harmonicsWritten)
         {
-            std::fill (harmSpec[c].begin() + 2 * numBins, harmSpec[c].end(), 0.0f);
             synthesise (harmSpec[c].data(), harmAcc[c].data(), harmFifo[c].data());
         }
         else

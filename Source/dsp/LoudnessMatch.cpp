@@ -45,7 +45,13 @@ void LoudnessMatch::prepare (double fs)
             k->hp.setHighPass (fs, 38.13547087602444, 0.5003270373238773);
         }
     alpha = 1.0 - std::exp (-1.0 / (3.0 * fs));
-    reset();
+    // Only the filters' audio history starts over. The measurement (a slow ratio of K-weighted
+    // powers, the same at any rate) and its gain are kept when the host prepares again (4.0.2).
+    for (int c = 0; c < maxChannels; ++c)
+    {
+        kDry[c].reset();
+        kWet[c].reset();
+    }
 }
 
 void LoudnessMatch::reset()

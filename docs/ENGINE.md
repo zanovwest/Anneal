@@ -23,6 +23,7 @@ input ──► dry delay (N samples) ──────────────
 | Tail | N samples |
 | Channels | mono or stereo, in = out; linked Stereo (default) or independently analysed Mid/Side; mono always uses linked mono |
 | Parameter resolution | parameters are sampled once per host block, smoothed per frame (τ 40 ms) |
+| FFT (4.0.2) | Anneal's own `RealFft`: the N real samples packed into N/2 complex points (even/odd split), a split-format radix-4 Stockham FFT written for the compiler's vectoriser, then the real/complex split. Same in-place layout and scaling as JUCE's `performRealOnly*` transforms (forward unscaled, inverse 1/N, DC and Nyquist imaginary parts ignored); within −133 dB of JUCE's and as close to an exact DFT (−136.5 dB vs −137.8 dB). About 4× faster than JUCE's portable fallback, which Windows and Linux builds get (no IPP or FFTW): 6.6 µs instead of 24.7 µs per 4096-point forward transform |
 
 ### Listen modes (0.2.5)
 
@@ -176,7 +177,11 @@ frame (pre-echo up to ~N/2 before sharp onsets). Measured in the tests.
 
 ## Real-time contract
 
-- All buffers, the FFT object and the band tables are allocated in `prepare()`.
+- All buffers, the FFT's tables and scratch, and the band tables are allocated in `prepare()`.
+- 4.0.2: preparing again (hosts do it for a new buffer size or rate and often for an export; JUCE's
+  VST3 wrapper on every `setActive (true)`) keeps a frozen curve when the bands stay the same (every
+  rate from 40.8 kHz up), and keeps the loudness-match measurement and gain; only audio history
+  starts over, as in `reset()`.
 - Audio callback: no allocation, locks, logging or I/O.
 - Editor data: one `DisplayFrame` per STFT frame via a wait-free triple buffer;
   meters via atomics.

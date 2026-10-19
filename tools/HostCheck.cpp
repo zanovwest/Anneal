@@ -643,6 +643,54 @@ int main (int argc, char* argv[])
                 p->releaseResources();
     }
 
+    // 9. 4.0.2: a frozen curve comes through the host deactivating and activating Anneal (JUCE's
+    //    VST3 host: setActive (false), setupProcessing, setActive (true)), as hosts do for a new
+    //    buffer size and often for an export. Measured on a quiet 3150 Hz probe tone.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        bool ok = inst != nullptr;
+        double before = 0.0, after = 0.0;
+        if (ok)
+        {
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Heat", 0.0f }, { "Smooth", 1.0f }, { "Freeze", 0.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            auto withTone = [fs] (float toneAmp, double seconds, unsigned seed)
+            {
+                const int n = (int) (seconds * fs);
+                auto x = testsig::silence (2, n);
+                testsig::Pink pl (seed), pr (seed + 1);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float tone = toneAmp * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+                    x[0][(size_t) i] = 0.03f * pl.next() + tone;
+                    x[1][(size_t) i] = 0.03f * pr.next() + tone;
+                }
+                return x;
+            };
+            auto probeGainDb = [&] (unsigned seed, int block)
+            {
+                const auto probe = withTone (0.003f, 1.5, seed);
+                ok = ok && run (*inst, probe, out, [block] { return block; });
+                const int from = (int) (0.75 * fs), len = (int) (0.5 * fs), lat = inst->getLatencySamples();
+                return testsig::toDb (testsig::toneAmplitude (out[0].data() + from + lat, len, 3150.0, fs)
+                                      / testsig::toneAmplitude (probe[0].data() + from, len, 3150.0, fs));
+            };
+            ok = ok && run (*inst, withTone (0.05f, 2.0, 1), out, [] { return 512; });   // a ringing 3150 Hz: Smooth cuts it
+            findParam (*inst, "Freeze")->setValueNotifyingHost (1.0f);
+            before = probeGainDb (5, 512);
+            inst->releaseResources();
+            inst->setPlayConfigDetails (2, 2, fs, 256);
+            inst->prepareToPlay (fs, 256);
+            after = probeGainDb (7, 256);
+            inst->releaseResources();
+        }
+        check (ok && before < -6.0 && std::abs (after - before) < 0.5, "Freeze holds through deactivate/activate",
+               "3150 Hz probe " + juce::String (before, 1) + " dB frozen, " + juce::String (after, 1) + " dB after the host re-activates");
+    }
+
     plugin->releaseResources();
     plugin.reset();
     std::printf ("\n%d checks, %d failed\n", checks, failures);

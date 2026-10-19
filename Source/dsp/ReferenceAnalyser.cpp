@@ -11,14 +11,11 @@ ReferenceAnalyser::ReferenceAnalyser (double sr)
     // Finer than any latency mode (~5.9 Hz bins at 48 kHz): the reference is analysed once.
     fftSize = sampleRate <= 50000.0 ? 8192 : sampleRate <= 100000.0 ? 16384 : 32768;
     hop = fftSize / 2;
-    int order = 0;
-    while ((1 << order) < fftSize)
-        ++order;
-    fft = std::make_unique<juce::dsp::FFT> (order);
+    fft.prepare (fftSize);
     window.resize ((size_t) fftSize);
     for (int i = 0; i < fftSize; ++i)
         window[(size_t) i] = (float) (0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * i / fftSize));
-    scratch.assign ((size_t) fftSize * 2, 0.0f);
+    scratch.assign ((size_t) fftSize + 2, 0.0f);
     for (auto& f : fifo)
         f.assign ((size_t) fftSize, 0.0f);
     powerSum.assign ((size_t) fftSize / 2 + 1, 0.0);
@@ -57,8 +54,7 @@ void ReferenceAnalyser::processFrame()
         float* s = scratch.data();
         for (int i = 0; i < fftSize; ++i)
             s[i] = fifo[c][(size_t) i] * window[(size_t) i];
-        std::fill (s + fftSize, s + 2 * fftSize, 0.0f);
-        fft->performRealOnlyForwardTransform (s, true);
+        fft.forward (s);
         for (int k = 0; k < numBins; ++k)
             powerSum[(size_t) k] += ((double) s[2 * k] * s[2 * k] + (double) s[2 * k + 1] * s[2 * k + 1]) * powScale;
     }
