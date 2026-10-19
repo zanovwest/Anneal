@@ -23,8 +23,17 @@ LatencyMenu::LatencyMenu (juce::AudioProcessorValueTreeState& state, std::functi
         repaint();
     }, state.undoManager);
     attachment->sendInitialUpdate();
-    setTooltip ("Latency: Low for tracking and playing live, Precise for the finest bass detail "
-                "(the host re-aligns tracks when it changes)");
+    if (auto* zp = state.getParameter (ids::zeroLatency))
+    {
+        zeroAttachment = std::make_unique<juce::ParameterAttachment> (*zp, [this] (float v)
+        {
+            zero = v > 0.5f;
+            repaint();
+        }, state.undoManager);
+        zeroAttachment->sendInitialUpdate();
+    }
+    setTooltip ("Latency: Zero for no delay at all (Heat, Punch and the Listen solos rest), Low for tracking and "
+                "playing live, Precise for the finest bass detail (the host re-aligns tracks when it changes)");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
@@ -70,20 +79,31 @@ void LatencyMenu::mouseDown (const juce::MouseEvent&)
 {
     juce::PopupMenu menu;
     menu.addSectionHeader ("LATENCY");
+    // 5.1: Zero first; it is the shortest, but Heat, Punch and the Listen solos need the FFT frames.
+    if (zeroAttachment != nullptr)
+        menu.addItem (4, "Zero   0.0 ms   (no delay; Heat, Punch and Listen rest)", true, zero);
     for (int m = 0; m < 3; ++m)
     {
         auto text = juce::String (modeNames[m]) + "   " + juce::String (msForMode ? msForMode (m) : 0.0, 1) + " ms";
         if (juce::String (modeNotes[m]).isNotEmpty())
             text << "   (" << modeNotes[m] << ")";
-        menu.addItem (m + 1, text, true, m == choice);
+        menu.addItem (m + 1, text, true, ! zero && m == choice);
     }
 
     juce::Component::SafePointer<LatencyMenu> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withStandardItemHeight (24),
                         [safe] (int result)
                         {
-                            if (safe != nullptr && result > 0)
-                                safe->attachment->setValueAsCompleteGesture ((float) (result - 1));
+                            if (safe == nullptr || result <= 0)
+                                return;
+                            if (result == 4)
+                            {
+                                safe->zeroAttachment->setValueAsCompleteGesture (1.0f);
+                                return;
+                            }
+                            if (safe->zero && safe->zeroAttachment != nullptr)
+                                safe->zeroAttachment->setValueAsCompleteGesture (0.0f);
+                            safe->attachment->setValueAsCompleteGesture ((float) (result - 1));
                         });
 }
 }

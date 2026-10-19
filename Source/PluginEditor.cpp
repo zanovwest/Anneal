@@ -303,7 +303,7 @@ void AnnealEditorContent::updateActivity()
     auto param = [this] (const char* id) { return processor.apvts.getRawParameterValue (id)->load(); };
 
     // 5.0 Punch: how hard the latest attack is shaped (the compact knob's inner arc).
-    if (std::abs (param (ids::punch)) < 0.5f)
+    if (std::abs (param (ids::punch)) < 0.5f || processor.isZeroLatency())
         punch.setActivity (0.0f, {});
     else
         punch.setActivity (juce::jlimit (0.0f, 1.0f, std::abs (a.punchDb) / 8.0f), juce::String (a.punchDb, 1) + " dB");
@@ -318,7 +318,8 @@ void AnnealEditorContent::updateActivity()
     else if (a.cutDb > -0.1f)               smooth.setActivity (0.0f, "nothing dominant");
     else                                    smooth.setActivity (-a.cutDb / 9.0f, "cutting " + signedDb (a.cutDb) + " dB");
 
-    if (param (ids::heat) < 0.05f)          heat.setActivity (0.0f, "off");
+    if (processor.isZeroLatency())          heat.setActivity (0.0f, "off at zero latency");
+    else if (param (ids::heat) < 0.05f)     heat.setActivity (0.0f, "off");
     else if (! a.live)                      heat.setActivity (0.0f, {});
     else if (a.heatRelDb < -90.0f)          heat.setActivity (0.0f, "no harmonics yet");
     else                                    heat.setActivity ((a.heatRelDb + 54.0f) / 48.0f,

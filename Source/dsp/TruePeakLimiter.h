@@ -24,6 +24,9 @@ namespace anneal
 
         void setCeiling (bool enabled, float ceilingDbtp) noexcept;
         void process (float* const* channels, int numChannels, int numSamples) noexcept;   // in place
+        // 5.1 Zero latency: no look-ahead and no delay. Only sample peaks can be held: the gain drops
+        // at once to what the loudest sample needs, then recovers with the same release.
+        void processInstant (float* const* io, int numChannels, int numSamples) noexcept;
 
         // Deepest gain reduction since the last call (dB, <= 0). For the meter.
         float takeGainReductionDb() noexcept;

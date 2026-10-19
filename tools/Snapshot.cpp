@@ -191,6 +191,11 @@ int main (int argc, char* argv[])
           }, 1200.0f, true },
         { "frozen", [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); set (p, ids::smooth, 70); }, 3150.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
+        { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat and Punch rest; the tag says so)
+          {
+              set (p, ids::zeroLatency, 1); set (p, ids::heat, 40);
+              p.applyLatencyModeIfChanged();
+          }, 3150.0f, true },
         { "shape", [] (AnnealAudioProcessor& p)   // 5.0: Punch, Width, Mono bass, with the attack marks
           {
               set (p, ids::punch, 60); set (p, ids::width, 150); set (p, ids::monoBass, 120); set (p, ids::guard, 40);

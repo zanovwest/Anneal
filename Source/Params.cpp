@@ -282,6 +282,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
                   })));
     }
 
+    // 5.1 Zero latency: the auto-EQ curve through minimum-phase filters, no latency. Not automatable
+    // (the host re-aligns every track when the latency changes); off, as before, for older projects.
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::zeroLatency, 1 }, "Zero Latency", false,
+        juce::AudioParameterBoolAttributes().withAutomatable (false)));
+
     return layout;
 }
 }

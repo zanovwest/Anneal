@@ -14,6 +14,7 @@ int SpectralEngine::fftSizeFor (double sr, int mode) noexcept
 
 void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, bool keepCurve)
 {
+    curveMid = curveSide = nullptr;   // 5.1: the model's buffers may move; the next frame sets them
     sampleRate = newSampleRate;
     channels = std::clamp (numChannels, 1, maxChannels);
     fftSize = fftSizeFor (sampleRate, mode);
@@ -72,6 +73,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, b
 
 void SpectralEngine::reset (bool keepCurve)
 {
+    curveMid = curveSide = nullptr;   // 5.1: the model's buffers may move; the next frame sets them
     for (int c = 0; c < maxChannels; ++c)
         for (auto* v : { &inFifo[c], &outAcc[c], &outFifo[c], &harmAcc[c], &harmFifo[c], &alignRing[c] })
             std::fill (v->begin(), v->end(), 0.0f);
@@ -157,7 +159,8 @@ void SpectralEngine::process (float* const* io, int numChannels, int numSamples,
         // Output: main path + gated harmonic stream. The gate keeps the harmonics' envelope
         // at or below the envelope of the input they belong to (latency-aligned), which
         // removes STFT pre-echo ahead of onsets and is transparent in steady state.
-        for (int i = 0; i < todo; ++i)
+        // Analysis only (5.1 zero latency): the audio stays as it is.
+        for (int i = 0; i < (analysisOnly ? 0 : todo); ++i)
         {
             float aIn = 0.0f, aHarm = 0.0f;
             for (int c = 0; c < numChannels; ++c)
@@ -390,6 +393,32 @@ void SpectralEngine::processFrame() noexcept
     ms.punch = current.punch;
     model.analyse (power.data(), ms, framesPerSecond, keyPtr);
 
+    bool harmonicsWritten = false;
+    if (analysisOnly)
+    {
+        // 5.1 zero latency: the curve and the display, nothing resynthesised.
+        const float* g = model.getBinGain();
+        std::fill (outPower.begin(), outPower.end(), 0.0f);
+        std::fill (harmPower.begin(), harmPower.end(), 0.0f);
+        for (int c = 0; c < channels; ++c)
+            for (int k = 0; k < numBins; ++k)
+            {
+                const float yr = spec[c][(size_t) 2 * k] * g[k], yi = spec[c][(size_t) 2 * k + 1] * g[k];
+                outPower[(size_t) k] += (yr * yr + yi * yi) * powScale;
+            }
+        curveMid = curveSide = g;
+        if (msActive)
+        {
+            processMidSide (ms, msBlend, keyPtr);   // analyses Mid and Side (no harmonics: Heat is 0 here)
+            if (msBlend >= 0.5f)
+            {
+                curveMid = msModel[0].getBinGain();
+                curveSide = msModel[1].getBinGain();
+            }
+        }
+    }
+    else
+    {
     const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
     float* harmPtrs[maxChannels] = { harm[0].data(), harm[1].data() };
     HeatSettings hs;
@@ -400,7 +429,7 @@ void SpectralEngine::processFrame() noexcept
     lastPeakCount = synth.getLastPeakCount();
 
     // Main path gets the auto-EQ; harmonics go to their own stream (gated in process()).
-    bool harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && synth.getLastPeakCount() > 0;
+    harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && synth.getLastPeakCount() > 0;
     const float* g = model.getBinGain();
     std::fill (outPower.begin(), outPower.end(), 0.0f);
     for (int c = 0; c < channels; ++c)
@@ -428,6 +457,7 @@ void SpectralEngine::processFrame() noexcept
         processMidSide (ms, msBlend, keyPtr);
         harmonicsWritten = harmonicsWritten || lastPeakCount > 0;
     }
+    }
 
     {
         DisplayFrame& f = displayOut->beginWrite();
@@ -448,6 +478,7 @@ void SpectralEngine::processFrame() noexcept
         f.refValid = model.hasReference();
         f.refSeconds = getLearnedSeconds();
         f.matchDb = model.getMatchPeakDb();
+        f.zeroLatency = analysisOnly;
         f.attacks = current.guard > 0.0f || std::abs (current.punch) > 1.0e-4f;
         f.punchDb = msActive ? (std::abs (msModel[0].getPunchPeakDb()) > std::abs (msModel[1].getPunchPeakDb())
                                     ? msModel[0].getPunchPeakDb() : msModel[1].getPunchPeakDb())
@@ -481,6 +512,14 @@ void SpectralEngine::processFrame() noexcept
                 f.sideGainDb[b] = msModel[1].getBandGainDb()[b];
             }
         displayOut->endWrite();
+    }
+
+    if (analysisOnly)
+    {
+        for (int c = 0; c < channels; ++c)
+            std::memmove (inFifo[c].data(), inFifo[c].data() + hop, sizeof (float) * (size_t) (fftSize - hop));
+        std::memmove (keyFifo.data(), keyFifo.data() + hop, sizeof (float) * (size_t) (fftSize - hop));
+        return;
     }
 
     // Listen modes change only what is heard; the display above shows the full processing.

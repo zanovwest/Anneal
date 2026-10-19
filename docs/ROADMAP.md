@@ -63,6 +63,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.1.0 (2026-10-18, the user asked for it right after 5.0.0): **Zero latency**: the Low engine
+  analyses, the curve is applied through minimum-phase FIR filters (cepstral design every frame,
+  crossfaded), Width / Mono bass through the Side filter; Heat, Punch and Listen rest; Ceiling
+  without look-ahead.
 - 5.0.0 (2026-10-18, a major update the user asked for): **SHAPE** group with **Punch** (spectral
   transient shaper, ±8 dB on attacks only), **Width** (0–200 %, per bin, linear phase) and **Mono
   bass** (Off / 20–400 Hz); **attack marks** on the display (item 11, "show the guard"); **your own

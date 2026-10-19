@@ -5,6 +5,7 @@
 #include "dsp/Reference.h"
 #include "dsp/SpectralEngine.h"
 #include "dsp/TruePeakLimiter.h"
+#include "dsp/ZeroLatencyFilter.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -75,6 +76,7 @@ public:
     double getLatencyMs() const noexcept;
     double getLatencyMsForMode (int latencyMode) const noexcept;
     int getLatencyMode() const noexcept { return mode; }
+    bool isZeroLatency() const noexcept { return zero; }   // 5.1
 
     // Applies the Latency parameter now if it differs from the mode in use (message thread; the
     // processor's own timer does this within 100 ms of a change). Pauses processing for the
@@ -131,7 +133,9 @@ private:
     void pushParametersToEngine() noexcept;
     void timerCallback() override;
     int requestedLatencyMode() const noexcept;
-    int totalLatency() noexcept { return getEngine().getLatencySamples() + limiter.getLatency(); }
+    bool requestedZeroLatency() const noexcept { return pZero != nullptr && pZero->load() > 0.5f; }
+    // 5.1 Zero latency: nothing at all (no STFT, no look-ahead).
+    int totalLatency() noexcept { return zero ? 0 : getEngine().getLatencySamples() + limiter.getLatency(); }
 
     // Undo bookkeeping. A step holds parameter values, a paint stroke (4.0), or both.
     using Snapshot = std::map<int, float>;   // parameter index -> normalised value
@@ -164,6 +168,9 @@ private:
     std::array<std::unique_ptr<anneal::SpectralEngine>, anneal::SpectralEngine::numModes> engines;
     anneal::TripleBuffer<anneal::DisplayFrame> display;   // shared by the engines
     int mode = anneal::SpectralEngine::low;              // changed only while processing is suspended
+    bool zero = false;                                   // 5.1 Zero latency (mode is then Low, analysis only)
+    anneal::ZeroLatencyFilter zeroFilter;
+    float zeroWidth = 1.0f, zeroMonoHz = 0.0f;
     anneal::LoudnessMatch match;
 
     juce::AudioBuffer<float> dryRing, dryBlock;
@@ -198,6 +205,7 @@ private:
     std::atomic<float>* pDelta = nullptr;
     std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pLatency = nullptr;
+    std::atomic<float>* pZero = nullptr;
     std::atomic<float>* pGuard = nullptr;
     std::atomic<float>* pStereoMode = nullptr;
     std::atomic<float>* pEqTarget = nullptr;

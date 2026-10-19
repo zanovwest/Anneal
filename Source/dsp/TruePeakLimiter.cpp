@@ -77,6 +77,24 @@ float TruePeakLimiter::takeGainReductionDb() noexcept
     return db;
 }
 
+void TruePeakLimiter::processInstant (float* const* io, int numChannels, int numSamples) noexcept
+{
+    if (! enabled)
+        return;
+    numChannels = std::min (numChannels, channels);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float peak = 0.0f;
+        for (int c = 0; c < numChannels; ++c)
+            peak = std::max (peak, std::abs (io[c][i]));
+        const float need = peak > ceilingLin ? ceilingLin / peak : 1.0f;
+        held = need < held ? need : held + releaseCoef * (need - held);
+        for (int c = 0; c < numChannels; ++c)
+            io[c][i] *= held;
+        deepest = std::min (deepest, held);
+    }
+}
+
 void TruePeakLimiter::process (float* const* io, int numChannels, int numSamples) noexcept
 {
     numChannels = std::min (numChannels, channels);

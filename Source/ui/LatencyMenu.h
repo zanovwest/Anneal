@@ -25,9 +25,10 @@ namespace anneal
     private:
         std::function<double (int)> msForMode;
         std::function<double()> appliedMs;
-        std::unique_ptr<juce::ParameterAttachment> attachment;
+        std::unique_ptr<juce::ParameterAttachment> attachment, zeroAttachment;   // 5.1: Zero latency
         juce::RangedAudioParameter* param = nullptr;
         int choice = 0;
+        bool zero = false;
         double shownMs = -1.0;
         bool hover = false;
     };

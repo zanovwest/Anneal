@@ -1745,7 +1745,7 @@ void benchmark()
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; int shape = 0; };
+    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; int shape = 0; int zero = 0; };
     const char* modeNames[] = { "Low", "Normal", "Precise" };
 
     // 4.0: Reference Match at 100 % (a pink-noise reference) with EQ and Heat paint.
@@ -1764,13 +1764,15 @@ void benchmark()
         somePaint.heat[i + 10] = 0.25f;
     }
 
-    for (auto [fs, block, mode, midSide, flavour, matchPaint, shape] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+    for (auto [fs, block, mode, midSide, flavour, matchPaint, shape, zero] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
                                     Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
                                     Case { 96000.0, 512, 0 }, Case { 48000.0, 64, 0, 1 },
                                     Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 },
                                     Case { 48000.0, 64, 0, 0, 1 }, Case { 48000.0, 512, 2, 0, 1 },
                                     Case { 48000.0, 64, 0, 0, 0, 1 }, Case { 48000.0, 512, 1, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 1 },
-                                    Case { 48000.0, 64, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 1 } })
+                                    Case { 48000.0, 64, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 1 },
+                                    Case { 48000.0, 64, 0, 0, 0, 0, 0, 1 }, Case { 48000.0, 512, 0, 0, 0, 0, 0, 1 },
+                                    Case { 48000.0, 64, 0, 1, 0, 0, 0, 1 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
         r.set (ids::latency, (float) mode);
@@ -1783,6 +1785,8 @@ void benchmark()
             r.set (ids::refMode, 2.0f);
             r.set (ids::refAmount, 100.0f);
         }
+        if (zero)    // 5.1: Zero latency
+            r.set (ids::zeroLatency, 1.0f);
         if (shape)   // 5.0: Punch, Width and Mono bass all working
         {
             r.set (ids::punch, 50.0f);
@@ -1814,7 +1818,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + (shape ? "Shape " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + (shape ? "Shape " : "") + (zero ? "Zero latency " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;
@@ -3397,6 +3401,208 @@ void testUserPresets50()
     folder.deleteRecursively();
 }
 
+//==============================================================================
+// 5.1: Zero latency.
+void testZeroLatency51()
+{
+    section ("37. 5.1 Zero latency");
+    const double fs = 48000.0;
+    const double twoPi = 6.283185307179586;
+
+    // The filter design itself: a smooth -9 dB dip at 3 kHz comes out as asked, minimum phase.
+    {
+        anneal::ZeroLatencyFilter z;
+        z.prepare (fs, 2, 1024, 256);
+        std::vector<float> curve (513);
+        auto target = [] (double f) { return -9.0 * std::exp (-0.5 * std::pow (std::log2 (std::max (f, 1.0) / 3000.0) / 0.3, 2.0)); };
+        for (int k = 0; k < 513; ++k)
+            curve[(size_t) k] = (float) std::pow (10.0, target (k * fs / 1024.0) / 20.0);
+        std::vector<float> h ((size_t) z.getTaps());
+        z.design (curve.data(), 513, 1.0f, 0.0f, h.data());
+        double worst = 0.0, early = 0.0, total = 0.0;
+        for (double f : { 200.0, 1000.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0, 8000.0, 16000.0 })
+        {
+            double re = 0.0, im = 0.0;
+            for (size_t n = 0; n < h.size(); ++n)
+            {
+                re += h[n] * std::cos (twoPi * f * (double) n / fs);
+                im -= h[n] * std::sin (twoPi * f * (double) n / fs);
+            }
+            worst = std::max (worst, std::abs (10.0 * std::log10 (re * re + im * im) - target (f)));
+        }
+        for (size_t n = 0; n < h.size(); ++n)
+        {
+            total += (double) h[n] * h[n];
+            if (n < h.size() / 4)
+                early += (double) h[n] * h[n];
+        }
+        check (worst < 0.3 && early / total > 0.99, "zero-latency filter: the curve as asked, energy at the start (minimum phase)",
+               "worst error " + db (worst, 2) + ", energy in the first quarter " + juce::String (100.0 * early / total, 2) + " %");
+    }
+
+    // Reported and applied latency 0; with neutral settings the output is the input.
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::zeroLatency, 1.0f);
+        r.prepare (fs, 512);
+        auto impulse = testsig::silence (2, 16384);
+        impulse[0][1000] = impulse[1][1000] = 1.0f;
+        const auto out = r.run (impulse, fixedBlocks (512));
+        const auto music = testsig::musicLike (fs, 2.0);
+        const auto mout = r.run (music, randomBlocks (1, 700, 3));
+        double err = 0.0;
+        for (size_t c = 0; c < 2; ++c)
+            for (size_t i = 0; i < music[0].size(); ++i)
+                err = std::max (err, (double) std::abs (mout[c][i] - music[c][i]));
+        check (r.proc->isZeroLatency() && r.proc->getLatencySamples() == 0 && r.proc->getLatencyMs() == 0.0 && peakIndex (out) == 1000
+                   && std::abs (out[0][1000] - 1.0f) < 1.0e-4f && err < 1.0e-4,
+               "Zero latency: reports 0, an impulse comes out where it went in, neutral settings pass the input",
+               "latency " + juce::String (r.proc->getLatencySamples()) + ", impulse at " + juce::String (peakIndex (out))
+                   + ", max error " + juce::String (err, 7));
+    }
+
+    // Smooth cuts a sustained ring as it does in Low.
+    {
+        const int n = (int) (6.0 * fs);
+        auto bed = pinkNoise (fs, 6.0, 0.03f, 5);
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (twoPi * 3150.0 * i / fs);
+            bed[0][(size_t) i] += ring;
+            bed[1][(size_t) i] += ring;
+        }
+        double cut[2] {};
+        for (int z = 0; z < 2; ++z)
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::smooth, 100.0f);
+            r.set (ids::response, 40.0f);
+            r.set (ids::zeroLatency, (float) z);
+            r.prepare (fs, 512);
+            const auto out = r.run (bed, fixedBlocks (512));
+            const int L = r.proc->getLatencySamples();
+            cut[z] = toDb (testsig::toneAmplitude (out[0].data() + n / 2 + L, n / 3, 3150.0, fs)
+                           / testsig::toneAmplitude (bed[0].data() + n / 2, n / 3, 3150.0, fs));
+        }
+        check (cut[1] < -6.0 && std::abs (cut[1] - cut[0]) < 2.0, "Zero latency: Smooth cuts a ring as in Low",
+               "3150 Hz: Low " + db (cut[0], 1) + ", Zero " + db (cut[1], 1));
+    }
+
+    // Heat rests: no harmonics at zero latency.
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::heat, 100.0f);
+        r.set (ids::zeroLatency, 1.0f);
+        r.prepare (fs, 512);
+        const auto tone = testsig::sines (fs, (int) fs, { { 1000.0, 0.125 } });
+        const auto out = r.run (tone, fixedBlocks (512));
+        const double h2 = toDb (testsig::toneAmplitude (out[0].data() + 24000, 19200, 2000.0, fs) / 0.125);
+        check (h2 < -90.0, "Zero latency: Heat rests (no harmonics)", "2nd harmonic " + db (h2, 1));
+    }
+
+    // Width and Mono bass, through the Side filter.
+    {
+        const int n = (int) (2.0 * fs);
+        Channels in (2, std::vector<float> ((size_t) n));
+        for (int i = 0; i < n; ++i)
+        {
+            const double t = i / fs;
+            const double m = 0.1 * std::sin (twoPi * 300.0 * t) + 0.1 * std::sin (twoPi * 3000.0 * t);
+            const double s = 0.1 * std::sin (twoPi * 60.0 * t) + 0.1 * std::sin (twoPi * 1000.0 * t);
+            in[0][(size_t) i] = (float) (m + s);
+            in[1][(size_t) i] = (float) (m - s);
+        }
+        struct Image { double mid300, mid3k, side60, side1k; };
+        auto measure = [&] (float width, float monoHz)
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::zeroLatency, 1.0f);
+            r.set (ids::width, width);
+            r.set (ids::monoBass, monoHz);
+            r.prepare (fs, 512);
+            const auto out = r.run (in, fixedBlocks (512));
+            const int from = n / 2, len = n / 3;
+            std::vector<float> mid ((size_t) len), side ((size_t) len);
+            for (int i = 0; i < len; ++i)
+            {
+                const float l = out[0][(size_t) (from + i)], rr = out[1][(size_t) (from + i)];
+                mid[(size_t) i] = 0.5f * (l + rr);
+                side[(size_t) i] = 0.5f * (l - rr);
+            }
+            auto a = [&] (const std::vector<float>& x, double hz) { return toDb (testsig::toneAmplitude (x.data(), len, hz, fs) / 0.1); };
+            return Image { a (mid, 300.0), a (mid, 3000.0), a (side, 60.0), a (side, 1000.0) };
+        };
+        const auto w0 = measure (0.0f, 0.0f), w200 = measure (200.0f, 0.0f), mono = measure (100.0f, 200.0f);
+        auto midOk = [] (const Image& im) { return std::abs (im.mid300) < 0.1 && std::abs (im.mid3k) < 0.1; };
+        check (midOk (w0) && w0.side60 < -90.0 && w0.side1k < -90.0 && midOk (w200) && std::abs (w200.side1k - 6.02) < 0.2
+                   && midOk (mono) && mono.side60 < -30.0 && std::abs (mono.side1k) < 0.3,
+               "Zero latency: Width and Mono bass work, the centre unchanged",
+               "Width 0 %: sides " + db (w0.side1k, 0) + "; 200 %: 1 kHz sides " + db (w200.side1k, 2) + "; Mono bass 200 Hz: 60 Hz sides "
+                   + db (mono.side60, 1) + ", 1 kHz " + db (mono.side1k, 2) + "; centre within " + db (std::max (std::abs (mono.mid300), std::abs (w200.mid3k)), 2));
+    }
+
+    // Switching between Zero and the latency modes (and Mid/Side at Zero) while playing.
+    {
+        Rig r;
+        r.prepare (fs, 512);
+        const auto music = testsig::musicLike (fs, 1.0);
+        juce::String log;
+        bool ok = true;
+        const std::pair<int, int> steps[] = { { 0, 0 }, { 1, 0 }, { 0, 2 }, { 1, 2 }, { 0, 1 }, { 1, 0 } };
+        int step = 0;
+        for (auto [z, m] : steps)
+        {
+            r.set (ids::latency, (float) m);
+            r.set (ids::zeroLatency, (float) z);
+            r.set (ids::stereoMode, step++ == 3 ? 1.0f : 0.0f);
+            r.proc->applyLatencyModeIfChanged();
+            const auto out = r.run (music, randomBlocks (16, 1024, (unsigned) step));
+            const int lat = r.proc->getLatencySamples();
+            const int expected = z ? 0 : anneal::SpectralEngine::fftSizeFor (fs, m) + r.proc->getCeilingLatency();
+            ok = ok && lat == expected && allFinite (out) && maxAbs (out) < 4.0;
+            log << (z ? "Zero" : m == 0 ? "Low" : m == 1 ? "Normal" : "Precise") << " " << lat << "  ";
+        }
+        check (ok, "switching Zero and the latency modes while playing (and Mid/Side at Zero): right latency, clean", log);
+    }
+
+    // The Ceiling at zero latency holds sample peaks (no look-ahead).
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::zeroLatency, 1.0f);
+        r.set (ids::ceiling, 3.0f);   // -1.0 dB
+        r.set (ids::output, 12.0f);
+        r.prepare (fs, 512);
+        const auto tone = testsig::sines (fs, (int) fs, { { 997.0, 0.5 } });
+        const auto out = r.run (tone, fixedBlocks (512));
+        const double peakDb = toDb (maxAbs (out));
+        check (peakDb <= -0.99, "Zero latency Ceiling holds sample peaks (-1 dB, the signal 6 dB over 0 dBFS)", "peak " + db (peakDb, 2));
+    }
+
+    // Projects from before 5.1 open with Zero latency off.
+    {
+        Rig a;
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        if (auto* el = xml->getChildByAttribute ("id", ids::zeroLatency))
+            xml->removeChildElement (el, true);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig b;
+        b.set (ids::zeroLatency, 1.0f);
+        b.prepare (fs, 512);
+        b.proc->setStateInformation (old.getData(), (int) old.getSize());
+        b.proc->applyLatencyModeIfChanged();
+        check (! b.proc->isZeroLatency() && b.proc->getLatencySamples() == 1024 + b.proc->getCeilingLatency(),
+               "projects from before 5.1 open with Zero latency off", "latency " + juce::String (b.proc->getLatencySamples()));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -3451,6 +3657,7 @@ int main (int argc, char** argv)
     testWidth50();
     testShapeParams50();
     testUserPresets50();
+    testZeroLatency51();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

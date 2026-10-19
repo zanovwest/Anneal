@@ -395,6 +395,40 @@ int main (int argc, char* argv[])
         }
         mixParam->setValueNotifyingHost (1.0f);
         check (ok, "latency modes switch through the host", log);
+
+        // 5.1 Zero latency through the host: the host sees 0, the dry path (Mix 0) is not delayed,
+        // the plug-in's own output (Mix 100 %) arrives at once too, and switching back restores Low.
+        auto* zp = findParam (*plugin, "Zero Latency");
+        bool zok = zp != nullptr && ! zp->isAutomatable();
+        juce::String zlog;
+        for (float mixValue : { 0.0f, 1.0f })
+        {
+            if (! zok) break;
+            zp->setValueNotifyingHost (1.0f);
+            mixParam->setValueNotifyingHost (mixValue);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            auto imp = testsig::silence (2, 16384);
+            imp[0][1000] = imp[1][1000] = 1.0f;
+            testsig::Channels o;
+            run (*plugin, testsig::silence (2, 2048), o, [] { return 512; });
+            plugin->reset();
+            run (*plugin, imp, o, [] { return 512; });
+            int pk = 0;
+            for (int i = 0; i < (int) o[0].size(); ++i)
+                if (std::abs (o[0][(size_t) i]) > std::abs (o[0][(size_t) pk]))
+                    pk = i;
+            zok = zok && plugin->getLatencySamples() == 0 && pk == 1000;
+            zlog << "Mix " << (mixValue > 0.5f ? "100" : "0") << " %: latency " << plugin->getLatencySamples() << ", impulse +" << (pk - 1000) << "  ";
+        }
+        if (zp != nullptr)
+        {
+            zp->setValueNotifyingHost (0.0f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            zok = zok && plugin->getLatencySamples() == 1024 + ceilingLookahead48k;
+            zlog << "off again: " << plugin->getLatencySamples();
+        }
+        mixParam->setValueNotifyingHost (1.0f);
+        check (zok, "Zero latency through the host", zlog);
     }
 
     // 6c. Sidechain (3.0): the plug-in offers a second, optional input bus; a host that routes a

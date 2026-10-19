@@ -29,6 +29,7 @@ namespace anneal
         float refSeconds = 0.0f;     // 4.0: Learn key, seconds of key learned so far
         float matchDb = 0.0f;        // 4.0: Match, strongest move inside the range, dB
         bool attacks = false;        // 5.0: Guard or Punch is on; transient[] is valid
+        bool zeroLatency = false;    // 5.1: Zero latency (Heat, Punch and Listen are off)
         float punchDb = 0.0f;        // 5.0: strongest Punch move inside the range, dB
 
         float inDb[numBands]   {};    // input level per ERB, dBFS (signal power within +-0.5 Cam)

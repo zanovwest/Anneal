@@ -98,6 +98,18 @@ namespace anneal
         void setLearnTarget (TripleBuffer<ReferenceCurve>* out) noexcept { learnOut = out; }
         float getLearnedSeconds() const noexcept { return (float) model.getLearnedFrames() / framesPerSecond; }
 
+        // 5.1 Zero latency: analysis only. The model, the display and the curve run as usual, but
+        // nothing is resynthesised and process() leaves the audio as it is; ZeroLatencyFilter applies
+        // the curve. Kept across prepare() and reset().
+        void setAnalysisOnly (bool on) noexcept { analysisOnly = on; }
+        bool isAnalysisOnly() const noexcept { return analysisOnly; }
+        int samplesToNextFrame() const noexcept { return hop - pos; }
+        std::uint32_t getFrameCount() const noexcept { return frameCounter; }
+        int getNumBins() const noexcept { return numBins; }
+        // This frame's curve as linear gain per bin: Mid and Side in Mid/Side, the same curve twice in Stereo.
+        const float* getCurveMid() const noexcept { return curveMid != nullptr ? curveMid : model.getBinGain(); }
+        const float* getCurveSide() const noexcept { return curveSide != nullptr ? curveSide : model.getBinGain(); }
+
     private:
         void processFrame() noexcept;
         void smoothParameters() noexcept;
@@ -145,5 +157,9 @@ namespace anneal
         bool learnFresh = true, learnHeld = false;
         int learnTick = 0;
         unsigned int refEpoch = 0;
+
+        bool analysisOnly = false;
+        const float* curveMid = nullptr;
+        const float* curveSide = nullptr;
     };
 }

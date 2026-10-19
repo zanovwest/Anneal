@@ -207,6 +207,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pPunch      = apvts.getRawParameterValue (ids::punch);
     pWidth      = apvts.getRawParameterValue (ids::width);
     pMonoBass   = apvts.getRawParameterValue (ids::monoBass);
+    pZero       = apvts.getRawParameterValue (ids::zeroLatency);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -220,7 +221,10 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     }
     loader = std::make_unique<ReferenceLoader> (*this);
     limiter.prepare (48000.0, 2);
-    mode = requestedLatencyMode();
+    zero = requestedZeroLatency();
+    mode = zero ? anneal::SpectralEngine::low : requestedLatencyMode();
+    engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
+    zeroFilter.prepare (48000.0, 2, engines[anneal::SpectralEngine::low]->getFftSize(), engines[anneal::SpectralEngine::low]->getHopSize());
     setLatencySamples (totalLatency());
     startTimerHz (10);
 }
@@ -255,8 +259,10 @@ void AnnealAudioProcessor::timerCallback()
 
 void AnnealAudioProcessor::applyLatencyModeIfChanged()
 {
-    const int wanted = requestedLatencyMode();
-    if (wanted == mode)
+    // 5.1: Zero latency runs the Low engine as analysis only, through the zero-latency filters.
+    const bool wantZero = requestedZeroLatency();
+    const int wanted = wantZero ? anneal::SpectralEngine::low : requestedLatencyMode();
+    if (wanted == mode && wantZero == zero)
         return;
 
     // suspendProcessing takes the callback lock the host processes under, so no block is running
@@ -264,8 +270,11 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     suspendProcessing (true);
     const int previous = mode;
     mode = wanted;
-    getEngine().reset();
-    if (pFreeze->load() > 0.5f)   // a frozen curve stays what it is in the new mode
+    zero = wantZero;
+    engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
+    zeroFilter.reset();
+    getEngine().reset (pFreeze->load() > 0.5f && previous == mode);
+    if (pFreeze->load() > 0.5f && previous != mode)   // a frozen curve stays what it is in the new mode
         getEngine().adoptCurveFrom (*engines[(size_t) previous]);
     pollLearnedReference();       // a reference learned in the previous mode's engine comes along
     {
@@ -315,7 +324,11 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     bypassRing.clear();
     bypassPos = 0;
     bypassRamp.assign ((size_t) juce::jmax (samplesPerBlock, 512), 0.0f);
-    mode = requestedLatencyMode();
+    zero = requestedZeroLatency();
+    mode = zero ? anneal::SpectralEngine::low : requestedLatencyMode();
+    engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
+    zeroFilter.prepare (sampleRate, preparedChannels, engines[anneal::SpectralEngine::low]->getFftSize(),
+                        engines[anneal::SpectralEngine::low]->getHopSize());
     setLatencySamples (totalLatency());
 
     // The dry ring is sized for the longest mode, so switching modes never allocates.
@@ -354,6 +367,7 @@ void AnnealAudioProcessor::reset()
     const bool frozen = pFreeze->load() > 0.5f;
     for (auto& e : engines)
         e->reset (frozen);
+    zeroFilter.reset();
     limiter.reset();
     bypassRing.clear();
     bypassPos = 0;
@@ -369,16 +383,20 @@ void AnnealAudioProcessor::reset()
 double AnnealAudioProcessor::getTailLengthSeconds() const
 {
     const auto& e = *engines[(size_t) mode];
+    if (zero)
+        return zeroFilter.getTaps() / e.getSampleRate();
     return (e.getFftSize() + limiter.getLatency()) / e.getSampleRate();
 }
 
 double AnnealAudioProcessor::getLatencyMs() const noexcept
 {
-    return getLatencyMsForMode (mode);
+    return zero ? 0.0 : getLatencyMsForMode (mode);
 }
 
 double AnnealAudioProcessor::getLatencyMsForMode (int m) const noexcept
 {
+    if (m == 3)   // 5.1 Zero latency (the latency menu's fourth entry)
+        return 0.0;
     const auto& e = *engines[(size_t) juce::jlimit (0, anneal::SpectralEngine::numModes - 1, m)];
     return 1000.0 * (e.getLatencySamples() + limiter.getLatency()) / e.getSampleRate();
 }
@@ -412,6 +430,16 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.scAmount = pScAmount->load() * 0.01f;
     p.refMode = juce::jlimit (0, 2, juce::roundToInt (pRefMode->load()));
     p.refAmount = pRefAmount->load() * 0.01f;
+    zeroWidth = p.width;
+    zeroMonoHz = p.monoHz;
+    if (zero)
+    {
+        // 5.1 Zero latency: Heat and Punch need the FFT frames (harmonics written into them, an
+        // attack boosted as it happens), and so do the Listen solos. They rest until a latency mode.
+        p.heat = 0.0f;
+        p.punch = 0.0f;
+        p.listen = anneal::listenOff;
+    }
     getEngine().setParameters (p);
 }
 
@@ -457,7 +485,7 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     deltaSmoothed.setTargetValue (pDelta->load() > 0.5f ? 1.0f : 0.0f);
     bypassSmoothed.setTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
     const bool matchOn = pMatch->load() > 0.5f;
-    const bool listenOn = pListen->load() > 0.5f;
+    const bool listenOn = pListen->load() > 0.5f && ! zero;   // no solos at zero latency
     listenSmoothed.setTargetValue (listenOn ? 1.0f : 0.0f);
     if (listenOn)
         matchHold = 2 * getEngine().getFftSize();
@@ -468,9 +496,9 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     {
         const int len = juce::jmin (chunkCapacity, numSamples - start);
 
-        // 1. Latency-matched dry copy.
+        // 1. Latency-matched dry copy (5.1 Zero latency: the input itself).
         int posAfter = dryPos;
-        for (int c = 0; c < nch; ++c)
+        for (int c = 0; c < (zero ? 0 : nch); ++c)
         {
             const float* x = buffer.getReadPointer (c, start);
             float* d = dryBlock.getWritePointer (c);
@@ -486,11 +514,17 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             posAfter = p;
         }
         dryPos = posAfter;
+        if (zero)
+            for (int c = 0; c < nch; ++c)
+                dryBlock.copyFrom (c, 0, buffer, c, start, len);
 
         // 2. Spectral engine, in place -> wet.
         float* wet[2] = { buffer.getWritePointer (0, start), nch > 1 ? buffer.getWritePointer (1, start) : nullptr };
         const float* keyChunk[2] = { key[0] != nullptr ? key[0] + start : nullptr, key[1] != nullptr ? key[1] + start : nullptr };
-        getEngine().process (wet, nch, len, keyChannels > 0 ? keyChunk : nullptr, keyChannels);
+        if (zero)
+            zeroFilter.process (wet, nch, len, getEngine(), keyChannels > 0 ? keyChunk : nullptr, keyChannels, zeroWidth, zeroMonoHz);
+        else
+            getEngine().process (wet, nch, len, keyChannels > 0 ? keyChunk : nullptr, keyChannels);
 
         // 3. Loudness match (always measured, applied only when enabled). A listen solo is not
         //    the wet signal, so the measurement holds while one is heard.
@@ -533,6 +567,22 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         // 5. True-peak ceiling (3.0), then Bypass. The limiter delays by its look-ahead even when
         //    off, and Bypass crossfades to the dry signal delayed by the same amount, so the whole
         //    plug-in always has one constant latency and Bypass stays exactly the dry signal.
+        if (zero)
+        {
+            // 5.1 Zero latency: no look-ahead (sample peaks only) and Bypass against the input itself.
+            limiter.processInstant (wet, nch, len);
+            for (int c = 0; c < nch; ++c)
+            {
+                const float* dry = dryBlock.getReadPointer (c);
+                for (int i = 0; i < len; ++i)
+                {
+                    const float out = wet[c][i] + bypassRamp[(size_t) i] * (dry[i] - wet[c][i]);
+                    wet[c][i] = out;
+                    peak[c] = juce::jmax (peak[c], std::abs (out));
+                }
+            }
+            continue;
+        }
         limiter.process (wet, nch, len);
         const int L = bypassRing.getNumSamples();
         int bpAfter = bypassPos;
@@ -924,6 +974,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasPunch = tree.getChildWithProperty ("id", anneal::ids::punch).isValid();
             const bool hasWidth = tree.getChildWithProperty ("id", anneal::ids::width).isValid();
             const bool hasMonoBass = tree.getChildWithProperty ("id", anneal::ids::monoBass).isValid();
+            const bool hasZero = tree.getChildWithProperty ("id", anneal::ids::zeroLatency).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -989,6 +1040,11 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
                 if (! present)
                     if (auto* np = apvts.getParameter (id))
                         np->setValueNotifyingHost (np->getDefaultValue());
+
+            // Projects saved before 5.1 had latency: Zero latency off, whatever this instance had.
+            if (! hasZero)
+                if (auto* zp = apvts.getParameter (anneal::ids::zeroLatency))
+                    zp->setValueNotifyingHost (0.0f);
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

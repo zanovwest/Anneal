@@ -129,6 +129,12 @@ row, tinted straw when on, and the display then shows an "AUTO EQ FROZEN" tag so
 mistaken for a live one. The Ceiling's reduction is a short bronze bar and number under the meter's
 peak, holding its deepest value for 1.5 s so a brief catch is readable.
 
+**Zero latency (5.1).** The Latency menu gets a first entry, *Zero 0.0 ms*, with what rests in
+brackets. When it is on, the pill reads 0.0 ms, the display adds a ZERO LATENCY tag under AUTO EQ
+("minimum-phase filters, no delay; Heat, Punch and Listen need Low or more"), the heat lane stays flat
+and the Heat ring's live line says "off at zero latency". Nothing is hidden or greyed: the knobs keep
+their settings for when a latency mode comes back.
+
 **SHAPE and presets (5.0).** SHAPE is three compact rows in rose: Punch (bipolar ring, its inner
 arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the
 display draws a short rose bar at the foot of the EQ lane in each band where an attack is happening

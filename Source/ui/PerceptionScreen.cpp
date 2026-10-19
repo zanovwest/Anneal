@@ -177,6 +177,7 @@ void PerceptionScreen::timerCallback()
         activity.punchDb = std::abs (f->punchDb) >= std::abs (activity.punchDb) ? f->punchDb
                          : activity.punchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
         attacksOn = f->attacks;
+        zeroLatency = f->zeroLatency;
         for (int b = 0; b < nb; ++b)
             attack[(size_t) b] = attacksOn ? juce::jmax (f->transient[b], attack[(size_t) b] * 0.7f) : 0.0f;
         for (int b = 0; b < nb; ++b)
@@ -242,6 +243,7 @@ void PerceptionScreen::refreshNow()
         std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
         activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid, f->punchDb };
         attacksOn = f->attacks;
+        zeroLatency = f->zeroLatency;
         std::copy (f->transient, f->transient + nb, attack.begin());
         haveFrame = true;
         updateViews();
@@ -568,6 +570,9 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     if (keyActive)
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "KEY", colour::violet,
              "sidechain level (violet line)");
+    if (zeroLatency)
+        tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "ZERO LATENCY", colour::text,
+             "minimum-phase filters, no delay; Heat, Punch and Listen need Low or more");
 
     // 4.0 Reference: what it is and what it is doing, whenever it is in use or a file is loading.
     juce::String refText;

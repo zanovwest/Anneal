@@ -4,6 +4,54 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.1.0 — 2026-10-18 20:34
+
+New
+- **Zero latency** (Latency menu → *Zero 0.0 ms*): Anneal with no delay at all, for tracking,
+  monitoring and live playing. The hearing model still analyses the sound in Low-latency frames, but
+  its curve is applied through **minimum-phase filters**, so nothing waits for a frame. A new filter
+  is designed from the curve every ~5 ms and crossfaded in over ~1.3 ms.
+  - Works at zero latency: Reveal, Smooth, Tilt, Response, Range, Guard, Freeze, Sidechain,
+    Reference, Paint, Match, Mix, Delta, Width and Mono bass. Width and Mono bass are built into the
+    Side filter.
+  - Rests at zero latency: Heat writes its harmonics into the FFT frames, Punch has to boost an attack
+    as it happens, and the Listen solos are made from the frames, so these three wait for Low or
+    more. The Heat knob says "off at zero latency", and the display shows a ZERO LATENCY tag.
+  - The curve follows the music about one frame (~5 ms) later than in the latency modes. A
+    minimum-phase EQ also shifts phase where it boosts or cuts, so at Mix below 100 % the dry blend
+    can colour the sound a little.
+  - The Ceiling has no look-ahead here: it holds sample peaks exactly but can't catch peaks between
+    samples.
+  - Measured:
+    - reported and applied latency 0 (also through the built VST3);
+    - neutral settings pass the input within 0.0000001;
+    - Smooth cuts a sustained 3150 Hz ring by 8.9 dB, the same as Low;
+    - Heat writes nothing (2nd harmonic −191 dB);
+    - Width 0 % is mono (sides −183 dB), Width 200 % lifts the sides by 6.02 dB, and Mono bass at
+      200 Hz takes 60 Hz sides to −34 dB while 1 kHz stays within 0.01 dB;
+    - the filter design matches its target curve within 0.01 dB, with all its energy in the first
+      quarter of the response, as a minimum-phase filter should;
+    - the Ceiling at −1 dB holds a signal 6 dB over full scale at −1.00 dB.
+  - Off by default. It's a separate setting, "Zero Latency", so the Latency menu's other choices and
+    every saved project are unchanged; projects from earlier versions open with it off. Not
+    automatable: the host re-aligns tracks when latency changes.
+
+Tests: 150/150 acceptance checks, 8 new:
+- the filter design and minimum phase;
+- latency 0 with the input passed through;
+- Smooth cuts as in Low;
+- Heat rests;
+- Width and Mono bass;
+- switching Zero and the latency modes while playing, including Mid/Side;
+- the Ceiling without look-ahead;
+- older projects open with it off.
+
+23/23 host checks on the built VST3, 1 new: Zero latency through the host, with latency 0 and the
+impulse in place at Mix 0 % and 100 %, then back to 1091 samples. Setup checks pass.
+
+CPU at 48 kHz / 64 samples: Zero latency Stereo 3.2 %, Mid/Side 5.6 % of one core, against Low
+1.7 % / 3.7 %. The filters cost about 1.5 % of a core. With Zero latency off, everything is as in 5.0.0.
+
 ## 5.0.0 — 2026-10-18 20:10
 
 The third major update: a SHAPE group for the punch and the stereo image of the sound, and your own

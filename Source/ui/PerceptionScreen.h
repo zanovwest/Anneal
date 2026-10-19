@@ -123,6 +123,7 @@ namespace anneal
         std::array<float, nb> keyDb {}, keyView {};   // sidechain key (3.0)
         std::array<float, nb> attack {};               // 5.0: attack per band, 0..1 (held briefly)
         bool attacksOn = false;
+        bool zeroLatency = false;                      // 5.1
         bool keyActive = false, frozen = false;
         void updateViews();
         float z0 = 0.0f, dz = 0.0f;

@@ -35,6 +35,7 @@ namespace anneal::ids
     inline constexpr const char* punch      = "punch";      // 5.0: spectral transient shaper, -100..+100 %, 0 = off
     inline constexpr const char* width      = "width";      // 5.0: stereo width of the processed sound, %, 100 = as is
     inline constexpr const char* monoBass   = "monoBass";   // 5.0: mono below this frequency, Hz, under 20 = off
+    inline constexpr const char* zeroLatency = "zeroLatency"; // 5.1: no latency (Heat, Punch and Listen off), off = as before
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
