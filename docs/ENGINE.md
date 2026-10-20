@@ -24,6 +24,7 @@ input ──► dry delay (N samples) ──────────────
 | Channels | mono or stereo, in = out; linked Stereo (default) or independently analysed Mid/Side; mono always uses linked mono |
 | Parameter resolution | parameters are sampled once per host block, smoothed per frame (τ 40 ms) |
 | FFT (4.0.2) | Anneal's own `RealFft`: the N real samples packed into N/2 complex points (even/odd split), a split-format radix-4 Stockham FFT written for the compiler's vectoriser, then the real/complex split. Same in-place layout and scaling as JUCE's `performRealOnly*` transforms (forward unscaled, inverse 1/N, DC and Nyquist imaginary parts ignored); within −133 dB of JUCE's and as close to an exact DFT (−136.5 dB vs −137.8 dB). About 4× faster than JUCE's portable fallback, which Windows and Linux builds get (no IPP or FFTW): 6.6 µs instead of 24.7 µs per 4096-point forward transform |
+| dB math (5.1.1) | The model's dB conversions (prominence, audibility, sidechain, Match, the display levels: 10·log10; the per-bin gains: 10^(dB/20)) run in batches through `Source/dsp/FastMath`: log2 from the float's exponent plus an atanh series on the mantissa (to t⁹), exp2 from a rounded exponent plus a Taylor series (to f⁷); SSE2 four at a time on x86, plain loops elsewhere. Largest errors 0.00003 dB / 0.000013 dB; the curve stays within 0.000004 dB of the per-value `std::log10` / `std::pow` (still there as the model's exact math, for the tests and the profile). Fully in Mid/Side the linked harmonic synth is skipped: `processMidSide` replaces its output |
 
 ### Listen modes (0.2.5)
 

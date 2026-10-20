@@ -425,11 +425,22 @@ void SpectralEngine::processFrame() noexcept
     hs.heat = current.heat;
     hs.color = current.color;
     hs.flavour = current.flavour;
-    synth.process (specPtrs, channels, power.data(), model.getBinNeed(), hs, harmPtrs, harmPower.data());
-    lastPeakCount = synth.getLastPeakCount();
+    // 5.1.1: fully in Mid/Side, processMidSide replaces the linked harmonics with the Mid and Side
+    // ones, so the linked synth (stateless from frame to frame) has nothing to add and is skipped.
+    if (msBlend < 1.0f)
+    {
+        synth.process (specPtrs, channels, power.data(), model.getBinNeed(), hs, harmPtrs, harmPower.data());
+        lastPeakCount = synth.getLastPeakCount();
+    }
+    else
+    {
+        for (int c = 0; c < channels; ++c)
+            std::fill (harm[c].begin(), harm[c].end(), 0.0f);
+        lastPeakCount = 0;
+    }
 
     // Main path gets the auto-EQ; harmonics go to their own stream (gated in process()).
-    harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && synth.getLastPeakCount() > 0;
+    harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && lastPeakCount > 0;
     const float* g = model.getBinGain();
     std::fill (outPower.begin(), outPower.end(), 0.0f);
     for (int c = 0; c < channels; ++c)

@@ -104,7 +104,15 @@ namespace anneal
         // 4.0 Paint: per-band share of the auto-EQ change and of Heat. Kept across prepare()/reset().
         void setPaint (const PaintCurves& paint) noexcept;
 
+        // 5.1.1: the dB conversions run batched through fastmath (vectorised). Exact = the 5.1.0 math
+        // (std::log10 / std::pow per value), for the tests and the profile to compare against.
+        void setExactMath (bool exact) noexcept { exactMath = exact; }
+
     private:
+        bool exactMath = false;
+        void toDb (const float* power, float* db, int n) const noexcept;     // 10 log10 (max (p, 1e-20))
+        void toGain (const float* db, float* linear, int n) const noexcept;  // 10^(dB / 20)
+
         void applyReference() noexcept;
         void applyPaint() noexcept;
         void updateMatch (float amount, float framesPerSecond) noexcept;
@@ -150,6 +158,7 @@ namespace anneal
         std::vector<float> binGainDb, binGain, binNeed;
         std::vector<float> autoOut, binAutoDb, binAutoGain;        // listen modes (no Tilt)
         std::vector<float> keySlices, keySmoothed, keyPlace;       // sidechain key (3.0)
+        std::vector<float> audDb, keyRelDb, keyAudDb;              // 5.1.1: the frame's batched dB values
         bool keyPrimed = false;
 
         // Band dB values -> smoothed linear per-bin gain (the band->bin step of analyse()).

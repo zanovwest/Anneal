@@ -1,5 +1,6 @@
 #include "PerceptualModel.h"
 #include "ErbScale.h"
+#include "FastMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -107,7 +108,7 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
                      &fwd, &bwd, &prom, &target, &targetSmoothed, &gain, &promSlow, &gainOut, &needOut, &tmp,
                      &raw, &fastPlace, &slowPlace, &transient, &punchW, &autoOut })
         alloc (*v, (size_t) numBands);
-    for (auto* v : { &keySlices, &keySmoothed, &keyPlace })
+    for (auto* v : { &keySlices, &keySmoothed, &keyPlace, &audDb, &keyRelDb, &keyAudDb })
         alloc (*v, (size_t) numBands);
     for (auto* v : { &refBand, &longPower, &longDb, &mainNorm, &matchRaw, &matchDb, &learnDb, &paintEq, &paintHeat })
         alloc (*v, (size_t) numBands);
@@ -326,15 +327,33 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         longFrames = 0;   // measured afresh when matching starts again
     const float* extMatch = matchActive ? nullptr : s.matchDb;
 
+    // 5.1.1: every band's level ratios first, then their dB values in one batched (vectorised) pass:
+    // prominence (place / context), audibility (place / threshold) and, with a key, key / main.
+    for (int b = 0; b < numBands; ++b)
+    {
+        prom[(size_t) b] = place[(size_t) b] / (context[(size_t) b] + 1.0e-30f);
+        audDb[(size_t) b] = place[(size_t) b] / noiseBox[(size_t) b];
+    }
+    toDb (prom.data(), prom.data(), numBands);
+    toDb (audDb.data(), audDb.data(), numBands);
+    if (keyOn)
+    {
+        for (int b = 0; b < numBands; ++b)
+        {
+            keyRelDb[(size_t) b] = keyPlace[(size_t) b] / place[(size_t) b];
+            keyAudDb[(size_t) b] = keyPlace[(size_t) b] / noiseBox[(size_t) b];
+        }
+        toDb (keyRelDb.data(), keyRelDb.data(), numBands);
+        toDb (keyAudDb.data(), keyAudDb.data(), numBands);
+    }
+
     sidePeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
-        const float d = std::clamp (powToDb ((double) place[(size_t) b] / ((double) context[(size_t) b] + 1.0e-30))
-                                        - flatNormDb[(size_t) b], -40.0f, 40.0f);
+        const float d = std::clamp (prom[(size_t) b] - flatNormDb[(size_t) b], -40.0f, 40.0f);
         prom[(size_t) b] = d;
 
-        const float audDb = powToDb ((double) place[(size_t) b] / noiseBox[(size_t) b]);
-        const float audible = clamp01 ((audDb - 6.0f) / 12.0f);
+        const float audible = clamp01 ((audDb[(size_t) b] - 6.0f) / 12.0f);
 
         const float cut    = s.smooth * std::min (maxCutDb, 0.5f * std::max (0.0f, d - 2.0f)) * audible;
         const float shadow = std::max (0.0f, -d - 2.0f);
@@ -347,8 +366,8 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         float side = 0.0f;
         if (keyOn)
         {
-            const float rel = powToDb ((double) keyPlace[(size_t) b] / (double) place[(size_t) b]);
-            const float keyAudible = clamp01 ((powToDb ((double) keyPlace[(size_t) b] / noiseBox[(size_t) b]) - 6.0f) / 12.0f);
+            const float rel = keyRelDb[(size_t) b];
+            const float keyAudible = clamp01 ((keyAudDb[(size_t) b] - 6.0f) / 12.0f);
             if (s.scMode == 1)
                 side = -s.scAmount * std::min (maxCutDb, 0.75f * std::max (0.0f, rel + 6.0f)) * keyAudible;
             else
@@ -461,12 +480,35 @@ void PerceptualModel::bandsToBinGain (const float* bandDb, float* binDb, float* 
     }
 
     // Light smoothing across bins keeps the per-frame filter short (less circular time-aliasing).
-    for (int k = 0; k < numBins; ++k)
-    {
-        auto at = [this, binDb] (int i) { return binDb[std::clamp (i, 0, numBins - 1)]; };
-        const float sm = (at (k - 2) + 2.0f * at (k - 1) + 3.0f * at (k) + 2.0f * at (k + 1) + at (k + 2)) / 9.0f;
-        linear[k] = std::pow (10.0f, sm / 20.0f);
-    }
+    // 5.1.1: the smoothed dB values first (the edges clamped, the inside straight), then one batched
+    // conversion to linear gains.
+    auto at = [this, binDb] (int i) { return binDb[std::clamp (i, 0, numBins - 1)]; };
+    auto smoothAt = [&at] (int k) { return (at (k - 2) + 2.0f * at (k - 1) + 3.0f * at (k) + 2.0f * at (k + 1) + at (k + 2)) / 9.0f; };
+    for (int k = 0; k < std::min (2, numBins); ++k)
+        linear[k] = smoothAt (k);
+    for (int k = 2; k < numBins - 2; ++k)
+        linear[k] = (binDb[k - 2] + 2.0f * binDb[k - 1] + 3.0f * binDb[k] + 2.0f * binDb[k + 1] + binDb[k + 2]) / 9.0f;
+    for (int k = std::max (2, numBins - 2); k < numBins; ++k)
+        linear[k] = smoothAt (k);
+    toGain (linear, linear, numBins);
+}
+
+void PerceptualModel::toDb (const float* power, float* db, int n) const noexcept
+{
+    if (! exactMath)
+        fastmath::powerToDb (power, db, n);
+    else
+        for (int i = 0; i < n; ++i)
+            db[i] = powToDb (power[i]);
+}
+
+void PerceptualModel::toGain (const float* db, float* linear, int n) const noexcept
+{
+    if (! exactMath)
+        fastmath::dbToGain (db, linear, n);
+    else
+        for (int i = 0; i < n; ++i)
+            linear[i] = std::pow (10.0f, db[i] / 20.0f);
 }
 
 void PerceptualModel::computeAutoGain() noexcept
@@ -479,8 +521,7 @@ void PerceptualModel::bandLevelsDb (const float* binPower, float* outDb)
 {
     binPowerToSlices (binPower, tmp.data());
     boxSum (tmp.data(), outDb, boxHalf, false);
-    for (int b = 0; b < numBands; ++b)
-        outDb[b] = powToDb (outDb[b]);
+    toDb (outDb, outDb, numBands);
 }
 
 //==============================================================================
@@ -512,10 +553,8 @@ void PerceptualModel::updateMatch (float amount, float fps) noexcept
     const float aLong = 1.0f - std::exp (-1.0f / (3.0f * fps));
     const float a = std::max (1.0f / (float) longFrames, aLong);
     for (int b = 0; b < numBands; ++b)
-    {
         longPower[(size_t) b] += a * (tmp[(size_t) b] - longPower[(size_t) b]);
-        longDb[(size_t) b] = powToDb (longPower[(size_t) b]);
-    }
+    toDb (longPower.data(), longDb.data(), numBands);
     normaliseLevels (longDb.data(), longPower.data(), numBands, z0, dz, mainNorm.data());
 
     // Only where both have something: no lifting into an empty region of the main, and nothing

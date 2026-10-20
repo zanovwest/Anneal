@@ -4,6 +4,43 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.1.1 — 2026-10-19 19:37
+
+New
+- **Faster engine, part 2** (the CPU item on the roadmap): the hearing model now converts its levels
+  to and from dB in batches, four values at a time, with Anneal's own fast log and exp (no tables, no
+  new libraries). Before, it called the standard log10 / pow one value at a time, about 5,000 times
+  per frame. The sound is unchanged: over 5,031 frames of music in Low and Precise, with Reveal,
+  Smooth, Tilt, Sidechain (Make room and Unmask), Reference match, Guard and Punch all on, the curve
+  stays within 0.000004 dB of 5.1.0. The display levels stay within 0.00001 dB.
+- In full Mid/Side the stereo harmonic generator no longer runs. Its harmonics were always replaced
+  by the Mid and Side ones, so it was wasted work; the sound is the same.
+- Measured in the same session on this machine (`AnnealTests profile`, per STFT frame):
+  - the model: Low 30.9 → 21.6 µs, Normal 33.3 → 22.0 µs, Precise 38.5 → 24.4 µs;
+  - the display levels: 4.7 → 2.4 µs (three per frame);
+  - the whole stereo engine: Low 73 → 57 µs, Precise 163 → 141 µs.
+- **Mid/Side is now under the 3 % budget in every latency mode.** At 48 kHz, 64 samples (Normal at
+  512), against 5.1.0's run:
+  - Mid/Side: Low 3.7 → 2.2 %, Normal 2.5 → 1.5 %, Precise 3.6 → 2.2 %;
+  - Stereo: Low 1.7 → 1.1 %, Normal 1.2 → 0.8 %, Precise 1.8 → 1.3 %;
+  - Zero latency: Stereo 3.3 → 2.4 %, Mid/Side 5.6 → 3.9 %.
+
+  The slowest 0.1 % of 64-sample blocks: Stereo Low 5 %, Precise 14 %; Mid/Side Low 10 %, Precise
+  20 % of the deadline (5.1.0: 7 / 15 / 15 / 29 %).
+
+Fixes
+- None found. The bug pass looked at the engine, the zero-latency filters (5.1.0's newest code), the
+  processor's host paths (prepare, reset, latency and Zero switches, state), yesterday's build log
+  and benchmark, and the interface snapshots.
+
+Tests: 153/153 acceptance checks, 3 new:
+- the fast dB conversion against 10·log10 from 1e-20 to 1e30 (largest error 0.00003 dB), with SIMD
+  and as plain loops (what non-x86 builds run), including 0, negative, NaN and infinite inputs;
+- the fast gain conversion against 10^(dB/20) from −200 to +200 dB (largest error 0.000013 dB);
+- the model's curve within 0.001 dB of 5.1.0's math (measured: 0.000004 dB).
+
+23/23 host checks on the built VST3 and 25/25 setup checks pass.
+
 ## 5.1.0 — 2026-10-18 20:34
 
 New

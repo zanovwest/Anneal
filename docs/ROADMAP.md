@@ -18,11 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-8. **CPU under the 3 % budget in Mid/Side Precise too** (part 2 of the CPU item; part 1, the FFT,
-   is done in 4.0.2: Stereo Precise 1.8 %, Mid/Side Precise 3.6 %): batched, vectorisable log10 /
-   exp in the perceptual model. `model.analyse` is now the largest cost per frame (36–44 µs, most of
-   it ~5,000 log10/pow calls) and Mid/Side runs three models. Keep the curve within 0.001 dB of
-   4.0.2. `AnnealTests profile` shows the split.
 10. **Spread the frame work across blocks** (optional): each STFT frame lands in one host block.
     That's fine for Anneal alone (Low: 10 % of a 64-sample block), but spreading it over the hop
     would leave more headroom for other plugins at tiny buffers. Costs one hop of latency, so only
@@ -33,6 +28,9 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
     Width and Mono bass can be seen working.
 14. **Import and export presets**: drop an `.annealpreset` file on the preset bar to add it, and copy
     the folder path from the menu.
+15. **Zero latency under the 3 % budget in Mid/Side too** (Stereo 2.4 %, Mid/Side 3.9 % at 5.1.1):
+    the filter design's ~2,000 log / exp per filter through `fastmath`, and its cos / sin from a
+    recurrence; keep the design within 0.01 dB of its target (section 37 of the tests).
 
 ## Waiting on the user
 
@@ -63,6 +61,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.1.1 (2026-10-19, daily update): **CPU under the 3 % budget in Mid/Side Precise too** (item 8,
+  part 2 of the CPU item): the model's dB conversions batched through Anneal's own vectorised log /
+  exp (`Source/dsp/FastMath`), within 0.000004 dB of 5.1.0's curve; the stereo harmonic generator
+  skipped in full Mid/Side, where its output was always replaced. Mid/Side Low 2.2 %, Normal 1.5 %,
+  Precise 2.2 %; Stereo Low 1.1 %, Normal 0.8 %, Precise 1.3 %.
 - 5.1.0 (2026-10-18, the user asked for it right after 5.0.0): **Zero latency**: the Low engine
   analyses, the curve is applied through minimum-phase FIR filters (cepstral design every frame,
   crossfaded), Width / Mono bass through the Side filter; Heat, Punch and Listen rest; Ceiling

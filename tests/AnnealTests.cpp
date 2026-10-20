@@ -5,6 +5,7 @@
 #include "PluginEditor.h"
 #include "Params.h"
 #include "Presets.h"
+#include "dsp/FastMath.h"
 #include "dsp/RealFft.h"
 #include "dsp/ReferenceAnalyser.h"
 #include "dsp/SpectralEngine.h"
@@ -2037,6 +2038,10 @@ void profile()
         const float fps = (float) (fs / (mode == 2 ? n / 8 : n / 4));
         const double analyse = usPer (2000, [&] { model.analyse (power.data(), ms, fps); });
         const double levels = usPer (2000, [&] { model.bandLevelsDb (power.data(), outDb.data()); });
+        model.setExactMath (true);   // 5.1.0's per-value std::log10 / std::pow
+        const double analyseExact = usPer (2000, [&] { model.analyse (power.data(), ms, fps); });
+        const double levelsExact = usPer (2000, [&] { model.bandLevelsDb (power.data(), outDb.data()); });
+        model.setExactMath (false);
 
         anneal::HarmonicSynth synth;
         synth.prepare (n, fs);
@@ -2069,6 +2074,8 @@ void profile()
               + " us (6: " + juce::String (2 * (ownFwd - copy) + 4 * (ownInv - copy), 1) + " us)");
         info ("  model.analyse " + juce::String (analyse, 1) + " us, bandLevelsDb " + juce::String (levels, 1)
               + " us (x3 for the display), synth.process " + juce::String (heat, 1) + " us");
+        info ("  with 5.1.0's exact math: model.analyse " + juce::String (analyseExact, 1) + " us, bandLevelsDb "
+              + juce::String (levelsExact, 1) + " us");
     }
     juce::Process::setPriority (juce::Process::NormalPriority);
 }
@@ -3603,6 +3610,205 @@ void testZeroLatency51()
     }
 }
 
+// 5.1.1: the perceptual model's dB conversions batched and vectorised (fastmath). The curve must stay
+// within 0.001 dB of the 5.1.0 math (std::log10 / std::pow per value, kept as the model's exact math).
+void testFastMath511()
+{
+    section ("38. 5.1.1 faster model (batched log / exp)");
+    namespace fm = anneal::fastmath;
+
+    // The conversions over their whole range, with SIMD and as plain loops (non-x86 builds).
+    {
+        std::mt19937 rng (5);
+        std::uniform_real_distribution<double> u (-20.0, 30.0);
+        const int n = 200003;   // not a multiple of four: the tail runs too
+        std::vector<float> x ((size_t) n), fast ((size_t) n), plain ((size_t) n);
+        for (auto& v : x)
+            v = (float) std::pow (10.0, u (rng));   // powers 1e-20 .. 1e30
+        const float exactCases[] = { 1.0f, 2.0f, 0.5f, 1.0e-20f, 1.0e30f, 1.41421354f, 1.41421366f, 3.0e-7f };
+        std::copy (std::begin (exactCases), std::end (exactCases), x.begin());
+        fm::powerToDb (x.data(), fast.data(), n);
+        fm::powerToDbScalar (x.data(), plain.data(), n);
+        double worst = 0.0, worstPlain = 0.0;
+        for (size_t i = 0; i < (size_t) n; ++i)
+        {
+            const double exact = 10.0 * std::log10 ((double) x[i]);
+            worst = std::max (worst, std::abs (fast[i] - exact));
+            worstPlain = std::max (worstPlain, std::abs (plain[i] - exact));
+        }
+        const float edges[8] = { 0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN(), 1.0e-30f,
+                                 1.0e35f, std::numeric_limits<float>::infinity(), 1.0e-40f, 1.0f };
+        const float expected[8] = { -200.0f, -200.0f, -200.0f, -200.0f, 300.0f, 300.0f, -200.0f, 0.0f };
+        float edgeFast[8], edgePlain[8];
+        fm::powerToDb (edges, edgeFast, 8);
+        fm::powerToDbScalar (edges, edgePlain, 8);
+        bool edgesOk = true;
+        for (int i = 0; i < 8; ++i)
+            edgesOk = edgesOk && std::abs (edgeFast[i] - expected[i]) < 1.0e-3f && std::abs (edgePlain[i] - expected[i]) < 1.0e-3f;
+        check (worst < 1.0e-4 && worstPlain < 1.0e-4 && edgesOk, "power to dB = 10 log10, 1e-20 .. 1e30",
+               "largest error " + juce::String (worst, 7) + " dB (plain loops " + juce::String (worstPlain, 7)
+               + " dB); 0, < 0, NaN -> -200, 1e35, inf -> +300: " + (edgesOk ? "yes" : "NO"));
+
+        std::uniform_real_distribution<float> d (-200.0f, 200.0f);
+        for (auto& v : x)
+            v = d (rng);
+        const float dbCases[] = { 0.0f, 20.0f, -20.0f, 6.0206f, -0.0001f, 0.5f, -199.9f, 199.9f };
+        std::copy (std::begin (dbCases), std::end (dbCases), x.begin());
+        fm::dbToGain (x.data(), fast.data(), n);
+        fm::dbToGainScalar (x.data(), plain.data(), n);
+        worst = worstPlain = 0.0;
+        for (size_t i = 0; i < (size_t) n; ++i)
+        {
+            const double exact = std::pow (10.0, x[i] / 20.0);
+            worst = std::max (worst, std::abs (20.0 * std::log10 (fast[i] / exact)));
+            worstPlain = std::max (worstPlain, std::abs (20.0 * std::log10 (plain[i] / exact)));
+        }
+        const float gEdges[4] = { 0.0f, 1000.0f, -1000.0f, std::numeric_limits<float>::quiet_NaN() };
+        float gFast[4], gPlain[4];
+        fm::dbToGain (gEdges, gFast, 4);
+        fm::dbToGainScalar (gEdges, gPlain, 4);
+        bool gOk = true;
+        for (const float* g : { gFast, gPlain })
+            gOk = gOk && g[0] == 1.0f && std::isfinite (g[1]) && g[1] > 1.0e37f && g[2] > 0.0f && g[2] < 1.0e-37f
+                      && std::isfinite (g[3]) && g[3] < 1.0e-37f;
+        check (worst < 1.0e-4 && worstPlain < 1.0e-4 && gOk, "dB to gain = 10^(dB/20), -200 .. +200 dB",
+               "largest error " + juce::String (worst, 7) + " dB (plain loops " + juce::String (worstPlain, 7)
+               + " dB); 0 dB -> exactly 1, +-1000 dB and NaN stay finite: " + (gOk ? "yes" : "NO"));
+    }
+
+    // The model, fast against exact, frame by frame on music, at Low and Precise, with everything that
+    // converts dB on: Reveal / Smooth / Tilt; Make room + Match; Unmask + Guard + Punch.
+    {
+        const double fs = 48000.0;
+        const auto music = testsig::musicLike (fs, 6.0, 11);
+        const auto keySig = testsig::musicLike (fs, 6.0, 23);
+        anneal::ReferenceCurve ref;
+        for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+            ref.db[i] = -12.0f * (float) i / (float) anneal::ReferenceCurve::numPoints;   // darker than the music
+        ref.valid = true;
+
+        double worstBand = 0.0, worstBin = 0.0, worstLevels = 0.0;
+        bool matched = true, moved = true;
+        int frames = 0;
+        for (int mode : { 0, 2 })
+            for (int variant = 0; variant < 3; ++variant)
+            {
+                const int nfft = anneal::SpectralEngine::fftSizeFor (fs, mode);
+                const int hop = mode == 2 ? nfft / 8 : nfft / 4;
+                const int bins = nfft / 2 + 1;
+                anneal::PerceptualModel fast, exact;
+                fast.prepare (fs, nfft);
+                exact.prepare (fs, nfft);
+                exact.setExactMath (true);
+                fast.setReference (ref);
+                exact.setReference (ref);
+                anneal::ModelSettings ms;
+                ms.reveal = 0.8f;
+                ms.smooth = 0.8f;
+                ms.tiltDbPerOct = 1.5f;
+                if (variant == 1)
+                {
+                    ms.scMode = 1; ms.scAmount = 1.0f;
+                    ms.refMode = anneal::refMatch; ms.refAmount = 1.0f;
+                }
+                else if (variant == 2)
+                {
+                    ms.scMode = 2; ms.scAmount = 1.0f;
+                    ms.guard = 1.0f; ms.punch = 1.0f; ms.responseMs = 30.0f;
+                }
+
+                anneal::RealFft fft;
+                fft.prepare (nfft);
+                std::vector<float> buf ((size_t) nfft * 2), power ((size_t) bins), keyPower ((size_t) bins),
+                                   levelsFast (1024), levelsExact (1024);
+                auto spectrum = [&] (const Channels& sig, size_t start, std::vector<float>& out)
+                {
+                    for (int i = 0; i < nfft; ++i)
+                        buf[(size_t) i] = 0.5f * (sig[0][start + (size_t) i] + sig[1][start + (size_t) i])
+                                        * (float) (0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * i / nfft));
+                    fft.forward (buf.data());
+                    const float scale = 4.0f / (float) nfft;
+                    for (int k = 0; k < bins; ++k)
+                        out[(size_t) k] = (buf[2 * (size_t) k] * buf[2 * (size_t) k] + buf[2 * (size_t) k + 1] * buf[2 * (size_t) k + 1]) * scale * scale;
+                };
+
+                const float fps = (float) (fs / hop);
+                float largestMove = 0.0f;
+                for (size_t start = 0; start + (size_t) nfft <= music[0].size(); start += (size_t) hop, ++frames)
+                {
+                    spectrum (music, start, power);
+                    spectrum (keySig, start, keyPower);
+                    const float* key = variant > 0 ? keyPower.data() : nullptr;
+                    fast.analyse (power.data(), ms, fps, key);
+                    exact.analyse (power.data(), ms, fps, key);
+                    for (int b = 0; b < anneal::PerceptualModel::numBands; ++b)
+                    {
+                        worstBand = std::max (worstBand, (double) std::abs (fast.getBandGainDb()[b] - exact.getBandGainDb()[b]));
+                        largestMove = std::max (largestMove, std::abs (exact.getBandGainDb()[b]));
+                    }
+                    for (int k = 0; k < bins; ++k)
+                        worstBin = std::max (worstBin, std::abs (20.0 * std::log10 ((double) fast.getBinGain()[k] / exact.getBinGain()[k])));
+                    if (frames % 8 == 0)
+                    {
+                        fast.bandLevelsDb (power.data(), levelsFast.data());
+                        exact.bandLevelsDb (power.data(), levelsExact.data());
+                        for (int b = 0; b < 1024; ++b)
+                            worstLevels = std::max (worstLevels, (double) std::abs (levelsFast[(size_t) b] - levelsExact[(size_t) b]));
+                    }
+                }
+                if (variant == 1)
+                    matched = matched && fast.isMatching() && exact.isMatching();
+                moved = moved && largestMove > 3.0f;   // the curve really works (not a flat comparison)
+            }
+        check (worstBand < 0.001 && worstBin < 0.001 && worstLevels < 0.001 && matched && moved,
+               "the curve stays within 0.001 dB of 5.1.0's math",
+               juce::String (frames) + " frames, Low and Precise, sidechain, Match, Guard, Punch: bands "
+               + juce::String (worstBand, 6) + " dB, bins " + juce::String (worstBin, 6) + " dB, display levels "
+               + juce::String (worstLevels, 6) + " dB");
+    }
+
+    // Speed, reported (not a check: timings follow the machine's load). Both run the batched loops
+    // (5.1.0 called std::log10 one value at a time inside the band loop); `AnnealTests profile` has
+    // the full split.
+    {
+        const double fs = 48000.0;
+        const int nfft = anneal::SpectralEngine::fftSizeFor (fs, anneal::SpectralEngine::precise), bins = nfft / 2 + 1;
+        const auto music = testsig::musicLike (fs, 6.0, 1);
+        std::vector<float> buf ((size_t) nfft * 2, 0.0f), power ((size_t) bins);
+        for (int i = 0; i < nfft; ++i)
+            buf[(size_t) i] = music[0][(size_t) (fs * 3.0) + (size_t) i] * (float) (0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * i / nfft));
+        anneal::RealFft fft;
+        fft.prepare (nfft);
+        fft.forward (buf.data());
+        const float scale = 4.0f / (float) nfft;
+        for (int k = 0; k < bins; ++k)
+            power[(size_t) k] = (buf[2 * (size_t) k] * buf[2 * (size_t) k] + buf[2 * (size_t) k + 1] * buf[2 * (size_t) k + 1]) * scale * scale;
+
+        anneal::PerceptualModel model;
+        model.prepare (fs, nfft);
+        anneal::ModelSettings ms;
+        ms.reveal = 0.4f;
+        ms.smooth = 0.4f;
+        const float fps = (float) (fs / (nfft / 8));
+        auto best = [&] (bool exactMath)
+        {
+            model.setExactMath (exactMath);
+            double fastest = 1.0e9;
+            for (int run = 0; run < 5; ++run)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int i = 0; i < 300; ++i)
+                    model.analyse (power.data(), ms, fps);
+                fastest = std::min (fastest, 1.0e6 * std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() / 300.0);
+            }
+            return fastest;
+        };
+        const double exactUs = best (true), fastUs = best (false);
+        info ("one Precise frame: model.analyse " + juce::String (fastUs, 1) + " us (batched exact math "
+              + juce::String (exactUs, 1) + " us)");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -3658,6 +3864,7 @@ int main (int argc, char** argv)
     testShapeParams50();
     testUserPresets50();
     testZeroLatency51();
+    testFastMath511();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);
