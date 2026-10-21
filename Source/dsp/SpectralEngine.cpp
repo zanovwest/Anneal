@@ -12,30 +12,41 @@ int SpectralEngine::fftSizeFor (double sr, int mode) noexcept
     return mode == low ? base / 4 : mode == normal ? base / 2 : base;
 }
 
+int SpectralEngine::hopFor (double sr, int n) noexcept
+{
+    // 300 updates a second at any sample rate (160 samples at 48 kHz, 147 at 44.1 kHz), never
+    // coarser than a quarter frame.
+    return std::clamp ((int) std::lround (sr / updatesPerSecond), 16, n / 4);
+}
+
 void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, bool keepCurve)
 {
     curveMid = curveSide = nullptr;   // 5.1: the model's buffers may move; the next frame sets them
     sampleRate = newSampleRate;
     channels = std::clamp (numChannels, 1, maxChannels);
     fftSize = fftSizeFor (sampleRate, mode);
-    // Precise keeps the original 1/8 hop. The shorter frames use 1/4 (Hann^2 still overlap-adds
-    // to a constant), so the model doesn't run more often than it needs to.
-    hop = mode == precise ? fftSize / 8 : fftSize / 4;
+    // 5.2.0: 300 updates a second in every mode (was N/8 in Precise, N/4 in Normal and Low = 94/s,
+    // Low 188/s at 48 kHz). The model's time constants are in seconds, so it sounds the same,
+    // only smoother in time.
+    hop = hopFor (sampleRate, fftSize);
     numBins = fftSize / 2 + 1;
     framesPerSecond = (float) (sampleRate / hop);
 
     fft.prepare (fftSize);
 
-    // Periodic Hann for analysis and synthesis. Overlap-add of w^2 sums to 3N/8 / hop (3 at N/8,
-    // 1.5 at N/4); olaNorm scales it to unity either way.
+    // Periodic Hann for analysis and synthesis. With a hop that divides N (N/8, N/4) the overlap-add
+    // of w^2 is a constant; 300/s gives hops that don't (4096 / 160 = 25.6), so the sum ripples
+    // with the position inside a hop. It repeats every hop, so each position gets its own exact
+    // gain: 1 / sum over the frames covering it of w^2. (For N/8 and N/4 that is the old constant.)
     window.resize ((size_t) fftSize);
-    double sumSq = 0.0;
     for (int n = 0; n < fftSize; ++n)
-    {
         window[(size_t) n] = (float) (0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * n / fftSize));
-        sumSq += (double) window[(size_t) n] * window[(size_t) n];
-    }
-    olaNorm = (float) (hop / sumSq);
+    std::vector<double> env ((size_t) hop, 0.0);
+    for (int n = 0; n < fftSize; ++n)
+        env[(size_t) (n % hop)] += (double) window[(size_t) n] * window[(size_t) n];
+    olaGain.resize ((size_t) fftSize);
+    for (int n = 0; n < fftSize; ++n)
+        olaGain[(size_t) n] = (float) (1.0 / env[(size_t) (n % hop)]);
 
     for (int c = 0; c < maxChannels; ++c)
     {
@@ -552,7 +563,7 @@ void SpectralEngine::processFrame() noexcept
         for (int i = 0; i < fftSize; ++i)
         {
             const int n = (i + half) & mask;
-            acc[n] += s[i] * window[(size_t) n] * olaNorm;
+            acc[n] += s[i] * window[(size_t) n] * olaGain[(size_t) n];   // a sample at n leaves at n % hop
         }
         std::memcpy (fifo, acc, sizeof (float) * (size_t) hop);
         std::memmove (acc, acc + hop, sizeof (float) * (size_t) (fftSize - hop));

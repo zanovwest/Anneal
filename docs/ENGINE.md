@@ -17,7 +17,7 @@ input ──► dry delay (N samples) ──────────────
 | Item | Value |
 |---|---|
 | FFT size N | Precise: 4096 (fs ≤ 50 kHz), 8192 (≤ 100 kHz), 16384 above. Normal: N/2. Low: N/4 |
-| Hop | Precise N/8, Normal and Low N/4 (94 / 94 / 188 frames/s at 48 kHz) |
+| Hop | sampleRate / 300 in every mode since 5.2.0 (160 at 48 kHz, 147 at 44.1 kHz; was N/8 and N/4 = 94 / 94 / 188 frames/s). Each position inside a hop gets its own overlap-add gain, 1 / Σ w² of the frames covering it, because 160 doesn't divide N |
 | Window | periodic Hann analysis + synthesis, OLA gain 3 → scaled by 1/3 |
 | Latency | N samples: Low 21.3 ms, Normal 42.7 ms, Precise 85.3 ms at 48 kHz. Reported to the host, dry path delayed by the same amount. One engine per mode is prepared up front; a switch happens on the message thread with processing suspended, then the new latency is reported |
 | Tail | N samples |

@@ -4,6 +4,33 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.0 — 2026-10-20 14:34
+
+New
+- **The auto EQ now updates 300 times a second** in every latency mode (you asked: "make it 300/s
+  instead of 94/s"). Before, Normal and Precise updated 94 times a second and Low 188. The EQ follows
+  the music in finer steps; how fast it reacts is set in seconds, so its timing and character are
+  the same, only smoother in time. 5.1.1 is untouched; this is a new version.
+- At every sample rate the step is the sample rate / 300 (160 samples at 48 kHz, 147 at 44.1 kHz).
+  160 doesn't divide the frame sizes, so the overlap-add now scales each position in a step on its
+  own; with neutral settings the output is still the input exactly (within 0.0000002), in every
+  mode and block size.
+- Latency is unchanged in every mode (it depends on the frame size, not the step).
+- CPU: more updates cost more. At 48 kHz, against 5.1.1:
+  - Stereo: Low 1.1 → 2.0 %, Normal 0.8 → 2.8 %, Precise 1.3 → 4.5 % of one core;
+  - Mid/Side: Low 2.2 → 3.9 %, Normal 1.5 → 5.2 %, Precise 2.2 → 7.8 %;
+  - Zero latency: Stereo 2.4 → 4.1 %, Mid/Side 3.9 → 7.1 %.
+
+  The slowest 0.1 % of 64-sample blocks take at most 21 % of the deadline (Mid/Side Precise), so it
+  stays safe in real time even at tiny buffers.
+
+Fixes
+- None (a direct request, not a daily run).
+
+Tests: 156/156 acceptance checks, 3 new: 300 updates/s in Low, Normal and Precise at 44.1 / 48 /
+88.2 / 96 / 192 kHz; neutral output equal to the input with a 160-sample step in every mode; Precise
+at 48 kHz running 300 frames/s (was 93.75). 23/23 host checks on the built VST3, setup checks pass.
+
 ## 5.1.1 — 2026-10-19 19:37
 
 New

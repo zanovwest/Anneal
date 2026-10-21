@@ -2035,7 +2035,7 @@ void profile()
         model.prepare (fs, n);
         anneal::ModelSettings ms;
         ms.reveal = 0.4f; ms.smooth = 0.4f;
-        const float fps = (float) (fs / (mode == 2 ? n / 8 : n / 4));
+        const float fps = (float) (fs / anneal::SpectralEngine::hopFor (fs, n));
         const double analyse = usPer (2000, [&] { model.analyse (power.data(), ms, fps); });
         const double levels = usPer (2000, [&] { model.bandLevelsDb (power.data(), outDb.data()); });
         model.setExactMath (true);   // 5.1.0's per-value std::log10 / std::pow
@@ -3694,7 +3694,7 @@ void testFastMath511()
             for (int variant = 0; variant < 3; ++variant)
             {
                 const int nfft = anneal::SpectralEngine::fftSizeFor (fs, mode);
-                const int hop = mode == 2 ? nfft / 8 : nfft / 4;
+                const int hop = anneal::SpectralEngine::hopFor (fs, nfft);
                 const int bins = nfft / 2 + 1;
                 anneal::PerceptualModel fast, exact;
                 fast.prepare (fs, nfft);
@@ -3789,7 +3789,7 @@ void testFastMath511()
         anneal::ModelSettings ms;
         ms.reveal = 0.4f;
         ms.smooth = 0.4f;
-        const float fps = (float) (fs / (nfft / 8));
+        const float fps = (float) (fs / anneal::SpectralEngine::hopFor (fs, nfft));
         auto best = [&] (bool exactMath)
         {
             model.setExactMath (exactMath);
@@ -3806,6 +3806,61 @@ void testFastMath511()
         const double exactUs = best (true), fastUs = best (false);
         info ("one Precise frame: model.analyse " + juce::String (fastUs, 1) + " us (batched exact math "
               + juce::String (exactUs, 1) + " us)");
+    }
+}
+
+void testUpdateRate52()
+{
+    section ("39. 5.2 300 EQ updates a second");
+
+    // Every mode at every rate: 300 frames a second (the hop rounds to whole samples), never
+    // coarser than a quarter frame.
+    {
+        bool ok = true;
+        juce::String log;
+        for (double fs : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
+            for (int mode = 0; mode < anneal::SpectralEngine::numModes; ++mode)
+            {
+                anneal::SpectralEngine e;
+                e.prepare (fs, 2, mode);
+                const double fps = fs / e.getHopSize();
+                ok = ok && std::abs (fps - 300.0) < 3.0 && e.getHopSize() <= e.getFftSize() / 4;
+                if (mode == 0)
+                    log << juce::String (fs / 1000.0, 1) << "k hop " << e.getHopSize() << " (" << juce::String (fps, 1) << "/s)  ";
+            }
+        check (ok, "300 updates/s in Low, Normal and Precise at 44.1 / 48 / 88.2 / 96 / 192 kHz", log);
+    }
+
+    // The overlap-add stays exact although 160 doesn't divide N: a neutral engine passes noise
+    // through untouched, delayed by N (the identity checks above cover more rates and blocks).
+    {
+        double worst = 0.0;
+        for (int mode = 0; mode < anneal::SpectralEngine::numModes; ++mode)
+        {
+            anneal::SpectralEngine e;
+            e.prepare (48000.0, 2, mode);
+            e.setParameters (neutral());
+            const int latency = e.getLatencySamples();
+            const auto in = testsig::whiteNoise (2, 24000 + latency, 0.5f, 52);
+            worst = std::max (worst, delayedError (runEngine (e, in, fixedBlocks (100)), in, latency));
+        }
+        check (worst < 1.0e-4, "hop 160 (N / 25.6): neutral output = input, every mode", "max err " + juce::String (worst, 9));
+    }
+
+    // A running engine (after two seconds of music-level noise with Reveal and Smooth) is still
+    // at 300 frames a second.
+    {
+        const double fs = 48000.0;
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::precise);
+        auto p = neutral();
+        p.reveal = 0.6f; p.smooth = 0.6f;
+        e->setParameters (p);
+        auto quiet = testsig::whiteNoise (2, (int) fs * 2, 0.05f, 9);
+        runEngine (*e, quiet, fixedBlocks (480));
+        const double framesPerSecond = fs / e->getHopSize();
+        check (std::abs (framesPerSecond - 300.0) < 0.5, "Precise at 48 kHz runs 300 frames/s (was 93.75)",
+               juce::String (framesPerSecond, 2) + " frames/s, hop " + juce::String (e->getHopSize()));
     }
 }
 
@@ -3865,6 +3920,7 @@ int main (int argc, char** argv)
     testUserPresets50();
     testZeroLatency51();
     testFastMath511();
+    testUpdateRate52();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

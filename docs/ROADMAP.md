@@ -61,6 +61,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.0 (2026-10-20, the user: "dont change anneal 5.1.1 but make it 300/s instead of 94/s"):
+  **300 EQ updates a second** in every latency mode (hop = sampleRate / 300, was N/8 and N/4), with a
+  per-position overlap-add gain so hops that don't divide N stay exact. CPU about 3.4× in Normal and
+  Precise (Stereo Precise 4.5 %, Mid/Side Precise 7.8 %); the CPU item can win some of it back.
 - 5.1.1 (2026-10-19, daily update): **CPU under the 3 % budget in Mid/Side Precise too** (item 8,
   part 2 of the CPU item): the model's dB conversions batched through Anneal's own vectorised log /
   exp (`Source/dsp/FastMath`), within 0.000004 dB of 5.1.0's curve; the stereo harmonic generator

@@ -6,7 +6,7 @@ A mix-bus / instrument-bus tone shaper that does two things at once, both steere
 automatically by a model of hearing:
 
 1. **Auto EQ** — a dynamic, per-band EQ (1024 ERB-spaced bands, gains updated
-   ~94×/s at 48 kHz) that lifts material sitting in the masking shadow of louder
+   300×/s since 5.2.0, ~94×/s before) that lifts material sitting in the masking shadow of louder
    neighbours (**Reveal**) and pulls down bands that dominate their auditory
    neighbourhood (**Smooth**).
 2. **Spectral saturation** — instead of a waveshaper, every spectral peak grows its

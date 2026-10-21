@@ -52,11 +52,14 @@ namespace anneal
     public:
         static constexpr int maxChannels = 2;
 
-        // Latency modes. Precise is the original engine (N = 4096 at <= 50 kHz, hop N/8);
-        // Normal halves N and Low quarters it (hop N/4), trading bass resolution for latency.
+        // Latency modes. Precise is the original engine (N = 4096 at <= 50 kHz); Normal halves N
+        // and Low quarters it, trading bass resolution for latency. Since 5.2.0 every mode updates
+        // the EQ 300 times a second (hop = sampleRate / 300; it was N/8 or N/4 = 94/s, Low 188/s).
         enum Mode { low = 0, normal = 1, precise = 2 };
         static constexpr int numModes = 3;
         static int fftSizeFor (double sampleRate, int mode = precise) noexcept;
+        static constexpr double updatesPerSecond = 300.0;
+        static int hopFor (double sampleRate, int fftSize) noexcept;
 
         // keepCurve: a frozen auto-EQ curve survives (the host preparing again, 4.0.2).
         void prepare (double sampleRate, int numChannels, int mode = precise, bool keepCurve = false);
@@ -119,7 +122,8 @@ namespace anneal
 
         double sampleRate = 48000.0;
         int fftSize = 4096, hop = 512, numBins = 2049, channels = 2, pos = 0;
-        float framesPerSecond = 93.75f, olaNorm = 1.0f / 3.0f, lastHeatGuard = 1.0f;
+        float framesPerSecond = 300.0f, lastHeatGuard = 1.0f;
+        std::vector<float> olaGain;   // 5.2: per position, 1 / (sum of the overlapping window^2)
 
         RealFft fft;   // 4.0.2: Anneal's own (JUCE's layout and scaling, ~4x faster than its fallback)
         std::vector<float> window;
