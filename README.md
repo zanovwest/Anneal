@@ -203,7 +203,7 @@ is a separate action.
 ## Daily updates
 
 A scheduled Claude task ("Anneal daily update" in the Claude desktop app's scheduled tasks) works on
-Anneal once a day at 7:01 PM HST. It ran hourly until 2026-10-13, when the user switched it to daily
+Anneal once a day at 10 AM HST (7:01 PM HST from 2026-10-18 to 10-21). It ran hourly until 2026-10-13, when the user switched it to daily
 starting after 4.0.0; it was paused from 2026-10-14 and restarted on 2026-10-18. Each run fixes the
 bugs it finds and adds one new feature or mode, usually the next item in [docs/ROADMAP.md](docs/ROADMAP.md) (never the ones under *Not wanted* or *Not now*).
 Missed days are caught up together, up to five. It bumps the version and runs
