@@ -18,10 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-10. **Spread the frame work across blocks** (optional): each STFT frame lands in one host block.
-    That's fine for Anneal alone (Low: 10 % of a 64-sample block), but spreading it over the hop
-    would leave more headroom for other plugins at tiny buffers. Costs one hop of latency, so only
-    as a switch.
 12. **Paint the width**: draw the stereo width per region on the display, like Paint does for the
     EQ and Heat (a third lane, or a mode of the EQ lane).
 13. **Show the stereo image on the display**: the side/mid balance per band, behind the curve, so
@@ -61,6 +57,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.1 (2026-10-21, daily update): **Spread load** (item 10), a switch in the Latency menu: each
+  frame's work in four stages run through the next hop instead of in one block, for one hop more
+  latency (3.3 ms). The output is the same one hop later, sample for sample; the slowest 0.1 % of
+  64-sample blocks in Precise Mid/Side 21 → 11 % of the deadline (32 samples: 42 → 16 %).
 - 5.2.0 (2026-10-20, the user: "dont change anneal 5.1.1 but make it 300/s instead of 94/s"):
   **300 EQ updates a second** in every latency mode (hop = sampleRate / 300, was N/8 and N/4), with a
   per-position overlap-add gain so hops that don't divide N stay exact. CPU about 3.4× in Normal and

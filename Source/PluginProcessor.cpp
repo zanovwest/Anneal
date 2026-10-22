@@ -208,6 +208,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pWidth      = apvts.getRawParameterValue (ids::width);
     pMonoBass   = apvts.getRawParameterValue (ids::monoBass);
     pZero       = apvts.getRawParameterValue (ids::zeroLatency);
+    pSpread     = apvts.getRawParameterValue (ids::spread);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -224,9 +225,23 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     zero = requestedZeroLatency();
     mode = zero ? anneal::SpectralEngine::low : requestedLatencyMode();
     engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
+    spread = requestedSpread();
+    applySpreadToEngines();
     zeroFilter.prepare (48000.0, 2, engines[anneal::SpectralEngine::low]->getFftSize(), engines[anneal::SpectralEngine::low]->getHopSize());
     setLatencySamples (totalLatency());
     startTimerHz (10);
+}
+
+void AnnealAudioProcessor::applySpreadToEngines() noexcept
+{
+    for (auto& e : engines)
+        e->setSpread (spread);
+}
+
+double AnnealAudioProcessor::getSpreadMs() const noexcept
+{
+    const auto& e = *engines[(size_t) mode];
+    return 1000.0 * e.getHopSize() / e.getSampleRate();
 }
 
 AnnealAudioProcessor::~AnnealAudioProcessor()
@@ -260,9 +275,11 @@ void AnnealAudioProcessor::timerCallback()
 void AnnealAudioProcessor::applyLatencyModeIfChanged()
 {
     // 5.1: Zero latency runs the Low engine as analysis only, through the zero-latency filters.
+    // 5.2.1: Spread load adds a hop to the engine's latency (it rests at zero latency).
     const bool wantZero = requestedZeroLatency();
+    const bool wantSpread = requestedSpread();
     const int wanted = wantZero ? anneal::SpectralEngine::low : requestedLatencyMode();
-    if (wanted == mode && wantZero == zero)
+    if (wanted == mode && wantZero == zero && wantSpread == spread)
         return;
 
     // suspendProcessing takes the callback lock the host processes under, so no block is running
@@ -271,6 +288,8 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     const int previous = mode;
     mode = wanted;
     zero = wantZero;
+    spread = wantSpread;
+    applySpreadToEngines();
     engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
     zeroFilter.reset();
     getEngine().reset (pFreeze->load() > 0.5f && previous == mode);
@@ -327,13 +346,16 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     zero = requestedZeroLatency();
     mode = zero ? anneal::SpectralEngine::low : requestedLatencyMode();
     engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
+    spread = requestedSpread();
+    applySpreadToEngines();
     zeroFilter.prepare (sampleRate, preparedChannels, engines[anneal::SpectralEngine::low]->getFftSize(),
                         engines[anneal::SpectralEngine::low]->getHopSize());
     setLatencySamples (totalLatency());
 
-    // The dry ring is sized for the longest mode, so switching modes never allocates.
+    // The dry ring is sized for the longest mode with Spread load, so switching never allocates.
     ringLength = getEngine().getLatencySamples();
-    dryRing.setSize (2, engines[anneal::SpectralEngine::precise]->getLatencySamples());
+    const auto& longest = *engines[anneal::SpectralEngine::precise];
+    dryRing.setSize (2, longest.getFftSize() + longest.getHopSize());
     dryRing.clear();
     dryPos = 0;
 
@@ -385,7 +407,7 @@ double AnnealAudioProcessor::getTailLengthSeconds() const
     const auto& e = *engines[(size_t) mode];
     if (zero)
         return zeroFilter.getTaps() / e.getSampleRate();
-    return (e.getFftSize() + limiter.getLatency()) / e.getSampleRate();
+    return (e.getLatencySamples() + limiter.getLatency()) / e.getSampleRate();
 }
 
 double AnnealAudioProcessor::getLatencyMs() const noexcept
@@ -398,7 +420,8 @@ double AnnealAudioProcessor::getLatencyMsForMode (int m) const noexcept
     if (m == 3)   // 5.1 Zero latency (the latency menu's fourth entry)
         return 0.0;
     const auto& e = *engines[(size_t) juce::jlimit (0, anneal::SpectralEngine::numModes - 1, m)];
-    return 1000.0 * (e.getLatencySamples() + limiter.getLatency()) / e.getSampleRate();
+    const int engineLatency = e.getFftSize() + (spread ? e.getHopSize() : 0);   // 5.2.1: Spread load adds a hop
+    return 1000.0 * (engineLatency + limiter.getLatency()) / e.getSampleRate();
 }
 
 void AnnealAudioProcessor::pushParametersToEngine() noexcept
@@ -975,6 +998,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasWidth = tree.getChildWithProperty ("id", anneal::ids::width).isValid();
             const bool hasMonoBass = tree.getChildWithProperty ("id", anneal::ids::monoBass).isValid();
             const bool hasZero = tree.getChildWithProperty ("id", anneal::ids::zeroLatency).isValid();
+            const bool hasSpread = tree.getChildWithProperty ("id", anneal::ids::spread).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1045,6 +1069,11 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasZero)
                 if (auto* zp = apvts.getParameter (anneal::ids::zeroLatency))
                     zp->setValueNotifyingHost (0.0f);
+
+            // Projects saved before 5.2.1: Spread load off (their latency as made), whatever this instance had.
+            if (! hasSpread)
+                if (auto* sp = apvts.getParameter (anneal::ids::spread))
+                    sp->setValueNotifyingHost (0.0f);
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

@@ -429,6 +429,41 @@ int main (int argc, char* argv[])
         }
         mixParam->setValueNotifyingHost (1.0f);
         check (zok, "Zero latency through the host", zlog);
+
+        // 5.2.1 Spread load through the host: one hop (160 samples at 48 kHz) more latency, reported
+        // and applied to the plug-in's output (Mix 100 %) and the dry path (Mix 0) alike; off restores Low.
+        auto* sp = findParam (*plugin, "Spread Load");
+        bool sok = sp != nullptr && ! sp->isAutomatable();
+        juce::String slog;
+        for (float mixValue : { 0.0f, 1.0f })
+        {
+            if (! sok) break;
+            sp->setValueNotifyingHost (1.0f);
+            mixParam->setValueNotifyingHost (mixValue);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            auto imp = testsig::silence (2, 16384);
+            imp[0][1000] = imp[1][1000] = 1.0f;
+            testsig::Channels o;
+            run (*plugin, testsig::silence (2, 2048), o, [] { return 64; });
+            plugin->reset();
+            run (*plugin, imp, o, [] { return 64; });
+            int pk = 0;
+            for (int i = 0; i < (int) o[0].size(); ++i)
+                if (std::abs (o[0][(size_t) i]) > std::abs (o[0][(size_t) pk]))
+                    pk = i;
+            const int expected = 1024 + 160 + ceilingLookahead48k;
+            sok = sok && plugin->getLatencySamples() == expected && pk - 1000 == expected;
+            slog << "Mix " << (mixValue > 0.5f ? "100" : "0") << " %: latency " << plugin->getLatencySamples() << ", impulse +" << (pk - 1000) << "  ";
+        }
+        if (sp != nullptr)
+        {
+            sp->setValueNotifyingHost (0.0f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            sok = sok && plugin->getLatencySamples() == 1024 + ceilingLookahead48k;
+            slog << "off again: " << plugin->getLatencySamples();
+        }
+        mixParam->setValueNotifyingHost (1.0f);
+        check (sok, "Spread load through the host", slog);
     }
 
     // 6c. Sidechain (3.0): the plug-in offers a second, optional input bus; a host that routes a

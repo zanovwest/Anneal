@@ -77,7 +77,16 @@ namespace anneal
         void process (float* const* channels, int numChannels, int numSamples,
                       const float* const* key = nullptr, int keyChannels = 0) noexcept;
 
-        int getLatencySamples() const noexcept { return fftSize; }
+        // 5.2.1 Spread: a frame's work runs in numStages stages spread through the hop after it is taken,
+        // instead of all at once in the block where its hop ends, so no small host block carries a whole
+        // frame. Costs one hop of latency; the output is otherwise the same, sample for sample. Rests
+        // while analysis-only (zero latency). Change it with processing suspended, then reset().
+        static constexpr int numStages = 4;
+        void setSpread (bool on) noexcept { spread = on; }
+        bool isSpreading() const noexcept { return spread && ! analysisOnly; }
+        int getStagesInLastCall() const noexcept { return stagesInCall; }   // tests: frame stages run by the last process()
+
+        int getLatencySamples() const noexcept { return fftSize + (isSpreading() ? hop : 0); }
         int getFftSize() const noexcept        { return fftSize; }
         int getHopSize() const noexcept        { return hop; }
         int getNumChannels() const noexcept    { return channels; }
@@ -114,9 +123,17 @@ namespace anneal
         const float* getCurveSide() const noexcept { return curveSide != nullptr ? curveSide : model.getBinGain(); }
 
     private:
-        void processFrame() noexcept;
+        void processFrame() noexcept;   // the whole frame now (Spread off)
+        // One frame in stages: 0 the input spectra, 1 the model (and Mid), 2 the curve, the harmonics,
+        // Side and the display, 3 the resynthesis into the overlap-add. Then commitOutput() at the hop.
+        void runStage (int s) noexcept;
+        int stageAt (int s) const noexcept { return (2 * s + 1) * hop / (2 * numStages); }   // Spread: position in the hop
+        void takeFrame() noexcept;      // Spread: copy the frame to work on, then advance the input
+        void advanceInput() noexcept;
+        void commitOutput() noexcept;   // the overlap-add's next hop to the output fifos
         void smoothParameters() noexcept;
-        void processMidSide (const ModelSettings&, float blend, const float* keyPower) noexcept;
+        void analyseMidSide (int component) noexcept;
+        void blendMidSide (float blend) noexcept;
         void applyListen (float msBlend) noexcept;
         void applyWidth (bool harmonics) noexcept;   // 5.0 Width and Mono bass
 
@@ -165,5 +182,22 @@ namespace anneal
         bool analysisOnly = false;
         const float* curveMid = nullptr;
         const float* curveSide = nullptr;
+
+        // The frame being worked on: what its stages hand on to each other.
+        struct FrameWork
+        {
+            float msBlend = 0.0f, heatGuard = 1.0f;
+            bool listenEq = false, keyHasSignal = false, harmonicsWritten = false;
+            const float* keyPtr = nullptr;
+            ModelSettings settings;
+        };
+        FrameWork fw;
+        // Its input: the fifos themselves, or with Spread the copies taken at the hop boundary.
+        const float* src[maxChannels] {};
+        const float* srcKey = nullptr;
+        std::vector<float> frameIn[maxChannels], frameKey;
+        bool spread = false;
+        int nextStage = numStages;   // Spread: the next stage of the frame taken (numStages: none pending)
+        int stagesInCall = 0;
     };
 }

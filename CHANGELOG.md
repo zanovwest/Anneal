@@ -4,6 +4,54 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.1 — 2026-10-21 18:28
+
+New
+- **Spread load** (Latency menu → *Spread load +3.3 ms*, off by default). Anneal updates its EQ 300
+  times a second, and until now each update was done all at once, inside whichever audio block it fell
+  in. At small buffers (64 samples and less) that block had to carry a whole update while the blocks
+  around it had almost nothing to do. Spread load splits each update into four steps and runs them
+  through the next 3.3 ms, so every block carries about the same small share. Total CPU stays the
+  same; the peaks the audio thread has to survive get lower, which leaves more room for your other
+  plug-ins before anything crackles.
+  - Costs one update step of latency, 3.3 ms at any sample rate: at 48 kHz Low 22.7 → 26.1 ms,
+    Normal 44.1 → 47.4 ms, Precise 86.7 → 90.1 ms. The host re-aligns tracks, as for the latency
+    modes. Not automatable.
+  - **The sound is exactly the same**, one step later: the tests compare the output with and without
+    it sample for sample in Low, Normal and Precise, with Reveal, Smooth, Heat, Mid/Side, Guard, Punch,
+    Width, Mono bass and a sidechain key all working (largest difference 0.000000000).
+  - Rests at Zero latency (the menu says so), where it would add latency for nothing.
+  - Slowest 0.1 % of blocks, at 48 kHz, as a share of the time the block may take:
+    - Low Stereo at 64 samples: 5 → 3 %;
+    - Precise Stereo at 64: 12 → 7 %;
+    - Precise Mid/Side at 64: 21 → 11 %;
+    - Precise Mid/Side at 32: 42 → 16 % (the slowest 1 %: 40 → 15 %).
+  - Saved with the project ("Spread Load"); projects from earlier versions open with it off.
+
+Fixes
+- None found. The bug pass looked at the engine and 5.2.0's 300 updates a second (the per-position
+  overlap-add gain, every time constant now in seconds), the zero-latency filters, the processor's
+  host paths (prepare, reset, latency and Zero switches, state), yesterday's build log and benchmark,
+  and the interface snapshots.
+- Removed four outdated snapshots of the window size before 5.0 that the snapshot tool no longer makes.
+
+Tests: 163/163 acceptance checks, 7 new:
+- with Spread, the output equals the output without it one hop later in every mode (neutral, EQ and
+  Heat, Mid/Side with Guard, Punch, Width, Mono bass and a key), in random blocks of 1 to 700 samples;
+- a 32-sample block runs at most one of a frame's four steps (64: two; without Spread: all four);
+- the engine reports N + hop and an impulse comes out there;
+- through the processor, with the default sound in each mode: one hop more, the same output;
+- the wet (Mix 100 %) and dry (Mix 0 %) paths arrive at the reported latency; at Zero latency it rests;
+- switching Spread, the modes and Zero while playing (Mid/Side in one step): the right latency, clean;
+- saved with the project, older projects open with it off, not automatable.
+
+24/24 host checks on the built VST3, 1 new: Spread load through the host, with the latency reported
+(1251 samples in Low) and the impulse in place at Mix 0 % and 100 %, then back to 1091. 25/25 setup
+checks pass.
+
+CPU at 48 kHz, as 5.2.0 with Spread off (Stereo Low 2.0 %, Normal 2.8 %, Precise 4.5 %; Mid/Side
+Low 3.9 %, Normal 5.2 %, Precise 7.9 %) and the same with it on.
+
 ## 5.2.0 — 2026-10-20 14:34
 
 New

@@ -135,6 +135,11 @@ brackets. When it is on, the pill reads 0.0 ms, the display adds a ZERO LATENCY 
 and the Heat ring's live line says "off at zero latency". Nothing is hidden or greyed: the knobs keep
 their settings for when a latency mode comes back.
 
+**Spread load (5.2.1).** The last entry of the Latency menu, under a separator, is a tickable switch:
+*Spread load +3.3 ms (even CPU at small buffers)*, with "; rests at Zero" while Zero is on. It works on
+top of the mode, so the pill simply reads the longer latency (Low 26.1 ms instead of 22.7 ms at 48 kHz) and the
+modes in the menu list theirs with it. Nothing else on screen changes: the sound is the same.
+
 **SHAPE and presets (5.0).** SHAPE is three compact rows in rose: Punch (bipolar ring, its inner
 arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the
 display draws a short rose bar at the foot of the EQ lane in each band where an attack is happening

@@ -58,7 +58,8 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, b
         harmSpec[c].assign ((size_t) fftSize * 2, 0.0f);
         harmAcc[c].assign ((size_t) fftSize, 0.0f);
         harmFifo[c].assign ((size_t) hop, 0.0f);
-        alignRing[c].assign ((size_t) fftSize, 0.0f);
+        alignRing[c].assign ((size_t) (fftSize + hop), 0.0f);   // 5.2.1: one hop longer with Spread
+        frameIn[c].assign ((size_t) fftSize, 0.0f);
         msSpec[c].assign ((size_t) numBins * 2, 0.0f);
         msHarm[c].assign ((size_t) numBins * 2, 0.0f);
         msPower[c].assign ((size_t) numBins, 0.0f);
@@ -70,6 +71,7 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, b
     power.assign ((size_t) numBins, 0.0f);
     keyFifo.assign ((size_t) fftSize, 0.0f);
     keySpec.assign ((size_t) fftSize * 2, 0.0f);
+    frameKey.assign ((size_t) fftSize, 0.0f);
     keyPower.assign ((size_t) numBins, 0.0f);
     outPower.assign ((size_t) numBins, 0.0f);
     harmPower.assign ((size_t) numBins, 0.0f);
@@ -98,6 +100,8 @@ void SpectralEngine::reset (bool keepCurve)
     for (auto& m : msModel) m.reset (keepCurve);
     msActive = false;
     lastPeakCount = 0;
+    nextStage = numStages;   // Spread: no frame taken yet
+    stagesInCall = 0;
 }
 
 void SpectralEngine::setReference (const ReferenceCurve& curve) noexcept
@@ -133,11 +137,24 @@ void SpectralEngine::process (float* const* io, int numChannels, int numSamples,
                               const float* const* key, int keyChannels) noexcept
 {
     numChannels = std::min (numChannels, channels);
+    const bool spreading = isSpreading();
+    const int alignLength = getLatencySamples();   // the gate's input is delayed like the output
+    stagesInCall = 0;
     int done = 0;
 
     while (done < numSamples)
     {
-        const int todo = std::min (numSamples - done, hop - pos);
+        // 5.2.1 Spread: the stages of the frame taken at the last hop boundary that this point of the
+        // hop has reached; the next one bounds this chunk.
+        int until = hop;
+        if (spreading)
+        {
+            while (nextStage < numStages && pos >= stageAt (nextStage))
+                runStage (nextStage++);
+            if (nextStage < numStages)
+                until = stageAt (nextStage);
+        }
+        const int todo = std::min (numSamples - done, until - pos);
 
         for (int c = 0; c < channels; ++c)
         {
@@ -181,7 +198,7 @@ void SpectralEngine::process (float* const* io, int numChannels, int numSamples,
                 delayed = io[c][done + i];
                 aHarm = std::max (aHarm, std::abs (harmFifo[c][(size_t) (pos + i)]));
             }
-            ringPos = ringPos + 1 == fftSize ? 0 : ringPos + 1;
+            ringPos = ringPos + 1 >= alignLength ? 0 : ringPos + 1;
 
             envIn   = std::max (aIn, envIn * envRelease);
             envHarm = std::max (aHarm, envHarm * envRelease);
@@ -197,7 +214,18 @@ void SpectralEngine::process (float* const* io, int numChannels, int numSamples,
 
         if (pos == hop)
         {
-            processFrame();
+            if (spreading)
+            {
+                // The stages all sit inside the hop, so they have run; this only guards the order.
+                while (nextStage < numStages)
+                    runStage (nextStage++);
+                commitOutput();   // the frame finished during this hop plays from the next one
+                takeFrame();
+            }
+            else
+            {
+                processFrame();
+            }
             pos = 0;
         }
     }
@@ -245,243 +273,309 @@ void SpectralEngine::smoothParameters() noexcept
 
 void SpectralEngine::processFrame() noexcept
 {
-    smoothParameters();
+    for (int c = 0; c < channels; ++c)
+        src[c] = inFifo[c].data();
+    srcKey = keyFifo.data();
+    for (int s = 0; s < numStages; ++s)
+        runStage (s);
+    if (! analysisOnly)
+        commitOutput();
+    advanceInput();
+}
 
-    // Crossfade spectra rather than changing the basis of buffered time-domain audio.
-    // The overlap-add tails and the dry path always remain L/R, including during automation.
-    const float msBlend = channels == 2 ? (current.midSide < 1.0e-4f ? 0.0f
-                                         : current.midSide > 0.9999f ? 1.0f : current.midSide) : 0.0f;
-    if (msBlend == 0.0f && msActive)
-        for (auto& m : msModel) m.reset();
-    msActive = msBlend > 0.0f;
-
-    const int half = fftSize / 2, mask = fftSize - 1;
-
-    // Zero-phase analysis: the window centre lands on index 0, so a stationary partial's
-    // bins carry the partial's phase at the frame centre (needed for harmonic phase-locking).
-    // In the same pass, measure windowed energy before/after the frame centre (index n order).
-    double earlyEnergy = 0.0, lateEnergy = 0.0;
+void SpectralEngine::takeFrame() noexcept
+{
     for (int c = 0; c < channels; ++c)
     {
-        float* s = spec[c].data();
-        const float* in = inFifo[c].data();
-        for (int i = 0; i < fftSize; ++i)
-        {
-            const int n = (i + half) & mask;
-            const float v = in[n] * window[(size_t) n];
-            s[i] = v;
-            (n < half ? earlyEnergy : lateEnergy) += (double) v * v;
-        }
-        fft.forward (s);
+        std::memcpy (frameIn[c].data(), inFifo[c].data(), sizeof (float) * (size_t) fftSize);
+        src[c] = frameIn[c].data();
     }
+    std::memcpy (frameKey.data(), keyFifo.data(), sizeof (float) * (size_t) fftSize);
+    srcKey = frameKey.data();
+    advanceInput();
+    nextStage = 0;
+}
 
-    // Listening to Reveal or Smooth needs this frame's spectrum before the EQ.
-    const bool listenEq = current.listen == listenReveal || current.listen == listenSmooth;
-    if (listenEq)
-        for (int c = 0; c < channels; ++c)
-            std::copy (spec[c].begin(), spec[c].begin() + 2 * numBins, rawSpec[c].begin());
+void SpectralEngine::advanceInput() noexcept
+{
+    for (int c = 0; c < channels; ++c)
+        std::memmove (inFifo[c].data(), inFifo[c].data() + hop, sizeof (float) * (size_t) (fftSize - hop));
+    std::memmove (keyFifo.data(), keyFifo.data() + hop, sizeof (float) * (size_t) (fftSize - hop));
+}
 
-    if (msActive)
+void SpectralEngine::commitOutput() noexcept
+{
+    // The overlap-add's first hop goes out; the rest moves up (a sample at n leaves at n % hop).
+    auto advance = [this] (float* acc, float* fifo)
     {
-        // M = (L+R)/2, S = (L-R)/2: centred audio keeps its familiar drive calibration.
-        for (int k = 0; k < 2 * numBins; ++k)
-        {
-            msSpec[0][(size_t) k] = 0.5f * (spec[0][(size_t) k] + spec[1][(size_t) k]);
-            msSpec[1][(size_t) k] = 0.5f * (spec[0][(size_t) k] - spec[1][(size_t) k]);
-        }
-        double early[2] {}, late[2] {};
-        for (int n = 0; n < fftSize; ++n)
-        {
-            const float v[2] = { 0.5f * (inFifo[0][(size_t) n] + inFifo[1][(size_t) n]),
-                                 0.5f * (inFifo[0][(size_t) n] - inFifo[1][(size_t) n]) };
-            for (int c = 0; c < 2; ++c)
-            {
-                const double w = v[c] * window[(size_t) n];
-                (n < half ? early[c] : late[c]) += w * w;
-            }
-        }
-        for (int c = 0; c < 2; ++c)
-            msGuard[c] = (float) std::clamp (1.25 * (early[c] + 1.0e-12) / (late[c] + 1.0e-12), 0.0, 1.0);
+        std::memcpy (fifo, acc, sizeof (float) * (size_t) hop);
+        std::memmove (acc, acc + hop, sizeof (float) * (size_t) (fftSize - hop));
+        std::memset (acc + (fftSize - hop), 0, sizeof (float) * (size_t) hop);
+    };
+    for (int c = 0; c < channels; ++c)
+    {
+        advance (outAcc[c].data(), outFifo[c].data());
+        advance (harmAcc[c].data(), harmFifo[c].data());   // a frame without harmonics only advances the tail
     }
+}
 
-    // Transient guard: harmonics are synthesised across the whole frame, so a frame whose
-    // energy arrives mostly after its centre would smear them ahead of the onset (pre-echo,
-    // which hearing does not mask). Such frames write proportionally less; frames centred
-    // after the onset write in full, where post-masking covers the spread.
-    const double guardRatio = (earlyEnergy + 1.0e-12) / (lateEnergy + 1.0e-12);
-    const float heatGuard = (float) std::clamp (guardRatio * 1.25, 0.0, 1.0);
-    lastHeatGuard = heatGuard;
-
+void SpectralEngine::runStage (int s) noexcept
+{
+    ++stagesInCall;
+    const int half = fftSize / 2, mask = fftSize - 1;
     const float ampScale = 4.0f / (float) fftSize;
     const float powScale = ampScale * ampScale / (float) channels;
 
-    // Sidechain key: only transformed when a sidechain mode is on or a reference is being learned
-    // from it (no cost otherwise).
-    const bool learning = current.refMode == refLearn;
-    const float* keyPtr = nullptr;
-    bool keyHasSignal = false;
-    double keyTotal = 0.0;
-    if (current.scMode != 0 || learning)
+    if (s == 0)
     {
-        float* s = keySpec.data();
-        for (int i = 0; i < fftSize; ++i)
-        {
-            const int n = (i + half) & mask;
-            s[i] = keyFifo[(size_t) n] * window[(size_t) n];
-        }
-        fft.forward (s);
-        const float keyScale = ampScale * ampScale;
-        double total = 0.0;
-        for (int k = 0; k < numBins; ++k)
-        {
-            keyPower[(size_t) k] = (s[2 * k] * s[2 * k] + s[2 * k + 1] * s[2 * k + 1]) * keyScale;
-            total += keyPower[(size_t) k];
-        }
-        keyHasSignal = total > 1.0e-12;
-        keyTotal = total;
-        if (current.scMode != 0)
-            keyPtr = keyPower.data();
-    }
+        // 0. The input spectra (and Mid / Side), and how the frame's energy sits around its centre.
+        smoothParameters();
 
-    // 4.0 Learn key: the key's long-term spectrum, from every frame in which it plays (above
-    // -90 dBFS). A new learn starts with the first such frame after Learn key is chosen, so choosing
-    // it with nothing routed keeps the reference there was.
-    auto publishLearned = [this]
-    {
-        model.getLearnedCurve (learnScratch);
-        learnScratch.epoch = refEpoch;
-        applyReference (learnScratch);   // Match uses it as soon as it is chosen
-        if (learnOut != nullptr)
-        {
-            learnOut->beginWrite() = learnScratch;
-            learnOut->endWrite();
-        }
-    };
-    if (! learning)
-    {
-        if (! learnFresh && ! learnHeld && model.getLearnedFrames() > 0)
-            publishLearned();   // the frames since the last publish
-        learnFresh = true;
-        learnHeld = false;
-    }
-    else if (! learnHeld && keyTotal > 1.0e-9)
-    {
-        if (learnFresh)
-        {
-            model.clearLearned();
-            learnFresh = false;
-            learnTick = 0;
-        }
-        model.learnKey (keyPower.data());
-        if (learnTick-- <= 0)   // about four times a second
-        {
-            learnTick = std::max (1, (int) (framesPerSecond / 4.0f));
-            publishLearned();
-        }
-    }
-    for (int k = 0; k < numBins; ++k)
-    {
-        float sum = 0.0f;
+        // Crossfade spectra rather than changing the basis of buffered time-domain audio.
+        // The overlap-add tails and the dry path always remain L/R, including during automation.
+        fw.msBlend = channels == 2 ? (current.midSide < 1.0e-4f ? 0.0f
+                                     : current.midSide > 0.9999f ? 1.0f : current.midSide) : 0.0f;
+        if (fw.msBlend == 0.0f && msActive)
+            for (auto& m : msModel) m.reset();
+        msActive = fw.msBlend > 0.0f;
+
+        // Zero-phase analysis: the window centre lands on index 0, so a stationary partial's
+        // bins carry the partial's phase at the frame centre (needed for harmonic phase-locking).
+        // In the same pass, measure windowed energy before/after the frame centre (index n order).
+        double earlyEnergy = 0.0, lateEnergy = 0.0;
         for (int c = 0; c < channels; ++c)
-            sum += spec[c][(size_t) 2 * k] * spec[c][(size_t) 2 * k] + spec[c][(size_t) 2 * k + 1] * spec[c][(size_t) 2 * k + 1];
-        power[(size_t) k] = sum * powScale;
-    }
-
-    ModelSettings ms;
-    ms.reveal = current.reveal;
-    ms.smooth = current.smooth;
-    ms.tiltDbPerOct = current.tiltDbPerOct;
-    ms.responseMs = current.responseMs;
-    ms.rangeLoHz = current.rangeLoHz;
-    ms.rangeHiHz = current.rangeHiHz;
-    ms.focus = current.focus;
-    ms.guard = current.guard;
-    ms.freeze = current.freeze;
-    ms.scMode = current.scMode;
-    ms.scAmount = current.scAmount;
-    ms.refMode = current.refMode;
-    ms.refAmount = current.refAmount;
-    ms.punch = current.punch;
-    model.analyse (power.data(), ms, framesPerSecond, keyPtr);
-
-    bool harmonicsWritten = false;
-    if (analysisOnly)
-    {
-        // 5.1 zero latency: the curve and the display, nothing resynthesised.
-        const float* g = model.getBinGain();
-        std::fill (outPower.begin(), outPower.end(), 0.0f);
-        std::fill (harmPower.begin(), harmPower.end(), 0.0f);
-        for (int c = 0; c < channels; ++c)
-            for (int k = 0; k < numBins; ++k)
+        {
+            float* sp = spec[c].data();
+            const float* in = src[c];
+            for (int i = 0; i < fftSize; ++i)
             {
-                const float yr = spec[c][(size_t) 2 * k] * g[k], yi = spec[c][(size_t) 2 * k + 1] * g[k];
-                outPower[(size_t) k] += (yr * yr + yi * yi) * powScale;
+                const int n = (i + half) & mask;
+                const float v = in[n] * window[(size_t) n];
+                sp[i] = v;
+                (n < half ? earlyEnergy : lateEnergy) += (double) v * v;
             }
-        curveMid = curveSide = g;
+            fft.forward (sp);
+        }
+
+        // Listening to Reveal or Smooth needs this frame's spectrum before the EQ.
+        fw.listenEq = current.listen == listenReveal || current.listen == listenSmooth;
+        if (fw.listenEq)
+            for (int c = 0; c < channels; ++c)
+                std::copy (spec[c].begin(), spec[c].begin() + 2 * numBins, rawSpec[c].begin());
+
         if (msActive)
         {
-            processMidSide (ms, msBlend, keyPtr);   // analyses Mid and Side (no harmonics: Heat is 0 here)
-            if (msBlend >= 0.5f)
+            // M = (L+R)/2, S = (L-R)/2: centred audio keeps its familiar drive calibration.
+            for (int k = 0; k < 2 * numBins; ++k)
             {
-                curveMid = msModel[0].getBinGain();
-                curveSide = msModel[1].getBinGain();
+                msSpec[0][(size_t) k] = 0.5f * (spec[0][(size_t) k] + spec[1][(size_t) k]);
+                msSpec[1][(size_t) k] = 0.5f * (spec[0][(size_t) k] - spec[1][(size_t) k]);
+            }
+            double early[2] {}, late[2] {};
+            for (int n = 0; n < fftSize; ++n)
+            {
+                const float v[2] = { 0.5f * (src[0][n] + src[1][n]),
+                                     0.5f * (src[0][n] - src[1][n]) };
+                for (int c = 0; c < 2; ++c)
+                {
+                    const double w = v[c] * window[(size_t) n];
+                    (n < half ? early[c] : late[c]) += w * w;
+                }
+            }
+            for (int c = 0; c < 2; ++c)
+                msGuard[c] = (float) std::clamp (1.25 * (early[c] + 1.0e-12) / (late[c] + 1.0e-12), 0.0, 1.0);
+        }
+
+        // Transient guard: harmonics are synthesised across the whole frame, so a frame whose
+        // energy arrives mostly after its centre would smear them ahead of the onset (pre-echo,
+        // which hearing does not mask). Such frames write proportionally less; frames centred
+        // after the onset write in full, where post-masking covers the spread.
+        const double guardRatio = (earlyEnergy + 1.0e-12) / (lateEnergy + 1.0e-12);
+        fw.heatGuard = (float) std::clamp (guardRatio * 1.25, 0.0, 1.0);
+        lastHeatGuard = fw.heatGuard;
+        return;
+    }
+
+    if (s == 1)
+    {
+        // 1. The sidechain key and the model (in Mid/Side also the Mid component's).
+        // Sidechain key: only transformed when a sidechain mode is on or a reference is being learned
+        // from it (no cost otherwise).
+        const bool learning = current.refMode == refLearn;
+        fw.keyPtr = nullptr;
+        fw.keyHasSignal = false;
+        double keyTotal = 0.0;
+        if (current.scMode != 0 || learning)
+        {
+            float* k = keySpec.data();
+            for (int i = 0; i < fftSize; ++i)
+            {
+                const int n = (i + half) & mask;
+                k[i] = srcKey[n] * window[(size_t) n];
+            }
+            fft.forward (k);
+            const float keyScale = ampScale * ampScale;
+            double total = 0.0;
+            for (int b = 0; b < numBins; ++b)
+            {
+                keyPower[(size_t) b] = (k[2 * b] * k[2 * b] + k[2 * b + 1] * k[2 * b + 1]) * keyScale;
+                total += keyPower[(size_t) b];
+            }
+            fw.keyHasSignal = total > 1.0e-12;
+            keyTotal = total;
+            if (current.scMode != 0)
+                fw.keyPtr = keyPower.data();
+        }
+
+        // 4.0 Learn key: the key's long-term spectrum, from every frame in which it plays (above
+        // -90 dBFS). A new learn starts with the first such frame after Learn key is chosen, so choosing
+        // it with nothing routed keeps the reference there was.
+        auto publishLearned = [this]
+        {
+            model.getLearnedCurve (learnScratch);
+            learnScratch.epoch = refEpoch;
+            applyReference (learnScratch);   // Match uses it as soon as it is chosen
+            if (learnOut != nullptr)
+            {
+                learnOut->beginWrite() = learnScratch;
+                learnOut->endWrite();
+            }
+        };
+        if (! learning)
+        {
+            if (! learnFresh && ! learnHeld && model.getLearnedFrames() > 0)
+                publishLearned();   // the frames since the last publish
+            learnFresh = true;
+            learnHeld = false;
+        }
+        else if (! learnHeld && keyTotal > 1.0e-9)
+        {
+            if (learnFresh)
+            {
+                model.clearLearned();
+                learnFresh = false;
+                learnTick = 0;
+            }
+            model.learnKey (keyPower.data());
+            if (learnTick-- <= 0)   // about four times a second
+            {
+                learnTick = std::max (1, (int) (framesPerSecond / 4.0f));
+                publishLearned();
             }
         }
-    }
-    else
-    {
-    const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
-    float* harmPtrs[maxChannels] = { harm[0].data(), harm[1].data() };
-    HeatSettings hs;
-    hs.heat = current.heat;
-    hs.color = current.color;
-    hs.flavour = current.flavour;
-    // 5.1.1: fully in Mid/Side, processMidSide replaces the linked harmonics with the Mid and Side
-    // ones, so the linked synth (stateless from frame to frame) has nothing to add and is skipped.
-    if (msBlend < 1.0f)
-    {
-        synth.process (specPtrs, channels, power.data(), model.getBinNeed(), hs, harmPtrs, harmPower.data());
-        lastPeakCount = synth.getLastPeakCount();
-    }
-    else
-    {
-        for (int c = 0; c < channels; ++c)
-            std::fill (harm[c].begin(), harm[c].end(), 0.0f);
-        lastPeakCount = 0;
-    }
-
-    // Main path gets the auto-EQ; harmonics go to their own stream (gated in process()).
-    harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && lastPeakCount > 0;
-    const float* g = model.getBinGain();
-    std::fill (outPower.begin(), outPower.end(), 0.0f);
-    for (int c = 0; c < channels; ++c)
-    {
-        float* s = spec[c].data();
-        float* hs2 = harmSpec[c].data();
-        const float* h = harm[c].data();
         for (int k = 0; k < numBins; ++k)
         {
-            s[2 * k]     *= g[k];
-            s[2 * k + 1] *= g[k];
-            const float hr = heatGuard * h[2 * k], hi = heatGuard * h[2 * k + 1];
-            hs2[2 * k]     = hr;
-            hs2[2 * k + 1] = hi;
-            const float yr = s[2 * k] + hr, yi = s[2 * k + 1] + hi;
-            outPower[(size_t) k] += (yr * yr + yi * yi) * powScale;
+            float sum = 0.0f;
+            for (int c = 0; c < channels; ++c)
+                sum += spec[c][(size_t) 2 * k] * spec[c][(size_t) 2 * k] + spec[c][(size_t) 2 * k + 1] * spec[c][(size_t) 2 * k + 1];
+            power[(size_t) k] = sum * powScale;
         }
-    }
-    if (heatGuard < 1.0f)
-        for (auto& hp : harmPower)
-            hp *= heatGuard * heatGuard;
 
-    if (msActive)
-    {
-        processMidSide (ms, msBlend, keyPtr);
-        harmonicsWritten = harmonicsWritten || lastPeakCount > 0;
-    }
+        ModelSettings& ms = fw.settings;
+        ms = {};
+        ms.reveal = current.reveal;
+        ms.smooth = current.smooth;
+        ms.tiltDbPerOct = current.tiltDbPerOct;
+        ms.responseMs = current.responseMs;
+        ms.rangeLoHz = current.rangeLoHz;
+        ms.rangeHiHz = current.rangeHiHz;
+        ms.focus = current.focus;
+        ms.guard = current.guard;
+        ms.freeze = current.freeze;
+        ms.scMode = current.scMode;
+        ms.scAmount = current.scAmount;
+        ms.refMode = current.refMode;
+        ms.refAmount = current.refAmount;
+        ms.punch = current.punch;
+        model.analyse (power.data(), ms, framesPerSecond, fw.keyPtr);
+        if (msActive)
+            analyseMidSide (0);   // needs only the linked model's match curve, made just above
+        return;
     }
 
+    if (s == 2)
     {
+        // 2. The curve on the spectra, the harmonics, the Side component and the blend; the display.
+        fw.harmonicsWritten = false;
+        if (analysisOnly)
+        {
+            // 5.1 zero latency: the curve and the display, nothing resynthesised.
+            const float* g = model.getBinGain();
+            std::fill (outPower.begin(), outPower.end(), 0.0f);
+            std::fill (harmPower.begin(), harmPower.end(), 0.0f);
+            for (int c = 0; c < channels; ++c)
+                for (int k = 0; k < numBins; ++k)
+                {
+                    const float yr = spec[c][(size_t) 2 * k] * g[k], yi = spec[c][(size_t) 2 * k + 1] * g[k];
+                    outPower[(size_t) k] += (yr * yr + yi * yi) * powScale;
+                }
+            curveMid = curveSide = g;
+            if (msActive)
+            {
+                analyseMidSide (1);   // Mid and Side analysed (no harmonics: Heat is 0 here)
+                blendMidSide (fw.msBlend);
+                if (fw.msBlend >= 0.5f)
+                {
+                    curveMid = msModel[0].getBinGain();
+                    curveSide = msModel[1].getBinGain();
+                }
+            }
+        }
+        else
+        {
+            const float* specPtrs[maxChannels] = { spec[0].data(), spec[1].data() };
+            float* harmPtrs[maxChannels] = { harm[0].data(), harm[1].data() };
+            HeatSettings hs;
+            hs.heat = current.heat;
+            hs.color = current.color;
+            hs.flavour = current.flavour;
+            // 5.1.1: fully in Mid/Side, the blend replaces the linked harmonics with the Mid and Side
+            // ones, so the linked synth (stateless from frame to frame) has nothing to add and is skipped.
+            if (fw.msBlend < 1.0f)
+            {
+                synth.process (specPtrs, channels, power.data(), model.getBinNeed(), hs, harmPtrs, harmPower.data());
+                lastPeakCount = synth.getLastPeakCount();
+            }
+            else
+            {
+                for (int c = 0; c < channels; ++c)
+                    std::fill (harm[c].begin(), harm[c].end(), 0.0f);
+                lastPeakCount = 0;
+            }
+
+            // Main path gets the auto-EQ; harmonics go to their own stream (gated in process()).
+            const float heatGuard = fw.heatGuard;
+            fw.harmonicsWritten = current.heat > 1.0e-4f && heatGuard > 0.0f && lastPeakCount > 0;
+            const float* g = model.getBinGain();
+            std::fill (outPower.begin(), outPower.end(), 0.0f);
+            for (int c = 0; c < channels; ++c)
+            {
+                float* sp = spec[c].data();
+                float* hs2 = harmSpec[c].data();
+                const float* h = harm[c].data();
+                for (int k = 0; k < numBins; ++k)
+                {
+                    sp[2 * k]     *= g[k];
+                    sp[2 * k + 1] *= g[k];
+                    const float hr = heatGuard * h[2 * k], hi = heatGuard * h[2 * k + 1];
+                    hs2[2 * k]     = hr;
+                    hs2[2 * k + 1] = hi;
+                    const float yr = sp[2 * k] + hr, yi = sp[2 * k + 1] + hi;
+                    outPower[(size_t) k] += (yr * yr + yi * yi) * powScale;
+                }
+            }
+            if (heatGuard < 1.0f)
+                for (auto& hp : harmPower)
+                    hp *= heatGuard * heatGuard;
+
+            if (msActive)
+            {
+                analyseMidSide (1);
+                blendMidSide (fw.msBlend);
+                fw.harmonicsWritten = fw.harmonicsWritten || lastPeakCount > 0;
+            }
+        }
+
         DisplayFrame& f = displayOut->beginWrite();
         f.z0 = model.getZ0();
         f.dz = model.getDz();
@@ -491,7 +585,7 @@ void SpectralEngine::processFrame() noexcept
         f.liftDb = model.getMaxLiftDb();
         f.cutDb = model.getMaxCutDb();
         f.midSide = msActive;
-        f.keyActive = keyHasSignal;
+        f.keyActive = fw.keyHasSignal;
         f.scDb = msActive ? (std::abs (msModel[0].getSidechainPeakDb()) > std::abs (msModel[1].getSidechainPeakDb())
                                  ? msModel[0].getSidechainPeakDb() : msModel[1].getSidechainPeakDb())
                           : model.getSidechainPeakDb();
@@ -507,7 +601,7 @@ void SpectralEngine::processFrame() noexcept
                              : model.getPunchPeakDb();
         if (f.attacks)
             std::copy (model.getBandPunch(), model.getBandPunch() + DisplayFrame::numBands, f.transient);
-        if (keyHasSignal)
+        if (fw.keyHasSignal)
             model.bandLevelsDb (keyPower.data(), f.keyDb);
         if (msActive)
         {
@@ -534,105 +628,85 @@ void SpectralEngine::processFrame() noexcept
                 f.sideGainDb[b] = msModel[1].getBandGainDb()[b];
             }
         displayOut->endWrite();
-    }
-
-    if (analysisOnly)
-    {
-        for (int c = 0; c < channels; ++c)
-            std::memmove (inFifo[c].data(), inFifo[c].data() + hop, sizeof (float) * (size_t) (fftSize - hop));
-        std::memmove (keyFifo.data(), keyFifo.data() + hop, sizeof (float) * (size_t) (fftSize - hop));
         return;
     }
+
+    // 3. Resynthesis of what is heard into the overlap-add (commitOutput() sends it out at the hop).
+    if (analysisOnly)
+        return;
 
     // Listen modes change only what is heard; the display above shows the full processing.
     if (current.listen != listenOff)
     {
-        applyListen (msBlend);
-        if (listenEq)
-            harmonicsWritten = false;   // the harmonic stream's overlap-add tail just fades out
+        applyListen (fw.msBlend);
+        if (fw.listenEq)
+            fw.harmonicsWritten = false;   // the harmonic stream's overlap-add tail just fades out
     }
 
     // 5.0 Width and Mono bass shape the stereo image of what is heard. Width 100 % with Mono bass
     // off skips this entirely, so the sound is exactly as before.
     if (channels == 2 && (std::abs (current.width - 1.0f) > 1.0e-4f || current.monoHz >= 20.0f))
-        applyWidth (harmonicsWritten);
+        applyWidth (fw.harmonicsWritten);
 
-    auto synthesise =[this, half, mask] (float* s, float* acc, float* fifo)
+    auto synthesise = [this, half, mask] (float* sp, float* acc)
     {
-        fft.inverse (s);   // scaled by 1/N, like JUCE's; reads bins 0..N/2 only
+        fft.inverse (sp);   // scaled by 1/N, like JUCE's; reads bins 0..N/2 only
         for (int i = 0; i < fftSize; ++i)
         {
             const int n = (i + half) & mask;
-            acc[n] += s[i] * window[(size_t) n] * olaGain[(size_t) n];   // a sample at n leaves at n % hop
+            acc[n] += sp[i] * window[(size_t) n] * olaGain[(size_t) n];   // a sample at n leaves at n % hop
         }
-        std::memcpy (fifo, acc, sizeof (float) * (size_t) hop);
-        std::memmove (acc, acc + hop, sizeof (float) * (size_t) (fftSize - hop));
-        std::memset (acc + (fftSize - hop), 0, sizeof (float) * (size_t) hop);
     };
-
     for (int c = 0; c < channels; ++c)
     {
-        synthesise (spec[c].data(), outAcc[c].data(), outFifo[c].data());
-
-        if (harmonicsWritten)
-        {
-            synthesise (harmSpec[c].data(), harmAcc[c].data(), harmFifo[c].data());
-        }
-        else
-        {
-            // Nothing new to add: just advance the overlap-add tail of earlier frames.
-            float* acc = harmAcc[c].data();
-            std::memcpy (harmFifo[c].data(), acc, sizeof (float) * (size_t) hop);
-            std::memmove (acc, acc + hop, sizeof (float) * (size_t) (fftSize - hop));
-            std::memset (acc + (fftSize - hop), 0, sizeof (float) * (size_t) hop);
-        }
-
-        float* in = inFifo[c].data();
-        std::memmove (in, in + hop, sizeof (float) * (size_t) (fftSize - hop));
+        synthesise (spec[c].data(), outAcc[c].data());
+        if (fw.harmonicsWritten)
+            synthesise (harmSpec[c].data(), harmAcc[c].data());
     }
-    std::memmove (keyFifo.data(), keyFifo.data() + hop, sizeof (float) * (size_t) (fftSize - hop));
 }
 
-void SpectralEngine::processMidSide (const ModelSettings& settings, float blend, const float* keyPtr) noexcept
+void SpectralEngine::analyseMidSide (int c) noexcept
 {
     const float scale = 4.0f / (float) fftSize;
-    for (int c = 0; c < 2; ++c)
+    for (int k = 0; k < numBins; ++k)
     {
-        for (int k = 0; k < numBins; ++k)
-        {
-            const float re = msSpec[c][(size_t) 2 * k], im = msSpec[c][(size_t) 2 * k + 1];
-            msPower[c][(size_t) k] = (re * re + im * im) * scale * scale;
-        }
-        auto ms = settings;
-        const float eqAmount = c == 0 ? current.eqMid : current.eqSide;
-        ms.reveal *= eqAmount;
-        ms.smooth *= eqAmount;
-        ms.tiltDbPerOct *= eqAmount;
-        ms.punch *= eqAmount;
-        // Reference match: the stereo (linked) match curve, applied to each routed component.
-        ms.refMode = refOff;
-        if (model.isMatching())
-        {
-            ms.matchDb = model.getMatchDb();
-            ms.matchScale = eqAmount;
-        }
-        msModel[c].analyse (msPower[c].data(), ms, framesPerSecond, keyPtr);
-
-        const float* in[] = { msSpec[c].data() };
-        float* out[] = { msHarm[c].data() };
-        HeatSettings hs;
-        hs.heat = current.heat * (c == 0 ? current.heatMid : current.heatSide);
-        hs.color = current.color;
-        hs.flavour = current.flavour;
-        msSynth[c].process (in, 1, msPower[c].data(), msModel[c].getBinNeed(), hs, out, msHarmPower[c].data());
-        const auto* gain = msModel[c].getBinGain();
-        for (int k = 0; k < numBins; ++k)
-            for (int ri = 0; ri < 2; ++ri)
-            {
-                msSpec[c][(size_t) (2 * k + ri)] *= gain[k];
-                msHarm[c][(size_t) (2 * k + ri)] *= msGuard[c];
-            }
+        const float re = msSpec[c][(size_t) 2 * k], im = msSpec[c][(size_t) 2 * k + 1];
+        msPower[c][(size_t) k] = (re * re + im * im) * scale * scale;
     }
+    auto ms = fw.settings;
+    const float eqAmount = c == 0 ? current.eqMid : current.eqSide;
+    ms.reveal *= eqAmount;
+    ms.smooth *= eqAmount;
+    ms.tiltDbPerOct *= eqAmount;
+    ms.punch *= eqAmount;
+    // Reference match: the stereo (linked) match curve, applied to each routed component.
+    ms.refMode = refOff;
+    if (model.isMatching())
+    {
+        ms.matchDb = model.getMatchDb();
+        ms.matchScale = eqAmount;
+    }
+    msModel[c].analyse (msPower[c].data(), ms, framesPerSecond, fw.keyPtr);
+
+    const float* in[] = { msSpec[c].data() };
+    float* out[] = { msHarm[c].data() };
+    HeatSettings hs;
+    hs.heat = current.heat * (c == 0 ? current.heatMid : current.heatSide);
+    hs.color = current.color;
+    hs.flavour = current.flavour;
+    msSynth[c].process (in, 1, msPower[c].data(), msModel[c].getBinNeed(), hs, out, msHarmPower[c].data());
+    const auto* gain = msModel[c].getBinGain();
+    for (int k = 0; k < numBins; ++k)
+        for (int ri = 0; ri < 2; ++ri)
+        {
+            msSpec[c][(size_t) (2 * k + ri)] *= gain[k];
+            msHarm[c][(size_t) (2 * k + ri)] *= msGuard[c];
+        }
+}
+
+void SpectralEngine::blendMidSide (float blend) noexcept
+{
+    const float scale = 4.0f / (float) fftSize;
     lastPeakCount = msSynth[0].getLastPeakCount() + msSynth[1].getLastPeakCount();
     for (int k = 0; k < numBins; ++k)
     {

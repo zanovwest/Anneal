@@ -77,6 +77,8 @@ public:
     double getLatencyMsForMode (int latencyMode) const noexcept;
     int getLatencyMode() const noexcept { return mode; }
     bool isZeroLatency() const noexcept { return zero; }   // 5.1
+    bool isSpread() const noexcept { return spread; }      // 5.2.1: Spread load applied (it rests at zero latency)
+    double getSpreadMs() const noexcept;                    // what Spread load adds in the current mode
 
     // Applies the Latency parameter now if it differs from the mode in use (message thread; the
     // processor's own timer does this within 100 ms of a change). Pauses processing for the
@@ -134,6 +136,8 @@ private:
     void timerCallback() override;
     int requestedLatencyMode() const noexcept;
     bool requestedZeroLatency() const noexcept { return pZero != nullptr && pZero->load() > 0.5f; }
+    bool requestedSpread() const noexcept { return pSpread != nullptr && pSpread->load() > 0.5f; }
+    void applySpreadToEngines() noexcept;
     // 5.1 Zero latency: nothing at all (no STFT, no look-ahead).
     int totalLatency() noexcept { return zero ? 0 : getEngine().getLatencySamples() + limiter.getLatency(); }
 
@@ -169,6 +173,7 @@ private:
     anneal::TripleBuffer<anneal::DisplayFrame> display;   // shared by the engines
     int mode = anneal::SpectralEngine::low;              // changed only while processing is suspended
     bool zero = false;                                   // 5.1 Zero latency (mode is then Low, analysis only)
+    bool spread = false;                                 // 5.2.1 Spread load (the engines rest it while analysis only)
     anneal::ZeroLatencyFilter zeroFilter;
     float zeroWidth = 1.0f, zeroMonoHz = 0.0f;
     anneal::LoudnessMatch match;
@@ -221,6 +226,7 @@ private:
     std::atomic<float>* pPunch = nullptr;      // 5.0
     std::atomic<float>* pWidth = nullptr;
     std::atomic<float>* pMonoBass = nullptr;
+    std::atomic<float>* pSpread = nullptr;     // 5.2.1
 
     // 5.0 user presets
     juce::File userFolder { anneal::presets::defaultUserFolder() };

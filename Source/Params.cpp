@@ -287,6 +287,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::zeroLatency, 1 }, "Zero Latency", false,
         juce::AudioParameterBoolAttributes().withAutomatable (false)));
 
+    // 5.2.1 Spread load: each frame's work is spread over the next hop instead of landing in one host
+    // block, for even CPU at small buffers; one hop more latency (3.3 ms). Not automatable (latency);
+    // off, as before, for older projects.
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::spread, 1 }, "Spread Load", false,
+        juce::AudioParameterBoolAttributes().withAutomatable (false)));
+
     return layout;
 }
 }

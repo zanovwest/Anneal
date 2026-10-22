@@ -13,8 +13,8 @@ namespace
 }
 
 LatencyMenu::LatencyMenu (juce::AudioProcessorValueTreeState& state, std::function<double (int)> ms,
-                          std::function<double()> applied)
-    : msForMode (std::move (ms)), appliedMs (std::move (applied))
+                          std::function<double()> applied, std::function<double()> spreadExtra)
+    : msForMode (std::move (ms)), appliedMs (std::move (applied)), spreadMs (std::move (spreadExtra))
 {
     param = state.getParameter (ids::latency);
     attachment = std::make_unique<juce::ParameterAttachment> (*param, [this] (float v)
@@ -32,8 +32,18 @@ LatencyMenu::LatencyMenu (juce::AudioProcessorValueTreeState& state, std::functi
         }, state.undoManager);
         zeroAttachment->sendInitialUpdate();
     }
+    if (auto* sp = state.getParameter (ids::spread))
+    {
+        spreadAttachment = std::make_unique<juce::ParameterAttachment> (*sp, [this] (float v)
+        {
+            spread = v > 0.5f;
+            repaint();
+        }, state.undoManager);
+        spreadAttachment->sendInitialUpdate();
+    }
     setTooltip ("Latency: Zero for no delay at all (Heat, Punch and the Listen solos rest), Low for tracking and "
-                "playing live, Precise for the finest bass detail (the host re-aligns tracks when it changes)");
+                "playing live, Precise for the finest bass detail. Spread load evens out the CPU at small buffers "
+                "for one update step more (3.3 ms). The host re-aligns tracks when the latency changes");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
@@ -89,6 +99,15 @@ void LatencyMenu::mouseDown (const juce::MouseEvent&)
             text << "   (" << modeNotes[m] << ")";
         menu.addItem (m + 1, text, true, ! zero && m == choice);
     }
+    // 5.2.1: a switch on top of the mode: each update's work spread over the next step, one step later.
+    if (spreadAttachment != nullptr)
+    {
+        menu.addSeparator();
+        juce::String text ("Spread load   +");
+        text << juce::String (spreadMs ? spreadMs() : 0.0, 1) << " ms   (even CPU at small buffers"
+             << (zero ? "; rests at Zero)" : ")");
+        menu.addItem (5, text, true, spread);
+    }
 
     juce::Component::SafePointer<LatencyMenu> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withStandardItemHeight (24),
@@ -99,6 +118,11 @@ void LatencyMenu::mouseDown (const juce::MouseEvent&)
                             if (result == 4)
                             {
                                 safe->zeroAttachment->setValueAsCompleteGesture (1.0f);
+                                return;
+                            }
+                            if (result == 5)
+                            {
+                                safe->spreadAttachment->setValueAsCompleteGesture (safe->spread ? 0.0f : 1.0f);
                                 return;
                             }
                             if (safe->zero && safe->zeroAttachment != nullptr)

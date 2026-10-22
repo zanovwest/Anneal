@@ -1746,7 +1746,7 @@ void benchmark()
     // The single slowest block mostly measures Windows pre-empting this test, not Anneal: the
     // percentiles (and running at high priority, as DAW audio threads do) show the real cost.
     juce::Process::setPriority (juce::Process::HighPriority);
-    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; int shape = 0; int zero = 0; };
+    struct Case { double fs; int block; int mode; int midSide = 0; int flavour = 0; int matchPaint = 0; int shape = 0; int zero = 0; int spread = 0; };
     const char* modeNames[] = { "Low", "Normal", "Precise" };
 
     // 4.0: Reference Match at 100 % (a pink-noise reference) with EQ and Heat paint.
@@ -1765,7 +1765,7 @@ void benchmark()
         somePaint.heat[i + 10] = 0.25f;
     }
 
-    for (auto [fs, block, mode, midSide, flavour, matchPaint, shape, zero] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
+    for (auto [fs, block, mode, midSide, flavour, matchPaint, shape, zero, spread] : { Case { 48000.0, 64, 0 }, Case { 48000.0, 128, 0 }, Case { 48000.0, 512, 0 },
                                     Case { 48000.0, 512, 1 }, Case { 48000.0, 64, 2 }, Case { 48000.0, 512, 2 },
                                     Case { 96000.0, 512, 0 }, Case { 48000.0, 64, 0, 1 },
                                     Case { 48000.0, 512, 1, 1 }, Case { 48000.0, 64, 2, 1 },
@@ -1773,7 +1773,11 @@ void benchmark()
                                     Case { 48000.0, 64, 0, 0, 0, 1 }, Case { 48000.0, 512, 1, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 1 },
                                     Case { 48000.0, 64, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 1 },
                                     Case { 48000.0, 64, 0, 0, 0, 0, 0, 1 }, Case { 48000.0, 512, 0, 0, 0, 0, 0, 1 },
-                                    Case { 48000.0, 64, 0, 1, 0, 0, 0, 1 } })
+                                    Case { 48000.0, 64, 0, 1, 0, 0, 0, 1 },
+                                    // 5.2.1 Spread load, against the same cases without it above (and at 32)
+                                    Case { 48000.0, 64, 0, 0, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 0, 0, 1 },
+                                    Case { 48000.0, 64, 2, 1, 0, 0, 0, 0, 1 }, Case { 48000.0, 32, 2, 1 },
+                                    Case { 48000.0, 32, 2, 1, 0, 0, 0, 0, 1 } })
     {
         Rig r;   // default settings: Reveal 40, Smooth 40, Heat 30
         r.set (ids::latency, (float) mode);
@@ -1788,6 +1792,8 @@ void benchmark()
         }
         if (zero)    // 5.1: Zero latency
             r.set (ids::zeroLatency, 1.0f);
+        if (spread)  // 5.2.1: Spread load
+            r.set (ids::spread, 1.0f);
         if (shape)   // 5.0: Punch, Width and Mono bass all working
         {
             r.set (ids::punch, 50.0f);
@@ -1819,7 +1825,7 @@ void benchmark()
         auto pct = [&times] (double q) { return times[(size_t) std::min ((double) times.size() - 1, q * (double) times.size())]; };
         const double audio = n / fs, deadline = block / fs;
         auto ms = [deadline] (double t) { return juce::String (t * 1000.0, 3) + " ms (" + juce::String (juce::roundToInt (100.0 * t / deadline)) + " %)"; };
-        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + (shape ? "Shape " : "") + (zero ? "Zero latency " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
+        info (juce::String (modeNames[mode]) + (midSide ? " M/S " : " Stereo ") + (flavour ? "Tape " : "") + (matchPaint ? "Match+Paint " : "") + (shape ? "Shape " : "") + (zero ? "Zero latency " : "") + (spread ? "Spread " : "") + juce::String (fs / 1000.0, 0) + " kHz / " + juce::String (block) + ": CPU " + juce::String (100.0 * total / audio, 2)
               + " % of one core; deadline " + juce::String (deadline * 1000.0, 3) + " ms; p99 " + ms (pct (0.99))
               + ", p99.9 " + ms (pct (0.999)) + ", max " + ms (times.back()) + " at block " + juce::String (slowestBlock));
         juce::String f8;
@@ -3864,6 +3870,245 @@ void testUpdateRate52()
     }
 }
 
+// 5.2.1: Spread load. Each frame's work runs in stages through the next hop instead of all in the
+// block where its hop ends; one hop more latency, the same output.
+void testSpread521()
+{
+    section ("40. 5.2.1 Spread load");
+    const double fs = 48000.0;
+    namespace se = anneal;
+
+    // The engine with Spread is the engine without it one hop later, sample for sample: neutral, the
+    // auto EQ with Heat, and Mid/Side with Guard, Punch, Width, Mono bass and a sidechain key. Spread
+    // runs in random blocks of 1 to 700 samples (several stages and hops in one block, or none).
+    {
+        const auto music = testsig::musicLike (fs, 1.5, 7);
+        const auto keySig = testsig::musicLike (fs, 1.5, 19);
+        const int n = (int) music[0].size();
+        double worst = 0.0, worstHead = 0.0;
+        bool moved = true;
+        for (int mode = 0; mode < se::SpectralEngine::numModes; ++mode)
+            for (int variant = 0; variant < 3; ++variant)
+            {
+                auto p = neutral();
+                if (variant >= 1)
+                {
+                    p.reveal = 0.6f; p.smooth = 0.6f; p.heat = 0.5f;
+                }
+                if (variant == 2)
+                {
+                    p.midSide = 1.0f; p.guard = 1.0f; p.punch = 0.5f; p.width = 1.5f; p.monoHz = 120.0f;
+                    p.scMode = se::scMakeRoom; p.scAmount = 1.0f;
+                }
+                Channels outs[2];
+                int hop = 0, latency = 0;
+                for (int sp = 0; sp < 2; ++sp)
+                {
+                    se::SpectralEngine e;
+                    e.prepare (fs, 2, mode);
+                    e.setSpread (sp == 1);
+                    e.reset();
+                    e.setParameters (p);
+                    hop = e.getHopSize();
+                    if (sp == 0)
+                        latency = e.getLatencySamples();
+                    const auto next = sp == 1 ? randomBlocks (1, 700, (unsigned) (10 * mode + variant)) : fixedBlocks (512);
+                    Channels out = music;
+                    for (int pos = 0; pos < n;)
+                    {
+                        const int b = std::min (next(), n - pos);
+                        float* io[2] = { out[0].data() + pos, out[1].data() + pos };
+                        const float* k[2] = { keySig[0].data() + pos, keySig[1].data() + pos };
+                        e.process (io, 2, b, variant == 2 ? k : nullptr, variant == 2 ? 2 : 0);
+                        pos += b;
+                    }
+                    outs[sp] = std::move (out);
+                }
+                for (size_t c = 0; c < 2; ++c)
+                {
+                    for (size_t i = 0; i + (size_t) hop < (size_t) n; ++i)
+                        worst = std::max (worst, (double) std::abs (outs[1][c][i + (size_t) hop] - outs[0][c][i]));
+                    for (size_t i = 0; i < (size_t) hop; ++i)
+                        worstHead = std::max (worstHead, (double) std::abs (outs[1][c][i]));
+                }
+                if (variant > 0)
+                    moved = moved && delayedError (outs[0], music, latency) > 0.01;   // the processing really works
+            }
+        check (worst < 1.0e-6 && worstHead < 1.0e-6 && moved, "Spread = the same output one hop later, every mode",
+               "neutral, EQ + Heat, Mid/Side + Guard + Punch + Width + Mono bass + key; largest difference "
+               + juce::String (worst, 9) + ", first hop " + juce::String (worstHead, 9));
+    }
+
+    // No small block carries a whole frame: at 32 samples (stages 40 apart in a 160-sample hop) a block
+    // runs at most one of the four stages, at 64 at most two. Without Spread one block runs all four.
+    {
+        juce::String log;
+        bool ok = true;
+        for (int mode : { 0, 2 })
+        {
+            int most[3] {};   // off at 32, on at 32, on at 64
+            for (int k = 0; k < 3; ++k)
+            {
+                se::SpectralEngine e;
+                e.prepare (fs, 2, mode);
+                e.setSpread (k > 0);
+                e.reset();
+                auto p = neutral();
+                p.reveal = 0.4f; p.smooth = 0.4f; p.heat = 0.3f;
+                e.setParameters (p);
+                const int block = k == 2 ? 64 : 32;
+                auto x = testsig::musicLike (fs, 0.5, 3);
+                for (int pos = 0; pos + block <= (int) x[0].size(); pos += block)
+                {
+                    float* io[2] = { x[0].data() + pos, x[1].data() + pos };
+                    e.process (io, 2, block);
+                    most[k] = std::max (most[k], e.getStagesInLastCall());
+                }
+            }
+            ok = ok && most[0] == se::SpectralEngine::numStages && most[1] == 1 && most[2] == 2;
+            log << (mode == 0 ? "Low" : "Precise") << ": off " << most[0] << ", on at 32 " << most[1] << ", on at 64 " << most[2] << "  ";
+        }
+        check (ok, "Spread: a 32-sample block runs at most 1 of a frame's 4 stages", log + "(stages in one block, at most)");
+    }
+
+    // The engine's latency is one hop more and an impulse comes out there; analysis only (zero
+    // latency) rests it.
+    {
+        se::SpectralEngine e;
+        e.prepare (fs, 2, se::SpectralEngine::low);
+        e.setSpread (true);
+        e.reset();
+        e.setParameters (neutral());
+        auto imp = testsig::silence (2, 8000);
+        imp[0][1000] = imp[1][1000] = 1.0f;
+        const auto out = runEngine (e, imp, fixedBlocks (64));
+        const int lat = e.getLatencySamples(), at = peakIndex (out);
+        e.setAnalysisOnly (true);
+        const int resting = e.getLatencySamples();
+        e.setAnalysisOnly (false);
+        check (lat == 1024 + 160 && at == 1000 + lat && std::abs (out[0][(size_t) at] - 1.0f) < 1.0e-4f && resting == 1024,
+               "engine: Spread reports N + hop, the impulse arrives there", "latency " + juce::String (lat) + ", impulse +"
+                   + juce::String (at - 1000) + "; analysis only " + juce::String (resting));
+    }
+
+    // Through the processor, default sound (Reveal, Smooth, Heat), 64-sample blocks: one hop more in
+    // every mode, the output otherwise the same.
+    {
+        const auto music = testsig::musicLike (fs, 2.0, 5);
+        bool ok = true;
+        double worst = 0.0;
+        juce::String log;
+        for (int mode = 0; mode < se::SpectralEngine::numModes; ++mode)
+        {
+            Channels outs[2];
+            int lat[2] {};
+            for (int sp = 0; sp < 2; ++sp)
+            {
+                Rig r;
+                r.set (ids::match, 0.0f);
+                r.set (ids::latency, (float) mode);
+                r.set (ids::spread, (float) sp);
+                r.prepare (fs, 64);
+                outs[sp] = r.run (music, fixedBlocks (64));
+                lat[sp] = r.proc->getLatencySamples();
+            }
+            const int hop = se::SpectralEngine::hopFor (fs, se::SpectralEngine::fftSizeFor (fs, mode));
+            for (size_t c = 0; c < 2; ++c)
+                for (size_t i = 0; i + (size_t) hop < music[0].size(); ++i)
+                    worst = std::max (worst, (double) std::abs (outs[1][c][i + (size_t) hop] - outs[0][c][i]));
+            ok = ok && lat[1] == lat[0] + hop;
+            log << juce::String (1000.0 * lat[0] / fs, 1) << " -> " << juce::String (1000.0 * lat[1] / fs, 1) << " ms  ";
+        }
+        check (ok && worst < 1.0e-6, "processor: Spread adds one hop in each mode, same sound",
+               log + "largest difference " + juce::String (worst, 9));
+    }
+
+    // Wet (Mix 100 %) and dry (Mix 0 %) arrive at the reported latency; at zero latency Spread rests.
+    {
+        auto imp = testsig::silence (2, 16384);
+        imp[0][1000] = imp[1][1000] = 1.0f;
+        bool ok = true;
+        juce::String log;
+        for (float mix : { 100.0f, 0.0f })
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::mix, mix);
+            r.set (ids::spread, 1.0f);
+            r.prepare (fs, 64);
+            const auto out = r.run (imp, fixedBlocks (64));
+            const int lat = r.proc->getLatencySamples(), at = peakIndex (out);
+            ok = ok && r.proc->isSpread() && lat == 1024 + 160 + r.proc->getCeilingLatency() && at == 1000 + lat
+                    && std::abs (out[0][(size_t) at] - 1.0f) < 1.0e-4f;
+            log << "Mix " << juce::String (mix, 0) << " %: latency " << lat << ", impulse +" << (at - 1000) << "  ";
+        }
+        Rig z;
+        z.setNeutral();
+        z.set (ids::spread, 1.0f);
+        z.set (ids::zeroLatency, 1.0f);
+        z.prepare (fs, 64);
+        const auto zout = z.run (imp, fixedBlocks (64));
+        ok = ok && z.proc->getLatencySamples() == 0 && peakIndex (zout) == 1000 && z.proc->getLatencyMs() == 0.0;
+        log << "Zero: latency " << z.proc->getLatencySamples() << ", impulse +" << (peakIndex (zout) - 1000);
+        check (ok, "Spread: wet and dry aligned at N + hop + look-ahead; rests at Zero", log);
+    }
+
+    // Switching Spread, the modes and Zero while playing (Mid/Side in one step): right latency, clean.
+    {
+        Rig r;
+        r.prepare (fs, 256);
+        const auto music = testsig::musicLike (fs, 1.0);
+        juce::String log;
+        bool ok = true;
+        struct Step { int spread, mode, zero; };
+        const Step steps[] = { { 1, 0, 0 }, { 0, 0, 0 }, { 1, 2, 0 }, { 1, 2, 1 }, { 1, 1, 0 }, { 0, 1, 0 }, { 1, 0, 0 } };
+        int step = 0;
+        for (auto [sp, m, z] : steps)
+        {
+            r.set (ids::spread, (float) sp);
+            r.set (ids::latency, (float) m);
+            r.set (ids::zeroLatency, (float) z);
+            r.set (ids::stereoMode, step++ == 4 ? 1.0f : 0.0f);
+            r.proc->applyLatencyModeIfChanged();
+            const auto out = r.run (music, randomBlocks (16, 1024, (unsigned) (40 + step)));
+            const int nfft = se::SpectralEngine::fftSizeFor (fs, m);
+            const int expected = z ? 0 : nfft + (sp ? se::SpectralEngine::hopFor (fs, nfft) : 0) + r.proc->getCeilingLatency();
+            ok = ok && r.proc->getLatencySamples() == expected && allFinite (out) && maxAbs (out) < 4.0;
+            log << r.proc->getLatencySamples() << " ";
+        }
+        check (ok, "switching Spread, modes and Zero while playing: right latency, clean", "latencies " + log);
+    }
+
+    // Saved with the project; projects from before 5.2.1 open with it off (their latency as made).
+    {
+        Rig a;
+        a.set (ids::spread, 1.0f);
+        juce::MemoryBlock withSpread;
+        a.proc->getStateInformation (withSpread);
+        Rig b;
+        b.prepare (fs, 512);
+        b.proc->setStateInformation (withSpread.getData(), (int) withSpread.getSize());
+        b.proc->applyLatencyModeIfChanged();
+        const bool kept = b.proc->isSpread() && b.proc->getLatencySamples() == 1024 + 160 + b.proc->getCeilingLatency();
+
+        auto xml = juce::AudioProcessor::getXmlFromBinary (withSpread.getData(), (int) withSpread.getSize());
+        if (auto* el = xml->getChildByAttribute ("id", ids::spread))
+            xml->removeChildElement (el, true);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig c;
+        c.set (ids::spread, 1.0f);
+        c.prepare (fs, 512);
+        c.proc->setStateInformation (old.getData(), (int) old.getSize());
+        c.proc->applyLatencyModeIfChanged();
+        const bool off = ! c.proc->isSpread() && c.proc->getLatencySamples() == 1024 + c.proc->getCeilingLatency();
+        auto* prm = a.proc->apvts.getParameter (ids::spread);
+        check (kept && off && prm != nullptr && ! prm->isAutomatable(), "Spread is saved; projects from before 5.2.1 open with it off",
+               juce::String ("saved: ") + (kept ? "on" : "NOT KEPT") + "; older project: " + (off ? "off" : "ON")
+                   + "; automatable: " + (prm != nullptr && prm->isAutomatable() ? "yes" : "no"));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -3921,6 +4166,7 @@ int main (int argc, char** argv)
     testZeroLatency51();
     testFastMath511();
     testUpdateRate52();
+    testSpread521();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

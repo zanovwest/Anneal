@@ -6,13 +6,13 @@
 
 namespace anneal
 {
-    // Header control for the Latency parameter: "LATENCY  21.3 ms  v". Click for Low / Normal /
-    // Precise with their actual latency at the current sample rate.
+    // Header control for the Latency parameter: "LATENCY  21.3 ms  v". Click for Zero / Low / Normal /
+    // Precise with their actual latency at the current sample rate, and the Spread load switch (5.2.1).
     class LatencyMenu : public juce::Component, public juce::SettableTooltipClient
     {
     public:
         LatencyMenu (juce::AudioProcessorValueTreeState& state, std::function<double (int)> msForMode,
-                     std::function<double()> appliedMs);
+                     std::function<double()> appliedMs, std::function<double()> spreadMs = {});
 
         void refresh();   // from the editor timer
         void paint (juce::Graphics&) override;
@@ -24,11 +24,12 @@ namespace anneal
 
     private:
         std::function<double (int)> msForMode;
-        std::function<double()> appliedMs;
+        std::function<double()> appliedMs, spreadMs;
         std::unique_ptr<juce::ParameterAttachment> attachment, zeroAttachment;   // 5.1: Zero latency
+        std::unique_ptr<juce::ParameterAttachment> spreadAttachment;             // 5.2.1: Spread load
         juce::RangedAudioParameter* param = nullptr;
         int choice = 0;
-        bool zero = false;
+        bool zero = false, spread = false;
         double shownMs = -1.0;
         bool hover = false;
     };
