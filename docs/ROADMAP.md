@@ -18,8 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-12. **Paint the width**: draw the stereo width per region on the display, like Paint does for the
-    EQ and Heat (a third lane, or a mode of the EQ lane).
 13. **Show the stereo image on the display**: the side/mid balance per band, behind the curve, so
     Width and Mono bass can be seen working.
 14. **Import and export presets**: drop an `.annealpreset` file on the preset bar to add it, and copy
@@ -57,6 +55,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.2 (2026-10-21, daily update, asked for by the user that evening: "do 2.2 cause that should be
+  todays update"): **Paint the width** (item 12): a WIDTH lane on the display between EQ and Heat that
+  shows the stereo width heard per frequency (Width, its paint, Mono bass) and takes Width's paint in
+  paint mode. Width acts by its painted share in every latency mode and at zero latency; saved in the
+  project. The EQ lane is 28 px shorter for it.
 - 5.2.1 (2026-10-21, daily update): **Spread load** (item 10), a switch in the Latency menu: each
   frame's work in four stages run through the next hop instead of in one block, for one hop more
   latency (3.3 ms). The output is the same one hop later, sample for sample; the slowest 0.1 % of

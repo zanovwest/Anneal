@@ -345,10 +345,10 @@ int main (int argc, char* argv[])
                 level = std::max (level, (double) std::abs (out[0][i]));
             }
             sideDb = testsig::toDb ((side + 1.0e-12) / (level + 1.0e-12));
-            int block = 0;
+            int sweepBlock = 0;
             shapeOk = shapeOk && run (*plugin, music, out, [&]
             {
-                const int k = block++;
+                const int k = sweepBlock++;
                 punchP->setValueNotifyingHost ((float) ((k / 3) % 5) / 4.0f);
                 widthP->setValueNotifyingHost ((float) ((k / 5) % 3) / 2.0f);
                 monoP->setValueNotifyingHost ((float) ((k / 7) % 2) * 0.4f);
@@ -595,9 +595,9 @@ int main (int argc, char* argv[])
         check (learned, "Learn key through the sidechain bus, saved", "state has reference \"" + refName + "\", stateVersion "
                    + (saved != nullptr ? juce::String (saved->getIntAttribute ("stateVersion")) : juce::String ("?")));
 
-        // The same state with Heat painted to 0 % everywhere, into new instances.
+        // The same state with Heat (and, 5.2.2, Width) painted to 0 % everywhere, into new instances.
         bool travelled = false, acts = false;
-        double soloPainted = 1.0, soloPlain = 0.0, matchMove = 0.0;
+        double soloPainted = 1.0, soloPlain = 0.0, matchMove = 0.0, sidesPainted = -300.0, sidesPlain = 0.0;
         if (learned)
         {
             auto withPaint = std::make_unique<juce::XmlElement> (*saved);
@@ -611,6 +611,7 @@ int main (int argc, char* argv[])
             paintXml->setAttribute ("points", 64);
             paintXml->setAttribute ("eq", ones.joinIntoString (" "));
             paintXml->setAttribute ("heat", zeros.joinIntoString (" "));
+            paintXml->setAttribute ("width", zeros.joinIntoString (" "));
             const auto paintedState = withAnnealState (state, *withPaint);
 
             auto painted = format.createInstanceFromDescription (desc, 48000.0, 512, error);
@@ -629,8 +630,10 @@ int main (int argc, char* argv[])
                 auto* r1 = resaved != nullptr ? resaved->getChildByName ("Reference") : nullptr;
                 auto* p1 = resaved != nullptr ? resaved->getChildByName ("Paint") : nullptr;
                 const auto heat = p1 != nullptr ? numbersOf (p1->getStringAttribute ("heat")) : std::vector<float>();
+                const auto width = p1 != nullptr ? numbersOf (p1->getStringAttribute ("width")) : std::vector<float>();
                 travelled = r1 != nullptr && r1->getStringAttribute ("db") == r0->getStringAttribute ("db")
                             && heat.size() == 64 && std::all_of (heat.begin(), heat.end(), [] (float v) { return v == 0.0f; })
+                            && width.size() == 64 && std::all_of (width.begin(), width.end(), [] (float v) { return v == 0.0f; })
                             && std::abs (findParam (*painted, "Reference")->getValue() - 1.0f) < 1.0e-4f;
 
                 // Heat 100 %, Listen: Heat only, Reference Off: the painted instance writes no harmonics.
@@ -651,9 +654,30 @@ int main (int argc, char* argv[])
                             *peak = std::max (*peak, (double) std::abs (ch[i]));
                 }
 
+                // 5.2.2: at Width 0 % the instance with Width painted out stays stereo, the other goes mono.
+                testsig::Channels wide (2, std::vector<float> (48000));
+                for (int i = 0; i < 48000; ++i)
+                {
+                    wide[0][(size_t) i] = 0.2f * (float) std::sin (6.283185307179586 * 500.0 * i / 48000.0);
+                    wide[1][(size_t) i] = 0.2f * (float) std::sin (6.283185307179586 * 700.0 * i / 48000.0);
+                }
+                for (auto [inst, sides] : { std::pair<juce::AudioPluginInstance*, double*> { painted.get(), &sidesPainted },
+                                            std::pair<juce::AudioPluginInstance*, double*> { plain.get(), &sidesPlain } })
+                {
+                    findParam (*inst, "Heat")->setValueNotifyingHost (0.0f);
+                    findParam (*inst, "Listen")->setValueNotifyingHost (0.0f);
+                    findParam (*inst, "Width")->setValueNotifyingHost (0.0f);
+                    testsig::Channels o;
+                    run (*inst, wide, o, [] { return 512; });
+                    double side = 0.0;
+                    for (size_t i = o[0].size() / 2; i < o[0].size(); ++i)
+                        side = std::max (side, (double) std::abs (o[0][i] - o[1][i]) * 0.5);
+                    *sides = testsig::toDb (side + 1.0e-15);
+                    findParam (*inst, "Width")->setValueNotifyingHost (0.5f);   // back to 100 %
+                }
+
                 // Match with the loaded reference changes the output; Off doesn't need it.
-                findParam (*plain, "Heat")->setValueNotifyingHost (0.0f);
-                findParam (*plain, "Listen")->setValueNotifyingHost (0.0f);
+                plain->reset();
                 const auto music = testsig::musicLike (48000.0, 3.0, 29);
                 testsig::Channels off, matched;
                 run (*plain, music, off, [] { return 512; });
@@ -664,7 +688,8 @@ int main (int argc, char* argv[])
                 for (size_t i = matched[0].size() / 2; i < matched[0].size(); ++i)
                     matchMove = std::max (matchMove, (double) std::abs (matched[0][i] - off[0][i]));
                 acts = testsig::toDb (soloPainted) < -90.0 && testsig::toDb (soloPlain) > -60.0
-                       && testsig::toDb (matchMove) > -40.0 && peakOf (matched) < 4.0;
+                       && testsig::toDb (matchMove) > -40.0 && peakOf (matched) < 4.0
+                       && sidesPainted > -20.0 && sidesPlain < -90.0;
                 painted->releaseResources();
                 plain->releaseResources();
             }
@@ -673,7 +698,8 @@ int main (int argc, char* argv[])
                juce::String (travelled ? "reference identical and paint kept in a new instance" : "STATE LOST")
                    + "; Heat-only at Heat 100 %: painted " + juce::String (testsig::toDb (soloPainted), 1) + " dB, unpainted "
                    + juce::String (testsig::toDb (soloPlain), 1) + " dB; Match moves the output up to "
-                   + juce::String (testsig::toDb (matchMove), 1) + " dBFS");
+                   + juce::String (testsig::toDb (matchMove), 1) + " dBFS; Width 0 %: sides "
+                   + juce::String (sidesPainted, 1) + " dBFS with Width painted out, " + juce::String (sidesPlain, 0) + " without");
     }
 
     // 6b. Factory presets as host programs: listed, selectable, and a saved project keeps both its

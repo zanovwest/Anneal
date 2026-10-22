@@ -4,6 +4,48 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.2 — 2026-10-21 21:06
+
+New
+- **Paint the width.** Width (SHAPE) used to act on the whole spectrum. Now you can paint where it
+  acts, like the EQ and Heat paint: turn on **Paint** and drag in the new **WIDTH lane**. Top = all of
+  Width acts there, bottom = none, so that region keeps its own stereo width. For example, Width 150 %
+  with the lows painted down widens only the top end and leaves the bass and low mids as they were.
+  Alt- or right-drag erases, a double-click resets the lane, and each stroke is one undo step.
+  - Works in every latency mode, with Spread load and at Zero latency (there it shapes the Side filter).
+    Mono bass still works on top.
+  - Saved with the project. Projects from earlier versions open with Width acting everywhere, as they
+    were made; their EQ and Heat paint stay as saved.
+  - Measured: Width 0 % painted out below 1 kHz keeps 300 Hz sides at 0.00 dB and takes 3 kHz sides
+    to −161 dB (zero latency: −78 dB); Width 200 % at a 50 % share above 1 kHz lifts the sides there
+    by 3.52 dB and below by 6.02 dB; the centre doesn't move (0.00 dB).
+- **WIDTH lane on the display** (rose, between the EQ and Heat lanes): the stereo width you hear at
+  each frequency, mono at the bottom, as is in the middle ("100 %"), 200 % at the top: Width by its
+  painted share, then Mono bass. You can now see Mono bass and the painted Width working. The hover
+  read-out adds "width 150 %" where it isn't 100 %. The EQ lane is 28 px shorter to make room.
+
+Fixes
+- None found in the plug-in. The bug pass looked at today's Spread load code, the processor's host
+  paths and today's build logs. Silenced a compiler warning in the host check (a loop counter hid
+  another one).
+
+Tests: 170/170 acceptance checks, 7 new:
+- Width paint at 100 % everywhere (also after painting and erasing) is bit-identical;
+- Width 0 % painted out below 1 kHz: the lows stay stereo, the highs go mono, in Low and Precise and
+  with Spread load;
+- Width 200 % at a 50 % share: +3.52 dB where painted, +6.02 dB elsewhere;
+- at Zero latency through the Side filter;
+- saved with the project; older projects and malformed lists load at 100 %;
+- the display's WIDTH lane sits between EQ and Heat and shows the width heard (Width, paint, Mono bass);
+- paint strokes in the WIDTH lane change only Width's paint, one undo step, double-click resets.
+
+24/24 host checks on the built VST3; the reference-and-paint check now also carries Width's paint
+into a new instance (at Width 0 % its sides stay at −14.6 dBFS; unpainted −121 dBFS). 25/25 setup
+checks pass.
+
+CPU at 48 kHz unchanged (Stereo Low 2.0 %, Normal 2.8 %, Precise 4.5 %; Mid/Side Low 3.9 %, Normal
+5.2 %, Precise 7.8 %; with Punch, Width and Mono bass on: Low 2.0 %, Precise 4.7 %).
+
 ## 5.2.1 — 2026-10-21 18:28
 
 New

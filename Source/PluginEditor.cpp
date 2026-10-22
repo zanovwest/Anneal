@@ -105,8 +105,8 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
     // 4.0 Paint: a pill in the header switches the display's paint mode; each stroke is one undo step.
     paintButton.setClickingTogglesState (true);
     paintButton.setColour (juce::TextButton::buttonOnColourId, colour::text);
-    paintButton.setTooltip ("Paint: draw on the display how much of the auto EQ and of Heat acts in each region "
-                            "(each stroke is one undo step)");
+    paintButton.setTooltip ("Paint: draw on the display how much of the auto EQ, of Width and of Heat acts in each "
+                            "region (each stroke is one undo step)");
     paintButton.setTitle ("Paint");
     paintButton.onClick = [this] { screen.setPaintMode (paintButton.getToggleState()); };
     screen.onPaintBegin = [&p] { p.beginPaintStroke(); };

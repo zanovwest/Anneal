@@ -1,4 +1,5 @@
 #include "SpectralEngine.h"
+#include "ErbScale.h"
 
 #include <algorithm>
 #include <cmath>
@@ -79,6 +80,13 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, b
     envRelease = (float) std::exp (-1.0 / (0.060 * sampleRate));
     gateCoeff  = (float) (1.0 - std::exp (-1.0 / (0.001 * sampleRate)));
 
+    // 5.2.2 Width paint: each bin's place on the paint grid, then its share for the current paint.
+    binCam.resize ((size_t) numBins);
+    widthShare.assign ((size_t) numBins, 1.0f);
+    for (int k = 0; k < numBins; ++k)
+        binCam[(size_t) k] = (float) erb::hzToCam (k * sampleRate / fftSize);
+    updateWidthShare();
+
     model.prepare (sampleRate, fftSize, keepCurve);
     synth.prepare (fftSize, sampleRate);
     reset (keepCurve);
@@ -124,6 +132,16 @@ void SpectralEngine::setPaint (const PaintCurves& paint) noexcept
     model.setPaint (paint);
     for (auto& m : msModel)
         m.setPaint (paint);
+    paintCopy = paint;
+    updateWidthShare();
+}
+
+void SpectralEngine::updateWidthShare() noexcept
+{
+    widthPainted = ! PaintCurves::isFull (paintCopy.width);
+    if (widthPainted)
+        for (size_t k = 0; k < widthShare.size(); ++k)
+            widthShare[k] = std::clamp (refgrid::sampleAt (paintCopy.width, PaintCurves::numPoints, binCam[k]), 0.0f, 1.0f);
 }
 
 void SpectralEngine::adoptCurveFrom (const SpectralEngine& other) noexcept
@@ -738,11 +756,12 @@ void SpectralEngine::applyWidth (bool harmonics) noexcept
     const float lo = mono ? current.monoHz * 0.84089642f : 0.0f;
     const float hi = mono ? current.monoHz * 1.18920712f : 0.0f;
     const float width = current.width;
+    const float* share = getWidthShare();   // 5.2.2 Width paint: Width acts by its painted share
     auto apply = [&] (float* l, float* r)
     {
         for (int k = 0; k < numBins; ++k)
         {
-            float w = width;
+            float w = share != nullptr ? 1.0f + share[k] * (width - 1.0f) : width;
             const float f = (float) k * binHz;
             if (f < hi)
             {

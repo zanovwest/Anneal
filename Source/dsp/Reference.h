@@ -32,27 +32,29 @@ namespace anneal
         bool holdLearning = false;
     };
 
-    // Paint: the share of the auto-EQ change and of Heat that applies in each region, 0..1, at 64
-    // points. All 1 (the default) = no paint, bit-identical to Anneal before 4.0.
+    // Paint: the share of the auto-EQ change, of Heat and (5.2.2) of Width that applies in each
+    // region, 0..1, at 64 points. All 1 (the default) = no paint, bit-identical to Anneal before 4.0.
     struct PaintCurves
     {
         static constexpr int numPoints = 64;
-        float eq[numPoints], heat[numPoints];
+        float eq[numPoints], heat[numPoints], width[numPoints];
 
         PaintCurves() noexcept { reset(); }
         void reset() noexcept
         {
             std::fill (eq, eq + numPoints, 1.0f);
             std::fill (heat, heat + numPoints, 1.0f);
+            std::fill (width, width + numPoints, 1.0f);
         }
         static bool isFull (const float* curve) noexcept
         {
             return std::all_of (curve, curve + numPoints, [] (float v) { return v == 1.0f; });
         }
-        bool isDefault() const noexcept { return isFull (eq) && isFull (heat); }
+        bool isDefault() const noexcept { return isFull (eq) && isFull (heat) && isFull (width); }
         bool operator== (const PaintCurves& o) const noexcept
         {
-            return std::equal (eq, eq + numPoints, o.eq) && std::equal (heat, heat + numPoints, o.heat);
+            return std::equal (eq, eq + numPoints, o.eq) && std::equal (heat, heat + numPoints, o.heat)
+                && std::equal (width, width + numPoints, o.width);
         }
         bool operator!= (const PaintCurves& o) const noexcept { return ! (*this == o); }
     };

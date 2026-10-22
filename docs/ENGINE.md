@@ -136,6 +136,12 @@ Two curves of 64 points on the same fixed Cam grid, 0..1: one for the EQ, one fo
 resamples them onto its bands. Per band, after Range: the auto-EQ change (Reveal, Smooth, Tilt,
 sidechain, reference; also what the Listen solos play) × the EQ weight, and the heat need × the Heat
 weight. A curve that is 1 everywhere switches its multiply off, so no paint is bit-identical to 3.x.
+
+5.2.2 adds a third curve, Width's share. Each engine resamples it per FFT bin (each bin's Cam is kept
+from `prepare()`, so a paint change costs one table lookup per bin, no logs) and Width then acts by that
+share: w = 1 + share × (Width − 1), before Mono bass. At zero latency the Side filter's design does the
+same per analysis bin, and the Side filter is only muted at Width 0 % when nothing is painted. Saved as
+a third list, "width", in the Paint child; projects without it get 100 %.
 The curves reach the audio thread through a third triple buffer; a stroke (begin, changes, end) is
 one undo step in the processor's history.
 

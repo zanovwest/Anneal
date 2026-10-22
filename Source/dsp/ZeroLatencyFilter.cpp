@@ -47,7 +47,8 @@ void ZeroLatencyFilter::reset() noexcept
     fadePos = -1;
 }
 
-void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float sideScale, float monoHz, float* out) noexcept
+void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float sideScale, float monoHz, float* out,
+                                const float* widthShare) noexcept
 {
     const int m = designSize, half = m / 2;
     float* w = work.data();
@@ -63,7 +64,10 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
         const double pos = std::min (f / binHzAnalysis, (double) (analysisBins - 1));
         const int i = std::min ((int) pos, analysisBins - 2);
         const float fr = (float) (pos - i);
-        float g = (binGain[i] + fr * (binGain[i + 1] - binGain[i])) * sideScale;
+        float scale = sideScale;
+        if (widthShare != nullptr)   // 5.2.2 Width paint
+            scale = 1.0f + (widthShare[i] + fr * (widthShare[i + 1] - widthShare[i])) * (sideScale - 1.0f);
+        float g = (binGain[i] + fr * (binGain[i + 1] - binGain[i])) * scale;
         if (mono && f < hi)
         {
             float t = f <= lo ? 0.0f : (float) (2.0 * std::log2 (f / lo));
@@ -222,7 +226,8 @@ void ZeroLatencyFilter::process (float* const* io, int numChannels, int numSampl
             {
                 const bool sameAsMid = analysis.getCurveSide() == analysis.getCurveMid()
                                        && std::abs (width - 1.0f) < 1.0e-4f && monoHz < 20.0f;
-                muted[1][next] = width < 1.0e-4f;
+                const float* share = analysis.getWidthShare();   // 5.2.2: painted Width
+                muted[1][next] = width < 1.0e-4f && share == nullptr;
                 if (sameAsMid)
                 {
                     coef[1][next] = coef[0][next];
@@ -230,7 +235,7 @@ void ZeroLatencyFilter::process (float* const* io, int numChannels, int numSampl
                 }
                 else if (! muted[1][next])
                 {
-                    design (analysis.getCurveSide(), bins, width, monoHz, coef[1][next].data());
+                    design (analysis.getCurveSide(), bins, width, monoHz, coef[1][next].data(), share);
                     active[1][next] = trim (coef[1][next]);
                 }
             }

@@ -133,6 +133,8 @@ anneal::PaintCurves samplePaint()
         if (hz > 2500.0 && hz < 6000.0)    p.eq[i] = 0.0f;
         if (hz > 300.0 && hz < 800.0)      p.heat[i] = 0.6f;
         if (hz > 8000.0)                   p.heat[i] = 0.0f;
+        if (hz < 400.0)                    p.width[i] = 0.0f;   // 5.2.2: Width only above the low mids
+        else if (hz < 1000.0)              p.width[i] = 0.5f;
     }
     return p;
 }
@@ -231,13 +233,13 @@ int main (int argc, char* argv[])
         { "paint", [] (AnnealAudioProcessor& p)
           {
               p.setPaint (samplePaint());
-              set (p, ids::reveal, 60); set (p, ids::smooth, 70); set (p, ids::heat, 60);
+              set (p, ids::reveal, 60); set (p, ids::smooth, 70); set (p, ids::heat, 60); set (p, ids::width, 160);
           }, 3150.0f, true, [] (AnnealEditorContent& c) { c.setPaintMode (true); } },
         { "painted", [] (AnnealAudioProcessor& p)
           {
               p.setPaint (samplePaint());
-              set (p, ids::reveal, 60); set (p, ids::smooth, 70); set (p, ids::heat, 60);
-          }, 3150.0f, true },
+              set (p, ids::reveal, 60); set (p, ids::smooth, 70); set (p, ids::heat, 60); set (p, ids::width, 160);
+          }, 700.0f, true },
         { "drop", [] (AnnealAudioProcessor&) {}, -1.0f, true,
           [] (AnnealEditorContent& c) { c.screen.fileDragEnter ({ "reference.wav" }, 300, 150); } },
     };

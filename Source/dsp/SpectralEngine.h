@@ -115,6 +115,9 @@ namespace anneal
         // the curve. Kept across prepare() and reset().
         void setAnalysisOnly (bool on) noexcept { analysisOnly = on; }
         bool isAnalysisOnly() const noexcept { return analysisOnly; }
+        // 5.2.2 Width paint: the painted share of Width at each bin (0..1), or nullptr when the
+        // width lane isn't painted (Width as set everywhere).
+        const float* getWidthShare() const noexcept { return widthPainted ? widthShare.data() : nullptr; }
         int samplesToNextFrame() const noexcept { return hop - pos; }
         std::uint32_t getFrameCount() const noexcept { return frameCounter; }
         int getNumBins() const noexcept { return numBins; }
@@ -173,6 +176,10 @@ namespace anneal
         std::uint32_t frameCounter = 0;
 
         void applyReference (const ReferenceCurve& curve) noexcept;
+        void updateWidthShare() noexcept;
+        PaintCurves paintCopy;                     // 5.2.2: its width curve, kept across prepare() and reset()
+        std::vector<float> binCam, widthShare;      // per bin: its Cam, and the painted share of Width
+        bool widthPainted = false;
         TripleBuffer<ReferenceCurve>* learnOut = nullptr;
         ReferenceCurve learnScratch;
         bool learnFresh = true, learnHeld = false;

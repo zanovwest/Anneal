@@ -46,7 +46,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
-| On the display | Range low / high handles (limits where Anneal acts) | Drop an audio file (4.0 reference); in paint mode, draw the EQ and Heat weights (4.0) |
+| On the display | Range low / high handles (limits where Anneal acts) | Drop an audio file (4.0 reference); in paint mode, draw the EQ and Heat weights (4.0) and Width's (5.2.2) |
 
 ## Visual direction (v3, 0.2.0): temper accents on cool graphite
 
@@ -101,6 +101,9 @@ occupies, which is exactly the grid the model works on. On it:
 - the live auto-EQ curve in front (straw above 0 dB, blue below, ±12 dB on the right),
 - input and output spectrum behind it as smooth lines over a soft wash (smoothed across
   ±0.25 Cam for display only, so tonal music reads as a flowing line, not plateaus),
+- a slim **width lane** under it (5.2.2, rose): the stereo width heard at each frequency, 0 % (mono)
+  at the bottom, 100 % (as is) in the middle, 200 % at the top, with the area between the middle and
+  the line filled; flat and faint while Width is 100 % and Mono bass off,
 - a **heat lane** below: how much harmonic energy is written into each band, relative to
   the output there,
 - draggable **Range** handles; outside the range is dimmed.
@@ -140,6 +143,16 @@ their settings for when a latency mode comes back.
 top of the mode, so the pill simply reads the longer latency (Low 26.1 ms instead of 22.7 ms at 48 kHz) and the
 modes in the menu list theirs with it. Nothing else on screen changes: the sound is the same.
 
+**Paint the width (5.2.2).** The display has three lanes: EQ (208 px), WIDTH (28 px) and HEAT (46 px),
+8 px apart (the EQ lane was 236 px and HEAT 52 px). WIDTH is a rose line of the width actually heard:
+Width by its painted share, then Mono bass, the same formula as the engine, with "100 %" in the right
+gutter at its middle. Its tag reads "WIDTH · stereo width as is" while nothing changes the width, and
+just "WIDTH" otherwise (a grey note over the rose fill wouldn't read). In paint mode it takes Width's
+paint like the other two lanes take theirs (the tag then reads "how much of Width acts", on a backing),
+and painted-out regions dim there. The Range doesn't dim it:
+Width acts at every frequency. The hover read-out adds "width 150 %" wherever the width heard isn't
+100 %, and "paint EQ / heat / width" shares as before.
+
 **SHAPE and presets (5.0).** SHAPE is three compact rows in rose: Punch (bipolar ring, its inner
 arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the
 display draws a short rose bar at the foot of the EQ lane in each band where an attack is happening
@@ -164,7 +177,7 @@ line through 64 points (top of the lane = 100 %, bottom = none) and a PAINT tag 
 drag to paint, Alt- or right-drag to erase, double-click to reset the lane; the range handles are then
 taken by their grips above the plot only. With paint mode off the lines go, but painted-out regions
 stay dimmed exactly like outside the Range (the same screen colour at 72 % × (1 − weight)), so a
-painted project never hides it. The hover read-out adds "paint EQ 40 % / heat 100 %" wherever a
+painted project never hides it. The hover read-out adds "paint EQ 40 % / heat 100 % / width 100 %" wherever a
 weight is below 100 %. Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (Cmd on macOS) undo and redo once the editor
 has focus (click it), and Escape leaves paint mode.
 

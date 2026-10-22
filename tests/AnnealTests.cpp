@@ -4109,6 +4109,227 @@ void testSpread521()
     }
 }
 
+// 5.2.2: Paint the width. A third paint curve sets how much of Width acts in each region.
+anneal::PaintCurves widthPainted (double loHz, double hiHz, float share)
+{
+    anneal::PaintCurves p;
+    for (int i = 0; i < anneal::PaintCurves::numPoints; ++i)
+    {
+        const double z = anneal::refgrid::camAt (i, anneal::PaintCurves::numPoints);
+        if (z >= anneal::erb::hzToCam (loHz) && z <= anneal::erb::hzToCam (hiHz))
+            p.width[i] = share;
+    }
+    return p;
+}
+
+void testWidthPaint522()
+{
+    section ("41. 5.2.2 Paint the width");
+    const double fs = 48000.0;
+    const double twoPi = 6.283185307179586;
+
+    // Mid tones at 500 Hz and 5 kHz, side tones at 300 Hz and 3 kHz, all 0.1.
+    const int n = (int) (2.0 * fs);
+    Channels image (2, std::vector<float> ((size_t) n));
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = i / fs;
+        const double m = 0.1 * std::sin (twoPi * 500.0 * t) + 0.1 * std::sin (twoPi * 5000.0 * t);
+        const double s = 0.1 * std::sin (twoPi * 300.0 * t) + 0.1 * std::sin (twoPi * 3000.0 * t);
+        image[0][(size_t) i] = (float) (m + s);
+        image[1][(size_t) i] = (float) (m - s);
+    }
+    struct Image { double mid500, mid5k, side300, side3k; };
+    auto measure = [&] (float width, const anneal::PaintCurves& paint, int mode, bool zero, bool spread = false)
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::width, width);
+        r.set (ids::latency, (float) mode);
+        r.set (ids::zeroLatency, zero ? 1.0f : 0.0f);
+        r.set (ids::spread, spread ? 1.0f : 0.0f);
+        r.proc->setPaint (paint);
+        r.prepare (fs, 512);
+        const auto out = r.run (image, fixedBlocks (512));
+        const int from = n / 2, len = n / 3;
+        std::vector<float> mid ((size_t) len), side ((size_t) len);
+        for (int i = 0; i < len; ++i)
+        {
+            const float l = out[0][(size_t) (from + i)], rr = out[1][(size_t) (from + i)];
+            mid[(size_t) i] = 0.5f * (l + rr);
+            side[(size_t) i] = 0.5f * (l - rr);
+        }
+        auto a = [&] (const std::vector<float>& x, double hz) { return toDb (testsig::toneAmplitude (x.data(), len, hz, fs) / 0.1); };
+        return Image { a (mid, 500.0), a (mid, 5000.0), a (side, 300.0), a (side, 3000.0) };
+    };
+    auto midOk = [] (const Image& im) { return std::abs (im.mid500) < 0.1 && std::abs (im.mid5k) < 0.1; };
+    const auto lowsOut = widthPainted (20.0, 1000.0, 0.0f);   // Width acts only above 1 kHz
+
+    {
+        // Width paint at 100 % everywhere (also after painting and erasing) = identical output.
+        Rig plain, painted;
+        plain.set (ids::width, 150.0f);
+        painted.set (ids::width, 150.0f);
+        plain.prepare (fs, 512);
+        painted.proc->setPaint (lowsOut);
+        painted.proc->setPaint (anneal::PaintCurves());
+        painted.prepare (fs, 512);
+        const auto music = testsig::musicLike (fs, 2.0);
+        const double d = maxDiff (painted.run (music, fixedBlocks (512)), plain.run (music, fixedBlocks (512)));
+        check (d == 0.0, "Width paint at 100 % everywhere = identical output", "max diff " + juce::String (d, 12));
+    }
+
+    {
+        // Width 0 % (mono) painted out below 1 kHz: the 300 Hz sides stay, the 3 kHz sides go; the
+        // centre is untouched. Low and Precise, and with Spread load.
+        bool ok = true;
+        juce::String log;
+        for (int mode : { 0, 2 })
+            for (bool spread : { false, true })
+            {
+                const auto im = measure (0.0f, lowsOut, mode, false, spread);
+                ok = ok && midOk (im) && std::abs (im.side300) < 0.1 && im.side3k < -90.0;
+                if (! spread)
+                    log << (mode == 0 ? "Low" : "Precise") << ": 300 Hz sides " << db (im.side300, 2) << ", 3 kHz " << db (im.side3k, 0) << "  ";
+            }
+        check (ok, "Width 0 % painted out below 1 kHz: lows stay stereo, highs mono", log + "(also with Spread)");
+    }
+
+    {
+        // Width 200 % at half its share above 1 kHz: 3 kHz sides x1.5 (+3.52 dB), 300 Hz x2 (+6.02 dB).
+        auto half = widthPainted (1000.0, 20000.0, 0.5f);
+        const auto im = measure (200.0f, half, 0, false);
+        check (midOk (im) && std::abs (im.side300 - 6.02) < 0.1 && std::abs (im.side3k - 3.52) < 0.1,
+               "Width 200 % at a 50 % share above 1 kHz: +3.5 dB there, +6.0 dB below",
+               "300 Hz sides " + db (im.side300, 2) + ", 3 kHz " + db (im.side3k, 2) + "; centre within "
+                   + db (std::max (std::abs (im.mid500), std::abs (im.mid5k)), 2));
+    }
+
+    {
+        // Zero latency: the Side filter follows the paint too.
+        const auto im = measure (0.0f, lowsOut, 0, true);
+        const auto plainMono = measure (0.0f, anneal::PaintCurves(), 0, true);
+        check (midOk (im) && std::abs (im.side300) < 0.5 && im.side3k < -40.0 && plainMono.side300 < -90.0,
+               "Zero latency: Width paint works through the Side filter",
+               "painted: 300 Hz sides " + db (im.side300, 2) + ", 3 kHz " + db (im.side3k, 0) + "; unpainted Width 0 %: 300 Hz "
+                   + db (plainMono.side300, 0));
+    }
+
+    {
+        // Saved with the project; a project from before 5.2.2 (paint without "width") keeps its EQ and
+        // Heat paint and gets Width paint at 100 %; a malformed width list loads as 100 %.
+        auto paint = paintedOut (true, 300.0, 600.0);
+        for (int i = 10; i < 20; ++i)
+            paint.width[i] = 0.25f;
+        Rig a;
+        a.proc->setPaint (paint);
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        Rig b;
+        b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        const bool kept = b.proc->getPaint() == paint;
+
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        auto* p = xml->getChildByName ("Paint");
+        if (p != nullptr)
+            p->removeAttribute ("width");
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig c;
+        c.proc->setPaint (widthPainted (20.0, 20000.0, 0.0f));
+        c.proc->setStateInformation (old.getData(), (int) old.getSize());
+        const auto olderPaint = c.proc->getPaint();
+        const bool older = p != nullptr && anneal::PaintCurves::isFull (olderPaint.width)
+                           && std::equal (paint.eq, paint.eq + anneal::PaintCurves::numPoints, olderPaint.eq);
+
+        if (p != nullptr)
+            p->setAttribute ("width", "0.5 0.5 nope");
+        juce::MemoryBlock bad;
+        juce::AudioProcessor::copyXmlToBinary (*xml, bad);
+        c.proc->setStateInformation (bad.getData(), (int) bad.getSize());
+        const bool badIgnored = anneal::PaintCurves::isFull (c.proc->getPaint().width);
+        check (kept && older && badIgnored, "Width paint is saved; older projects and malformed lists load at 100 %",
+               juce::String (kept ? "round trip exact" : "ROUND TRIP WRONG") + "; before 5.2.2: "
+                   + (older ? "width 100 %, EQ paint kept" : "WRONG") + "; malformed: " + (badIgnored ? "100 %" : "TAKEN"));
+    }
+
+    // On the display: the WIDTH lane sits between the EQ and Heat lanes, shows the width heard, and
+    // takes Width's paint in paint mode.
+    Rig r;
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    if (editor == nullptr)
+    {
+        check (false, "editor opens", "no AnnealEditor");
+        return;
+    }
+    auto& content = editor->getContent();
+    auto& screen = content.screen;
+    const auto eqLane = screen.getEqLane(), widthLane = screen.getWidthLane(), heatLane = screen.getHeatLane();
+
+    {
+        r.set (ids::width, 150.0f);
+        r.set (ids::monoBass, 120.0f);
+        r.proc->setPaint (widthPainted (20.0, 400.0, 0.0f));
+        content.tick (0.0f);
+        const float at60 = screen.widthAtHz (60.0f), at300 = screen.widthAtHz (300.0f), at5k = screen.widthAtHz (5000.0f);
+        const bool order = eqLane.getBottom() < widthLane.getY() && widthLane.getBottom() < heatLane.getY()
+                           && widthLane.getHeight() >= 20.0f && eqLane.getHeight() > 4.0f * widthLane.getHeight();
+        check (order && at60 < 0.01f && std::abs (at300 - 1.0f) < 0.01f && std::abs (at5k - 1.5f) < 0.01f,
+               "display: a WIDTH lane between EQ and Heat shows the width heard",
+               "lanes EQ " + juce::String (eqLane.getHeight(), 0) + " / width " + juce::String (widthLane.getHeight(), 0) + " / heat "
+                   + juce::String (heatLane.getHeight(), 0) + " px; Width 150 %, painted out below 400 Hz, Mono bass 120 Hz: 60 Hz "
+                   + juce::String (at60 * 100.0f, 0) + " %, 300 Hz " + juce::String (at300 * 100.0f, 0) + " %, 5 kHz "
+                   + juce::String (at5k * 100.0f, 0) + " %");
+        r.proc->setPaint (anneal::PaintCurves());
+        content.tick (0.0f);
+    }
+
+    {
+        const auto now = juce::Time::getCurrentTime();
+        auto ev = [&screen, now] (juce::Point<float> at, juce::Point<float> down, bool dragged, int clicks = 1)
+        {
+            return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at,
+                                     juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier),
+                                     1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &screen, &screen, now, down, now, clicks, dragged);
+        };
+        auto stroke = [&] (juce::Point<float> from, juce::Point<float> to)
+        {
+            screen.mouseDown (ev (from, from, false));
+            screen.mouseDrag (ev ({ (from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f }, from, true));
+            screen.mouseDrag (ev (to, from, true));
+            screen.mouseUp (ev (to, from, true));
+        };
+        content.setPaintMode (true);
+        while (r.proc->canUndo())
+            r.proc->undo();
+        // Along the bottom of the WIDTH lane from 100 to 400 Hz: 0 % there, nothing else painted.
+        stroke ({ screen.xForHz (100.0f), widthLane.getBottom() - 1.0f }, { screen.xForHz (400.0f), widthLane.getBottom() - 1.0f });
+        const auto painted = r.proc->getPaint();
+        int zeros = 0;
+        for (int i = 0; i < anneal::PaintCurves::numPoints; ++i)
+            zeros += painted.width[i] == 0.0f ? 1 : 0;
+        const bool onlyWidth = anneal::PaintCurves::isFull (painted.eq) && anneal::PaintCurves::isFull (painted.heat);
+        const bool oneStep = r.proc->canUndo();
+        r.proc->undo();
+        const bool undone = r.proc->getPaint().isDefault();
+        r.proc->redo();
+
+        // Double-click in the lane resets it as one step.
+        const auto at = juce::Point<float> (screen.xForHz (6000.0f), widthLane.getCentreY());
+        screen.mouseDown (ev (at, at, false));
+        screen.mouseUp (ev (at, at, false));
+        screen.mouseDown (ev (at, at, false, 2));
+        screen.mouseDoubleClick (ev (at, at, false, 2));
+        screen.mouseUp (ev (at, at, false, 2));
+        const bool reset = anneal::PaintCurves::isFull (r.proc->getPaint().width);
+        content.setPaintMode (false);
+        check (zeros >= 4 && onlyWidth && oneStep && undone && reset, "paint strokes in the WIDTH lane: Width's paint only, one undo step",
+               juce::String (zeros) + " points at 0 % between 100 and 400 Hz; " + (onlyWidth ? "EQ and Heat untouched" : "OTHER LANES PAINTED")
+                   + "; " + (undone ? "undone in one step" : "UNDO WRONG") + "; " + (reset ? "double-click resets" : "NOT RESET"));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -4167,6 +4388,7 @@ int main (int argc, char** argv)
     testFastMath511();
     testUpdateRate52();
     testSpread521();
+    testWidthPaint522();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

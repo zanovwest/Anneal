@@ -29,7 +29,9 @@ namespace anneal
 
         // The minimum-phase taps for a curve (exposed for tests): binGain = linear gain per analysis
         // bin (analysisBins = N/2 + 1), times sideScale, Mono bass below monoHz (0 = off).
-        void design (const float* binGain, int analysisBins, float sideScale, float monoHz, float* out) noexcept;
+        // 5.2.2 widthShare (per analysis bin, or nullptr): sideScale acts by that share, 1 + s (scale - 1).
+        void design (const float* binGain, int analysisBins, float sideScale, float monoHz, float* out,
+                     const float* widthShare = nullptr) noexcept;
 
     private:
         int filter (int which, int set, const float* x, float* out, int n) noexcept;   // returns 0 if muted
@@ -40,7 +42,7 @@ namespace anneal
         std::vector<float> work, logMag;
         std::vector<float> coef[2][2];           // [0 Mid, 1 Side][set]
         int active[2][2] {};                     // taps in use (the rest are below -120 dB)
-        bool muted[2][2] {};                     // Side at Width 0: no Side at all
+        bool muted[2][2] {};                     // Side at Width 0 (unpainted): no Side at all
         int current = 0, fadePos = -1;           // fadePos >= 0 while crossfading to the other set
         std::vector<float> hist[2];              // Mid / Side input: taps - 1 past samples, then a segment
         std::vector<float> outMid, outSide, scratch;

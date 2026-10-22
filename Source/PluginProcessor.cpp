@@ -137,10 +137,12 @@ namespace
         t.setProperty ("points", anneal::PaintCurves::numPoints, nullptr);
         t.setProperty ("eq", text (p.eq), nullptr);
         t.setProperty ("heat", text (p.heat), nullptr);
+        t.setProperty ("width", text (p.width), nullptr);   // 5.2.2
         return t;
     }
 
     // No paint (all 100 %) for anything missing; a malformed list leaves that curve at 100 %.
+    // Projects from before 5.2.2 have no "width": it stays at 100 % (Width as set everywhere).
     anneal::PaintCurves paintFromTree (const juce::ValueTree& t)
     {
         anneal::PaintCurves p;
@@ -163,6 +165,7 @@ namespace
         };
         read (t.getProperty ("eq").toString(), p.eq);
         read (t.getProperty ("heat").toString(), p.heat);
+        read (t.getProperty ("width").toString(), p.width);
         return p;
     }
 }

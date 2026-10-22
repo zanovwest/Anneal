@@ -17,6 +17,8 @@ namespace anneal
     // handles run the full height and are bound to the rangeLo / rangeHi parameters.
     // 4.0: the reference's spectrum as a teal line (a file dropped here becomes the reference),
     // and Paint: in paint mode, dragging in a lane draws how much of the EQ / Heat acts there.
+    // 5.2.2: a slim WIDTH lane between them shows the stereo width heard at each frequency (Width,
+    // its paint and Mono bass), and in paint mode takes Width's paint.
     class PerceptionScreen : public juce::Component,
                              public juce::SettableTooltipClient,
                              public juce::FileDragAndDropTarget,
@@ -80,14 +82,17 @@ namespace anneal
         std::function<void (const PaintCurves&)> onPaintChange;
         std::function<void (bool mergeWithPrevious)> onPaintEnd;
 
-        // Geometry, for tests: the EQ and Heat lanes, and where a frequency is drawn.
+        // Geometry, for tests: the EQ, Width and Heat lanes, and where a frequency is drawn.
         juce::Rectangle<float> getEqLane() const noexcept { return mainLane; }
+        juce::Rectangle<float> getWidthLane() const noexcept { return widthLane; }
         juce::Rectangle<float> getHeatLane() const noexcept { return heatLane; }
+        // 5.2.2: the stereo width heard at a frequency (1 = as is): Width by its painted share, Mono bass.
+        float widthAtHz (float hz) const noexcept;
         float xForHz (float hz) const noexcept;
 
     private:
         enum class Handle { none, lo, hi };
-        enum class Lane { none, eq, heat };
+        enum class Lane { none, eq, width, heat };
 
         void timerCallback() override;
         float xForCam (double cam) const noexcept;
@@ -95,6 +100,8 @@ namespace anneal
         float valueAtCam (const float* bands, double cam) const noexcept;
         Handle handleAt (float x, float y) const noexcept;
         Lane laneAt (juce::Point<float> p) const noexcept;
+        juce::Rectangle<float> laneRect (Lane lane) const noexcept;
+        float* paintCurve (Lane lane) noexcept;
         void paintStroke (juce::Point<float> from, juce::Point<float> to, bool erase);
         void updateReferenceOffset (bool instant);
 
@@ -105,6 +112,7 @@ namespace anneal
         float eqY (float db) const noexcept;
         float specY (float db) const noexcept;
         void paintHeat (juce::Graphics&);
+        void paintWidth (juce::Graphics&);     // 5.2.2
         void paintWeights (juce::Graphics&);   // painted-out areas dim; in paint mode, the weight lines
         void paintRange (juce::Graphics&);
         void paintReadout (juce::Graphics&);
@@ -130,10 +138,12 @@ namespace anneal
         bool haveFrame = false;
         int idleTicks = 0;
 
-        juce::Rectangle<float> plot, mainLane, heatLane;
+        juce::Rectangle<float> plot, mainLane, widthLane, heatLane;
         Activity activity;
 
         std::unique_ptr<juce::ParameterAttachment> loAttachment, hiAttachment, listenAttachment, refModeAttachment;
+        std::unique_ptr<juce::ParameterAttachment> widthAttachment, monoAttachment;   // 5.2.2: the WIDTH lane
+        float widthSetting = 1.0f, monoHz = 0.0f;
         int listenMode = 0, refMode = 0;
         juce::RangedAudioParameter* loParam = nullptr;
         juce::RangedAudioParameter* hiParam = nullptr;

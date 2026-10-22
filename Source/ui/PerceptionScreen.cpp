@@ -75,6 +75,12 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
     refModeAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::refMode),
         [this] (float v) { refMode = juce::jlimit (0, 2, juce::roundToInt (v)); repaint(); }, state.undoManager);
     refModeAttachment->sendInitialUpdate();
+    widthAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::width),
+        [this] (float v) { widthSetting = v / 100.0f; repaint(); }, state.undoManager);
+    widthAttachment->sendInitialUpdate();
+    monoAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::monoBass),
+        [this] (float v) { monoHz = v >= monoBassMinHz ? v : 0.0f; repaint(); }, state.undoManager);
+    monoAttachment->sendInitialUpdate();
 
     setPaintMode (false);   // sets the tooltip
     startTimerHz (refreshHz);
@@ -90,9 +96,11 @@ void PerceptionScreen::resized()
     const auto r = getLocalBounds().toFloat();
     plot = r.withTrimmedTop (34.0f).withTrimmedBottom (24.0f).withTrimmedLeft (18.0f).withTrimmedRight (46.0f);
 
-    const float heatH = 52.0f, gap = 10.0f;
-    mainLane = plot.withTrimmedBottom (heatH + gap);
-    heatLane = plot.withTop (mainLane.getBottom() + gap);
+    // 5.2.2: EQ, a slim WIDTH lane, then HEAT (was EQ and a 52 px HEAT lane, 10 px apart).
+    const float heatH = 46.0f, widthH = 28.0f, gap = 8.0f;
+    mainLane = plot.withTrimmedBottom (heatH + widthH + 2.0f * gap);
+    widthLane = plot.withTop (mainLane.getBottom() + gap).withHeight (widthH);
+    heatLane = plot.withTop (widthLane.getBottom() + gap);
 }
 
 float PerceptionScreen::xForCam (double cam) const noexcept
@@ -273,7 +281,7 @@ void PerceptionScreen::paint (juce::Graphics& g)
     {
         const float x = xForCam (erb::hzToCam (hz));
         g.setColour (colour::grid);
-        for (const auto& lane : { mainLane, heatLane })
+        for (const auto& lane : { mainLane, widthLane, heatLane })
             g.drawVerticalLine (juce::roundToInt (x), lane.getY(), lane.getBottom());
         g.setColour (colour::faint);
         g.drawText (axisLabel (hz), juce::Rectangle<float> (x - 20.0f, plot.getBottom() + 6.0f, 40.0f, 13.0f), juce::Justification::centred, false);
@@ -286,6 +294,7 @@ void PerceptionScreen::paint (juce::Graphics& g)
     paintEq (g);
     paintAttacks (g);
     paintHeat (g);
+    paintWidth (g);
     paintWeights (g);
     paintRange (g);
     paintLegend (g);
@@ -492,6 +501,56 @@ void PerceptionScreen::paintHeat (juce::Graphics& g)
     g.strokePath (edge, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
+float PerceptionScreen::widthAtHz (float hz) const noexcept
+{
+    // As the engine applies it (SpectralEngine::applyWidth): Width by its painted share, then Mono
+    // bass fading from fully mono a quarter octave below its frequency to the full width above.
+    const float share = refgrid::sampleAt (paintCurves.width, PaintCurves::numPoints, erb::hzToCam (hz));
+    float w = 1.0f + juce::jlimit (0.0f, 1.0f, share) * (widthSetting - 1.0f);
+    if (monoHz >= monoBassMinHz && hz < monoHz * 1.18920712f)
+    {
+        const float lo = monoHz * 0.84089642f;
+        const float t = hz <= lo ? 0.0f : juce::jlimit (0.0f, 1.0f, 2.0f * std::log2 (hz / lo));
+        w *= t * t * (3.0f - 2.0f * t);
+    }
+    return w;
+}
+
+void PerceptionScreen::paintWidth (juce::Graphics& g)
+{
+    // 5.2.2: the stereo width heard at each frequency, 0 % (mono) at the bottom, 100 % (as is) in the
+    // middle, 200 % at the top; the area between the middle and the curve is filled.
+    const auto lane = widthLane;
+    const float mid = lane.getCentreY();
+    g.setFont (font (11.0f));
+    g.setColour (colour::faint);
+    g.drawText ("100 %", juce::Rectangle<float> (lane.getRight() + 8.0f, mid - 6.5f, 40.0f, 13.0f), juce::Justification::centredLeft, false);
+    g.setColour (colour::divider);
+    g.drawHorizontalLine (juce::roundToInt (lane.getBottom()), lane.getX(), lane.getRight());
+
+    auto yOf = [&lane] (float w) { return lane.getBottom() - 1.0f - juce::jlimit (0.0f, 2.0f, w) * 0.5f * (lane.getHeight() - 2.0f); };
+    juce::Path area, edge;
+    bool flat = true;
+    for (float x = lane.getX(); x <= lane.getRight(); x += 2.0f)
+    {
+        const float w = widthAtHz ((float) erb::camToHz (camForX (x)));
+        flat = flat && std::abs (w - 1.0f) < 0.005f;
+        const float y = yOf (w);
+        if (x == lane.getX()) { area.startNewSubPath (x, mid); edge.startNewSubPath (x, y); }
+        area.lineTo (x, y);
+        edge.lineTo (x, y);
+    }
+    area.lineTo (lane.getRight(), mid);
+    area.closeSubPath();
+    if (! flat)
+    {
+        g.setColour (colour::rose.withAlpha (0.22f));
+        g.fillPath (area);
+    }
+    g.setColour (colour::rose.withAlpha (flat ? 0.35f : 1.0f));
+    g.strokePath (edge, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
 juce::Point<float> PerceptionScreen::getShownRange() const noexcept
 {
     return { rangeLo, effectiveRangeHi (rangeLo, rangeHi) };
@@ -503,7 +562,7 @@ void PerceptionScreen::paintRange (juce::Graphics& g)
     const float xLo = xForCam (erb::hzToCam (shown.x));
     const float xHi = xForCam (erb::hzToCam (shown.y));
 
-    // Outside the range Anneal does nothing: dim it in both lanes.
+    // Outside the range the EQ and Heat do nothing: dim it in their lanes (Width acts everywhere).
     g.setColour (colour::screen.withAlpha (0.72f));
     for (const auto& lane : { mainLane, heatLane })
     {
@@ -598,6 +657,11 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
              "drag in a lane: how much acts there" + dot + "Alt- or right-drag erases" + dot + "double-click resets the lane");
     }
     tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), "harmonics written, vs output");
+    // Over a filled width curve a grey note wouldn't read; "100 %" in the gutter marks the middle.
+    const bool asIs = std::abs (widthSetting - 1.0f) < 1.0e-4f && monoHz < monoBassMinHz && PaintCurves::isFull (paintCurves.width);
+    tag ({ widthLane.getX() + 10.0f, widthLane.getY() + 2.0f }, "WIDTH", colour::rose.withAlpha (0.9f),
+         paintMode ? juce::String ("how much of Width acts (top = all of it)")
+                   : asIs ? juce::String ("stereo width as is") : juce::String());
     legendBottom = y + 14.0f;
 }
 
@@ -658,8 +722,13 @@ void PerceptionScreen::paintReadout (juce::Graphics& g)
     // 4.0: the painted share here, in paint mode or wherever it is below 100 %.
     const float wEq = refgrid::sampleAt (paintCurves.eq, PaintCurves::numPoints, cam);
     const float wHeat = refgrid::sampleAt (paintCurves.heat, PaintCurves::numPoints, cam);
-    if (paintMode || wEq < 0.995f || wHeat < 0.995f)
-        text << "    paint EQ " << juce::roundToInt (wEq * 100.0f) << " % / heat " << juce::roundToInt (wHeat * 100.0f) << " %";
+    const float wWidth = refgrid::sampleAt (paintCurves.width, PaintCurves::numPoints, cam);
+    const float widthHere = widthAtHz (hz);   // 5.2.2
+    if (std::abs (widthHere - 1.0f) > 0.005f)
+        text << "    width " << juce::roundToInt (widthHere * 100.0f) << " %";
+    if (paintMode || wEq < 0.995f || wHeat < 0.995f || wWidth < 0.995f)
+        text << "    paint EQ " << juce::roundToInt (wEq * 100.0f) << " % / heat " << juce::roundToInt (wHeat * 100.0f)
+             << " % / width " << juce::roundToInt (wWidth * 100.0f) << " %";
     const auto fnt = font (size::caption + 0.5f);
     const float w = tabularWidths (fnt, text) + 20.0f, h = 24.0f;
     const bool left = hoverX > plot.getCentreX();
@@ -690,15 +759,28 @@ PerceptionScreen::Handle PerceptionScreen::handleAt (float x, float y) const noe
 
 PerceptionScreen::Lane PerceptionScreen::laneAt (juce::Point<float> p) const noexcept
 {
-    // The 10 px gap between the lanes belongs to the nearer one.
+    // The gaps between the lanes belong to the nearer one.
     if (p.x < plot.getX() - 4.0f || p.x > plot.getRight() + 4.0f)
         return Lane::none;
-    const float split = (mainLane.getBottom() + heatLane.getY()) * 0.5f;
-    if (p.y >= mainLane.getY() && p.y < split)
+    const float split1 = (mainLane.getBottom() + widthLane.getY()) * 0.5f;
+    const float split2 = (widthLane.getBottom() + heatLane.getY()) * 0.5f;
+    if (p.y >= mainLane.getY() && p.y < split1)
         return Lane::eq;
-    if (p.y >= split && p.y <= heatLane.getBottom() + 4.0f)
+    if (p.y >= split1 && p.y < split2)
+        return Lane::width;
+    if (p.y >= split2 && p.y <= heatLane.getBottom() + 4.0f)
         return Lane::heat;
     return Lane::none;
+}
+
+juce::Rectangle<float> PerceptionScreen::laneRect (Lane lane) const noexcept
+{
+    return lane == Lane::eq ? mainLane : lane == Lane::width ? widthLane : heatLane;
+}
+
+float* PerceptionScreen::paintCurve (Lane lane) noexcept
+{
+    return lane == Lane::eq ? paintCurves.eq : lane == Lane::width ? paintCurves.width : paintCurves.heat;
 }
 
 void PerceptionScreen::mouseMove (const juce::MouseEvent& e)
@@ -794,7 +876,7 @@ void PerceptionScreen::mouseDoubleClick (const juce::MouseEvent& e)
     // (mouseUp ends it); it joins the first click's stroke, so the reset is one undo step.
     if (painting != Lane::none)
     {
-        std::fill_n (painting == Lane::eq ? paintCurves.eq : paintCurves.heat, PaintCurves::numPoints, 1.0f);
+        std::fill_n (paintCurve (painting), PaintCurves::numPoints, 1.0f);
         strokeMerge = true;
         if (onPaintChange != nullptr)
             onPaintChange (paintCurves);
@@ -822,7 +904,7 @@ void PerceptionScreen::mouseDoubleClick (const juce::MouseEvent& e)
 void PerceptionScreen::setPaintMode (bool on)
 {
     paintMode = on;
-    setTooltip (on ? "Paint: drag in the EQ lane or the Heat lane to set how much of it acts there (top = 100 %, "
+    setTooltip (on ? "Paint: drag in the EQ, Width or Heat lane to set how much of it acts there (top = 100 %, "
                      "bottom = none). Alt- or right-drag erases back to 100 %, double-click resets the lane"
                    : "Drag a range handle to limit where Anneal acts; double-click a handle to reset it. Drop an audio "
                      "file here to use it as the reference. Horizontal axis: ERB-rate scale (equal steps of the ear's "
@@ -840,8 +922,8 @@ void PerceptionScreen::setPaint (const PaintCurves& curves)
 
 void PerceptionScreen::paintStroke (juce::Point<float> from, juce::Point<float> to, bool erase)
 {
-    float* curve = painting == Lane::eq ? paintCurves.eq : paintCurves.heat;
-    const auto& lane = painting == Lane::eq ? mainLane : heatLane;
+    float* curve = paintCurve (painting);
+    const auto lane = laneRect (painting);
     constexpr int n = PaintCurves::numPoints;
     auto indexAt = [this] (float x)
     {
@@ -876,12 +958,12 @@ void PerceptionScreen::paintStroke (juce::Point<float> from, juce::Point<float> 
 void PerceptionScreen::paintWeights (juce::Graphics& g)
 {
     // Painted-out regions dim like outside the Range (fully at 0 %), in the lane they belong to.
-    for (int which = 0; which < 2; ++which)
+    for (auto which : { Lane::eq, Lane::width, Lane::heat })
     {
-        const float* curve = which == 0 ? paintCurves.eq : paintCurves.heat;
+        const float* curve = paintCurve (which);
         if (PaintCurves::isFull (curve))
             continue;
-        const auto lane = which == 0 ? mainLane : heatLane;
+        const auto lane = laneRect (which);
         for (float x = lane.getX(); x < lane.getRight(); x += 2.0f)
         {
             const float w = refgrid::sampleAt (curve, PaintCurves::numPoints, camForX (x + 1.0f));
@@ -897,10 +979,10 @@ void PerceptionScreen::paintWeights (juce::Graphics& g)
         return;
 
     // Paint mode: each lane's weight as a line (top of the lane = 100 %) with its control points.
-    for (int which = 0; which < 2; ++which)
+    for (auto which : { Lane::eq, Lane::width, Lane::heat })
     {
-        const float* curve = which == 0 ? paintCurves.eq : paintCurves.heat;
-        const auto lane = which == 0 ? mainLane : heatLane;
+        const float* curve = paintCurve (which);
+        const auto lane = laneRect (which);
         auto yOf = [&lane] (float w) { return lane.getBottom() - w * lane.getHeight(); };
         juce::Path line;
         for (int i = 0; i < PaintCurves::numPoints; ++i)
