@@ -210,11 +210,15 @@ Missed days are caught up together, up to five. It bumps the version and runs
 - add a [CHANGELOG.md](CHANGELOG.md) entry;
 - commit and push;
 - publish the setup as a GitHub release;
-- install it into **Program Files**.
+- install it **just for you** (no administrator prompt).
 
-The install needs your approval: Windows' administrator prompt waits on screen until you click Yes.
-If you're away, the prompt keeps waiting, later updates don't add more prompts, and the one Yes
-installs the newest build. The task never approves or works around the prompt itself.
+Up to 5.2.1 the updates installed into Program Files, which needed your Yes on Windows'
+administrator prompt every time. On 2026-10-21 you asked for updates without the prompt, so since
+then they install just for you: the VST3 into `%LOCALAPPDATA%\Programs\Common\VST3`, the app into
+`%LOCALAPPDATA%\Programs\Anneal`. The task never approves, bypasses or works around an administrator
+prompt, and never asks for one. To switch FL Studio over once: remove the Program Files copy
+(Settings → Apps → the *Anneal (VST3)* entry installed for all users), then add the per-user folder
+to FL's plugin search paths and rescan (see Install above).
 
 The major 4.0.0 came from its own task ("Anneal 4.0 update") on 2026-10-14; the daily updates
 continue from it.
@@ -245,5 +249,5 @@ projects keep their settings.
 - **UI (v3, 0.2.0; 1464 × 640 since 5.0):** actual editor rendered to `snapshots/` at 100/150/200 % and at min/max size, with and without audio, with a sidechain key, frozen, matching a reference, learning from the key, in paint mode, painted, and with a file dragged over the display.
 - **Host-checked (`AnnealHostCheck`, 24/24 pass on 5.2.1 on Windows; 20/20 on Linux at 4.0.1)** including Spread load through the host (5.2.1: latency and the impulse in place at Mix 0 % and 100 %), a frozen curve through the host deactivating and activating Anneal (4.0.2; 4.0.0 lost it), the Reference parameters, Learn key through the sidechain bus, and the reference and paint carried in the VST3 state into a new instance and acting there (Heat painted to 0 %: −300 dB vs −15.3 dB unpainted; Match moves the output), the sidechain bus (a routed key ducks the main −9.0 dB), latency with the Ceiling's look-ahead, Flavour through VST3 (names, typed values, Tube vs Exciter on a 220 Hz tone, swept while playing), Listen modes through VST3 (choices, typed values, a Heat-only solo at Heat 0 is silent, swept while playing), Mid/Side routing automation and saved routing state, latency switching through the host, Guard automated while playing, factory presets as host programs and an edited preset surviving save/load. The installed copy was checked separately before this update.
 - **Setup-tested (`TestSetup.ps1`, 25/25 pass on 5.2.1):** sandbox install, custom VST3 destination metadata, update and uninstall while another process has the DLL loaded, and later cleanup after release.
-- **Installed** for all users: each release's setup installs the VST3 into `C:\Program Files\Common Files\VST3` (FL Studio's default folder) and the standalone into `C:\Program Files\Anneal`, after you approve the Windows prompt. Listed under Settings → Apps.
+- **Installed** just for you since 5.2.1 (2026-10-21): each release's setup installs the VST3 into `%LOCALAPPDATA%\Programs\Common\VST3` and the standalone into `%LOCALAPPDATA%\Programs\Anneal`, with no administrator prompt. Up to 5.2.1 it went into `C:\Program Files\Common Files\VST3` for all users, after you approved the prompt. Listed under Settings → Apps.
 - **Not done:** pluginval (not installed here), testing inside FL Studio / Cubase (including sidechain routing there), listening tests, macOS builds. The perceptual model is a heuristic, not a calibrated loudness model. Low latency (21 ms) suits tracking; Precise (85 ms) is for mixing/mastering.
