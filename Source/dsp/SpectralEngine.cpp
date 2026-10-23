@@ -74,6 +74,10 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, b
     keySpec.assign ((size_t) fftSize * 2, 0.0f);
     frameKey.assign ((size_t) fftSize, 0.0f);
     keyPower.assign ((size_t) numBins, 0.0f);
+    imageMid.assign ((size_t) numBins, 0.0f);
+    imageSide.assign ((size_t) numBins, 0.0f);
+    for (auto* v : { &imageMidDb, &imageSideDb, &imageRelDb })
+        v->assign ((size_t) DisplayFrame::numBands, -200.0f);
     outPower.assign ((size_t) numBins, 0.0f);
     harmPower.assign ((size_t) numBins, 0.0f);
 
@@ -109,6 +113,8 @@ void SpectralEngine::reset (bool keepCurve)
     msActive = false;
     lastPeakCount = 0;
     nextStage = numStages;   // Spread: no frame taken yet
+    imageTick = 0;
+    imageValid = false;
     stagesInCall = 0;
 }
 
@@ -374,6 +380,21 @@ void SpectralEngine::runStage (int s) noexcept
             }
             fft.forward (sp);
         }
+
+        // 5.2.3: the display's stereo image takes the first three frames of every eight; the first
+        // keeps the input's Mid and Side power per bin.
+        if (++imageTick >= 8)
+            imageTick = 0;
+        fw.imageStep = channels == 2 && imageTick < 3 ? imageTick : -1;
+        if (fw.imageStep == 0)
+            for (int k = 0; k < numBins; ++k)
+            {
+                const float lr = spec[0][(size_t) 2 * k], li = spec[0][(size_t) 2 * k + 1];
+                const float rr = spec[1][(size_t) 2 * k], ri = spec[1][(size_t) 2 * k + 1];
+                const float mr = 0.5f * (lr + rr), mi = 0.5f * (li + ri), sr = 0.5f * (lr - rr), si = 0.5f * (li - ri);
+                imageMid[(size_t) k] = (mr * mr + mi * mi) * ampScale * ampScale;
+                imageSide[(size_t) k] = (sr * sr + si * si) * ampScale * ampScale;
+            }
 
         // Listening to Reveal or Smooth needs this frame's spectrum before the EQ.
         fw.listenEq = current.listen == listenReveal || current.listen == listenSmooth;
@@ -645,6 +666,11 @@ void SpectralEngine::runStage (int s) noexcept
                 f.gainDb[b] = msModel[0].getBandGainDb()[b];
                 f.sideGainDb[b] = msModel[1].getBandGainDb()[b];
             }
+        if (fw.imageStep >= 0)
+            updateImage (fw.imageStep);
+        f.stereo = channels == 2 && imageValid;
+        if (f.stereo)
+            std::copy (imageRelDb.begin(), imageRelDb.end(), f.sideRelDb);
         displayOut->endWrite();
         return;
     }
@@ -680,6 +706,48 @@ void SpectralEngine::runStage (int s) noexcept
         synthesise (spec[c].data(), outAcc[c].data());
         if (fw.harmonicsWritten)
             synthesise (harmSpec[c].data(), harmAcc[c].data());
+    }
+}
+
+void SpectralEngine::updateImage (int step) noexcept
+{
+    // 5.2.3 The stereo image heard, for the display: the input's Mid and Side through what Anneal
+    // applies to each (the auto-EQ curve, or in Mid/Side its Mid and Side curves; Width by its painted
+    // share; Mono bass), as in applyWidth and the zero-latency filters. The harmonics aren't in it.
+    // One step per frame, so no frame carries all of it.
+    if (step == 1)
+    {
+        model.bandLevelsDb (imageMid.data(), imageMidDb.data());
+        return;
+    }
+    if (step == 2)
+    {
+        model.bandLevelsDb (imageSide.data(), imageSideDb.data());
+        for (size_t b = 0; b < imageRelDb.size(); ++b)
+            imageRelDb[b] = std::max (imageMidDb[b], imageSideDb[b]) < -100.0f ? -200.0f
+                          : std::clamp (imageSideDb[b] - imageMidDb[b], -100.0f, 20.0f);
+        imageValid = true;
+        return;
+    }
+    const bool ms = msActive && fw.msBlend >= 0.5f;
+    const float* gm = ms ? msModel[0].getBinGain() : model.getBinGain();
+    const float* gs = ms ? msModel[1].getBinGain() : model.getBinGain();
+    const float* share = getWidthShare();
+    const float binHz = (float) (sampleRate / fftSize);
+    const bool mono = current.monoHz >= 20.0f;
+    const float lo = mono ? current.monoHz * 0.84089642f : 0.0f;
+    const float hi = mono ? current.monoHz * 1.18920712f : 0.0f;
+    for (int k = 0; k < numBins; ++k)
+    {
+        float w = share != nullptr ? 1.0f + share[k] * (current.width - 1.0f) : current.width;
+        const float hz = (float) k * binHz;
+        if (hz < hi)
+        {
+            const float t = hz <= lo ? 0.0f : std::clamp (2.0f * std::log2 (hz / lo), 0.0f, 1.0f);
+            w *= t * t * (3.0f - 2.0f * t);
+        }
+        imageMid[(size_t) k] *= gm[k] * gm[k];
+        imageSide[(size_t) k] *= w * w * gs[k] * gs[k];
     }
 }
 

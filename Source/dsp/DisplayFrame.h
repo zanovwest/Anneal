@@ -31,6 +31,7 @@ namespace anneal
         bool attacks = false;        // 5.0: Guard or Punch is on; transient[] is valid
         bool zeroLatency = false;    // 5.1: Zero latency (Heat, Punch and Listen are off)
         float punchDb = 0.0f;        // 5.0: strongest Punch move inside the range, dB
+        bool stereo = false;         // 5.2.3: two channels; sideRelDb[] is valid
 
         float inDb[numBands]   {};    // input level per ERB, dBFS (signal power within +-0.5 Cam)
         float outDb[numBands]  {};    // output level per ERB, dBFS
@@ -39,5 +40,9 @@ namespace anneal
         float sideGainDb[numBands] {};
         float keyDb[numBands] {};    // sidechain key level per ERB, dBFS (valid when keyActive)
         float transient[numBands] {}; // 5.0: 0..1, an attack in progress per ERB (valid when attacks)
+        // 5.2.3: the stereo image heard: per ERB, the output's Side level relative to its Mid, dB (the
+        // input's Mid and Side through the EQ curves, Width and Mono bass; -200 = no signal). Updated
+        // 37.5 times a second, valid when stereo.
+        float sideRelDb[numBands] {};
     };
 }

@@ -4,6 +4,39 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.3 — 2026-10-22 17:57
+
+New
+- **See the stereo image on the display.** The WIDTH lane now has a soft shade behind its line that
+  shows how stereo the sound you hear is at each frequency. It's dark where the sound is mono and
+  brighter the more of it is in the sides, at its brightest where the sides are as loud as the centre.
+  So you can see Width and Mono bass working on the actual music: turn Mono bass up and the shade
+  goes dark below it; push Width and it brightens. Hovering adds "sides −8 dB" (the sides' level
+  against the centre there) or "sides mono".
+  - It is what you hear from the main signal: the input's centre and sides through the auto EQ (in
+    Mid/Side, its Mid and Side curves), Width with its paint, and Mono bass. It works the same at Zero
+    latency and with Spread load; the Heat harmonics aren't in it, and a Listen solo doesn't change it.
+  - Updated 37.5 times a second, in three small steps on separate frames, so it never adds to a
+    single frame's peak. Mono tracks show no shade.
+  - Measured on a test mix: sides 6 dB under the centre read −6.02 dB; Width 200 % takes them to
+    0.00 dB and Width 0 % to mono; Mono bass at 400 Hz makes 200 Hz mono and leaves 1.5 kHz at −6.02 dB.
+
+Fixes
+- None found. The bug pass looked at yesterday's Width paint code (the per-bin share, the Side filter
+  design at zero latency, the saved paint, the lanes' hit-testing) and today's build logs.
+
+Tests: 173/173 acceptance checks, 3 new:
+- the image per band through Width (−6.02 dB; 200 %: 0.00 dB; 0 %: mono), centre-only and sides-only bands;
+- it follows Mono bass, Zero latency and Mid/Side, and mono tracks have none;
+- the display shows it (1.5 kHz −6.02 dB, 500 Hz mono).
+
+24/24 host checks on the built VST3 and 25/25 setup checks pass.
+
+CPU at 48 kHz: Stereo Low 2.0 %, Normal 2.8 %, Precise 4.7 %; Mid/Side Low 4.0 %, Normal 5.3 %,
+Precise 8.0 % (5.2.2: 2.0 / 2.8 / 4.5 and 3.9 / 5.2 / 7.8; the image costs a little, about 0.1 % of
+a core in Precise, part of the difference is run-to-run variation). The slowest 0.1 % of 64-sample
+blocks are where they were: Stereo Low 5 %, Precise 13 %; Mid/Side Precise 22 % of the deadline.
+
 ## 5.2.2 — 2026-10-21 21:06
 
 New

@@ -4330,6 +4330,87 @@ void testWidthPaint522()
     }
 }
 
+// 5.2.3: the stereo image on the display, per ERB: the output's Side relative to its Mid.
+void testStereoImage523()
+{
+    section ("42. 5.2.3 The stereo image on the display");
+    const double fs = 48000.0;
+    const double twoPi = 6.283185307179586;
+
+    // Centre only at 500 Hz, sides only at 3 kHz, and at 200 Hz and 1.5 kHz the sides 6 dB under the centre.
+    const int n = (int) (1.5 * fs);
+    Channels music (2, std::vector<float> ((size_t) n));
+    for (int i = 0; i < n; ++i)
+    {
+        const double t = i / fs;
+        const double m = 0.1 * std::sin (twoPi * 500.0 * t) + 0.1 * std::sin (twoPi * 1500.0 * t) + 0.1 * std::sin (twoPi * 200.0 * t);
+        const double s = 0.1 * std::sin (twoPi * 3000.0 * t) + 0.05 * std::sin (twoPi * 1500.0 * t) + 0.05 * std::sin (twoPi * 200.0 * t);
+        music[0][(size_t) i] = (float) (m + s);
+        music[1][(size_t) i] = (float) (m - s);
+    }
+    struct Image { bool stereo = false; float at200 = 0.0f, at500 = 0.0f, at1k5 = 0.0f, at3k = 0.0f; };
+    auto measure = [&] (float width, float monoHz, bool zero, bool midSide = false, int channels = 2)
+    {
+        Rig r (channels);
+        r.setNeutral();
+        r.set (ids::width, width);
+        r.set (ids::monoBass, monoHz);
+        r.set (ids::zeroLatency, zero ? 1.0f : 0.0f);
+        r.set (ids::stereoMode, midSide ? 1.0f : 0.0f);
+        r.prepare (fs, 512);
+        Channels in = music;
+        in.resize ((size_t) channels);
+        r.run (in, fixedBlocks (512));
+        Image im;
+        if (const auto* f = r.proc->getDisplay().read())
+        {
+            auto at = [f] (double hz) { return f->sideRelDb[juce::jlimit (0, anneal::DisplayFrame::numBands - 1,
+                                                    juce::roundToInt ((anneal::erb::hzToCam (hz) - f->z0) / f->dz))]; };
+            im = { f->stereo, at (200.0), at (500.0), at (1500.0), at (3000.0) };
+        }
+        return im;
+    };
+
+    {
+        const auto plain = measure (100.0f, 0.0f, false), wide = measure (200.0f, 0.0f, false), narrow = measure (0.0f, 0.0f, false);
+        check (plain.stereo && std::abs (plain.at1k5 + 6.02f) < 0.3f && plain.at500 < -40.0f && plain.at3k > 15.0f
+                   && std::abs (wide.at1k5) < 0.3f && narrow.at1k5 < -60.0f && narrow.at3k < -60.0f,
+               "the image: sides vs centre per band, through Width",
+               "1.5 kHz: " + db (plain.at1k5, 2) + " (Width 200 %: " + db (wide.at1k5, 2) + ", 0 %: " + db (narrow.at1k5, 0)
+                   + "); 500 Hz centre only: " + db (plain.at500, 0) + "; 3 kHz sides only: " + db (plain.at3k, 0));
+    }
+
+    {
+        // Mono bass at 400 Hz (its top) takes 200 Hz to mono and leaves 1.5 kHz; at zero latency and in
+        // Mid/Side (neutral EQ) the image is the same; a mono track has none.
+        const auto plain = measure (100.0f, 0.0f, false);
+        const auto mono = measure (100.0f, 400.0f, false);
+        const auto zero = measure (200.0f, 0.0f, true);
+        const auto ms = measure (100.0f, 0.0f, false, true);
+        const auto oneChannel = measure (100.0f, 0.0f, false, false, 1);
+        check (std::abs (plain.at200 + 6.02f) < 0.3f && mono.at200 < -40.0f && std::abs (mono.at1k5 + 6.02f) < 0.3f
+                   && std::abs (zero.at1k5) < 0.3f && std::abs (ms.at1k5 + 6.02f) < 0.3f && ! oneChannel.stereo,
+               "the image follows Mono bass, Zero latency and Mid/Side; none for mono tracks",
+               "200 Hz " + db (plain.at200, 2) + ", with Mono bass 400 Hz " + db (mono.at200, 0) + " (1.5 kHz stays "
+                   + db (mono.at1k5, 2) + "); Zero latency, Width 200 %: "
+                   + db (zero.at1k5, 2) + "; Mid/Side: " + db (ms.at1k5, 2) + "; mono track: " + (oneChannel.stereo ? "IMAGE" : "none"));
+    }
+
+    {
+        // The display draws it: the screen's value at 1.5 kHz and the hover read-out's "sides".
+        Rig r;
+        r.setNeutral();
+        r.prepare (fs, 512);
+        r.run (music, fixedBlocks (512));
+        anneal::PerceptionScreen screen (r.proc->getDisplay(), r.proc->apvts);
+        screen.setBounds (0, 0, 1440, 356);
+        screen.refreshNow();
+        const float shown = screen.sideRelAtHz (1500.0f), shownLow = screen.sideRelAtHz (500.0f);
+        check (std::abs (shown + 6.02f) < 0.5f && shownLow < -40.0f, "the display shows the image (1.5 kHz sides -6 dB, 500 Hz mono)",
+               "1.5 kHz " + db (shown, 2) + ", 500 Hz " + db (shownLow, 0));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -4389,6 +4470,7 @@ int main (int argc, char** argv)
     testUpdateRate52();
     testSpread521();
     testWidthPaint522();
+    testStereoImage523();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

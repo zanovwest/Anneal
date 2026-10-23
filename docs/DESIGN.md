@@ -103,7 +103,9 @@ occupies, which is exactly the grid the model works on. On it:
   ±0.25 Cam for display only, so tonal music reads as a flowing line, not plateaus),
 - a slim **width lane** under it (5.2.2, rose): the stereo width heard at each frequency, 0 % (mono)
   at the bottom, 100 % (as is) in the middle, 200 % at the top, with the area between the middle and
-  the line filled; flat and faint while Width is 100 % and Mono bass off,
+  the line filled; flat and faint while Width is 100 % and Mono bass off. Behind it (5.2.3) a neutral
+  shade, like the spectrum's wash, shows the stereo image heard: none where the sound is mono, brighter
+  the more of it is in the sides (full where the sides are as loud as the centre),
 - a **heat lane** below: how much harmonic energy is written into each band, relative to
   the output there,
 - draggable **Range** handles; outside the range is dimmed.
@@ -151,7 +153,9 @@ just "WIDTH" otherwise (a grey note over the rose fill wouldn't read). In paint 
 paint like the other two lanes take theirs (the tag then reads "how much of Width acts", on a backing),
 and painted-out regions dim there. The Range doesn't dim it:
 Width acts at every frequency. The hover read-out adds "width 150 %" wherever the width heard isn't
-100 %, and "paint EQ / heat / width" shares as before.
+100 %, and "paint EQ / heat / width" shares as before. Since 5.2.3 it also says how stereo the sound
+is there: "sides −8 dB" (the sides' level against the centre) or "sides mono" (40 dB or more under it),
+and the tag at rest reads "as is; shading = how much is in the sides".
 
 **SHAPE and presets (5.0).** SHAPE is three compact rows in rose: Punch (bipolar ring, its inner
 arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the

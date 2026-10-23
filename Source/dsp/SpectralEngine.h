@@ -177,6 +177,13 @@ namespace anneal
 
         void applyReference (const ReferenceCurve& curve) noexcept;
         void updateWidthShare() noexcept;
+        void updateImage (int step) noexcept;   // 5.2.3
+        // 5.2.3 The display's stereo image, in three light steps on consecutive frames of every eight
+        // (37.5 a second): the input's Mid / Side power per bin through what is applied to them, then
+        // the Mid band levels, then the Side band levels and Side - Mid, published with every frame.
+        std::vector<float> imageMid, imageSide, imageMidDb, imageSideDb, imageRelDb;
+        int imageTick = 0;
+        bool imageValid = false;
         PaintCurves paintCopy;                     // 5.2.2: its width curve, kept across prepare() and reset()
         std::vector<float> binCam, widthShare;      // per bin: its Cam, and the painted share of Width
         bool widthPainted = false;
@@ -195,6 +202,7 @@ namespace anneal
         {
             float msBlend = 0.0f, heatGuard = 1.0f;
             bool listenEq = false, keyHasSignal = false, harmonicsWritten = false;
+            int imageStep = -1;        // 5.2.3: this frame's step of the display's stereo image (-1: none)
             const float* keyPtr = nullptr;
             ModelSettings settings;
         };

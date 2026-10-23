@@ -88,6 +88,9 @@ namespace anneal
         juce::Rectangle<float> getHeatLane() const noexcept { return heatLane; }
         // 5.2.2: the stereo width heard at a frequency (1 = as is): Width by its painted share, Mono bass.
         float widthAtHz (float hz) const noexcept;
+        // 5.2.3: the stereo image drawn at a frequency: the sides' level relative to the centre, dB
+        // (-200 = no signal or a mono track).
+        float sideRelAtHz (float hz) const noexcept;
         float xForHz (float hz) const noexcept;
 
     private:
@@ -130,6 +133,8 @@ namespace anneal
         std::array<float, nb> inView {}, outView {}, heatView {};
         std::array<float, nb> keyDb {}, keyView {};   // sidechain key (3.0)
         std::array<float, nb> attack {};               // 5.0: attack per band, 0..1 (held briefly)
+        std::array<float, nb> sideRel {}, sideRelView {}; // 5.2.3: the stereo image (Side vs Mid, dB)
+        bool stereoImage = false;
         bool attacksOn = false;
         bool zeroLatency = false;                      // 5.1
         bool keyActive = false, frozen = false;

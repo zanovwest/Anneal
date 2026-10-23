@@ -142,6 +142,14 @@ from `prepare()`, so a paint change costs one table lookup per bin, no logs) and
 share: w = 1 + share × (Width − 1), before Mono bass. At zero latency the Side filter's design does the
 same per analysis bin, and the Side filter is only muted at Width 0 % when nothing is painted. Saved as
 a third list, "width", in the Paint child; projects without it get 100 %.
+
+5.2.3, the stereo image for the display, in three light steps on the first three frames of every
+eight (37.5 a second, more than the display's 30): stage 0 keeps the input's Mid and Side power per bin
+and stage 2 multiplies them by what Anneal applies to each (the auto-EQ curve, or in Mid/Side its Mid
+and Side curves; Width by its painted share; Mono bass); the next frame takes Mid to ERB band levels,
+the one after Side, and publishes Side − Mid per band (−200 where neither is above −100 dB). Split so
+no frame carries more than one band-level pass. The same at zero latency. The harmonics aren't in it,
+and the Listen solos don't change it (the display shows the full processing).
 The curves reach the audio thread through a third triple buffer; a stroke (begin, changes, end) is
 one undo step in the processor's history.
 

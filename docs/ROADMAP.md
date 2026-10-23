@@ -18,8 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-13. **Show the stereo image on the display**: the side/mid balance per band, behind the curve, so
-    Width and Mono bass can be seen working.
 14. **Import and export presets**: drop an `.annealpreset` file on the preset bar to add it, and copy
     the folder path from the menu.
 15. **Zero latency under the 3 % budget in Mid/Side too** (Stereo 2.4 %, Mid/Side 3.9 % at 5.1.1):
@@ -55,6 +53,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.3 (2026-10-22, daily update, done by hand that evening: "do todays entry"): **the stereo image
+  on the display** (item 13): the WIDTH lane shades behind its curve by how much of the sound heard is
+  in the sides at each frequency (the input's Mid and Side through the EQ curves, Width and Mono
+  bass, 37.5 times a second), and the hover read-out says "sides −8 dB" or "mono".
 - 5.2.2 (2026-10-21, daily update, asked for by the user that evening: "do 2.2 cause that should be
   todays update"): **Paint the width** (item 12): a WIDTH lane on the display between EQ and Heat that
   shows the stereo width heard per frequency (Width, its paint, Mono bass) and takes Width's paint in

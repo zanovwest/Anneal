@@ -62,6 +62,8 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
     outDb.fill (floorDb);
     heatDb.fill (floorDb);
     gainDb.fill (0.0f);
+    sideRel.fill (-200.0f);
+    sideRelView.fill (-200.0f);
 
     loParam = state.getParameter (ids::rangeLo);
     hiParam = state.getParameter (ids::rangeHi);
@@ -165,6 +167,7 @@ void PerceptionScreen::updateViews()
     smooth (outDb, outView);
     smooth (heatDb, heatView);
     smooth (keyDb, keyView);
+    smooth (sideRel, sideRelView);
 }
 
 void PerceptionScreen::timerCallback()
@@ -188,6 +191,12 @@ void PerceptionScreen::timerCallback()
         zeroLatency = f->zeroLatency;
         for (int b = 0; b < nb; ++b)
             attack[(size_t) b] = attacksOn ? juce::jmax (f->transient[b], attack[(size_t) b] * 0.7f) : 0.0f;
+        stereoImage = f->stereo;   // 5.2.3: eased toward each new image, so it doesn't flicker
+        for (int b = 0; b < nb; ++b)
+        {
+            const float was = sideRel[(size_t) b], now = stereoImage ? f->sideRelDb[b] : -200.0f;
+            sideRel[(size_t) b] = was <= -199.0f || now <= -199.0f ? now : was + 0.35f * (now - was);   // signal comes and goes at once
+        }
         for (int b = 0; b < nb; ++b)
         {
             keyDb[(size_t) b] = keyActive ? juce::jmax (f->keyDb[b], keyDb[(size_t) b] - levelFallPerTick) : floorDb;
@@ -220,6 +229,7 @@ void PerceptionScreen::timerCallback()
             gainDb[(size_t) b] *= 0.85f;
             sideGainDb[(size_t) b] *= 0.85f;
             attack[(size_t) b] *= 0.7f;
+            sideRel[(size_t) b] = juce::jmax (-200.0f, sideRel[(size_t) b] - levelFallPerTick);
         }
         if (idleTicks > refreshHz / 2)
             activity = {};
@@ -253,6 +263,11 @@ void PerceptionScreen::refreshNow()
         attacksOn = f->attacks;
         zeroLatency = f->zeroLatency;
         std::copy (f->transient, f->transient + nb, attack.begin());
+        stereoImage = f->stereo;
+        if (stereoImage)
+            std::copy (f->sideRelDb, f->sideRelDb + nb, sideRel.begin());
+        else
+            sideRel.fill (-200.0f);
         haveFrame = true;
         updateViews();
         updateReferenceOffset (true);
@@ -516,11 +531,32 @@ float PerceptionScreen::widthAtHz (float hz) const noexcept
     return w;
 }
 
+float PerceptionScreen::sideRelAtHz (float hz) const noexcept
+{
+    if (! stereoImage || ! haveFrame)
+        return -200.0f;
+    return valueAtCam (sideRelView.data(), erb::hzToCam (hz));
+}
+
 void PerceptionScreen::paintWidth (juce::Graphics& g)
 {
     // 5.2.2: the stereo width heard at each frequency, 0 % (mono) at the bottom, 100 % (as is) in the
     // middle, 200 % at the top; the area between the middle and the curve is filled.
     const auto lane = widthLane;
+
+    // 5.2.3: behind it, the stereo image heard as a neutral shade (measured context, like the
+    // spectrum): none where the sound is mono, brighter the more of it is in the sides (full at
+    // sides as loud as the centre).
+    if (stereoImage && haveFrame)
+        for (float x = lane.getX(); x < lane.getRight(); x += 2.0f)
+        {
+            const float rel = valueAtCam (sideRelView.data(), camForX (x + 1.0f));
+            const float share = rel <= -100.0f ? 0.0f : 1.0f / (1.0f + std::pow (10.0f, -rel / 10.0f));   // side / (mid + side)
+            if (share < 0.005f)
+                continue;
+            g.setColour (colour::text.withAlpha (0.02f + 0.11f * juce::jmin (1.0f, share / 0.5f)));   // as quiet as the spectrum's wash
+            g.fillRect (juce::Rectangle<float> (x, lane.getY(), juce::jmin (2.0f, lane.getRight() - x), lane.getHeight()));
+        }
     const float mid = lane.getCentreY();
     g.setFont (font (11.0f));
     g.setColour (colour::faint);
@@ -661,7 +697,7 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     const bool asIs = std::abs (widthSetting - 1.0f) < 1.0e-4f && monoHz < monoBassMinHz && PaintCurves::isFull (paintCurves.width);
     tag ({ widthLane.getX() + 10.0f, widthLane.getY() + 2.0f }, "WIDTH", colour::rose.withAlpha (0.9f),
          paintMode ? juce::String ("how much of Width acts (top = all of it)")
-                   : asIs ? juce::String ("stereo width as is") : juce::String());
+                   : asIs ? juce::String ("as is; shading = how much is in the sides") : juce::String());
     legendBottom = y + 14.0f;
 }
 
@@ -726,6 +762,9 @@ void PerceptionScreen::paintReadout (juce::Graphics& g)
     const float widthHere = widthAtHz (hz);   // 5.2.2
     if (std::abs (widthHere - 1.0f) > 0.005f)
         text << "    width " << juce::roundToInt (widthHere * 100.0f) << " %";
+    const float sides = sideRelAtHz (hz);     // 5.2.3: the stereo image heard here
+    if (sides > -199.0f)
+        text << "    sides " << (sides < -40.0f ? juce::String ("mono") : signedDb (sides, 0) + " dB");
     if (paintMode || wEq < 0.995f || wHeat < 0.995f || wWidth < 0.995f)
         text << "    paint EQ " << juce::roundToInt (wEq * 100.0f) << " % / heat " << juce::roundToInt (wHeat * 100.0f)
              << " % / width " << juce::roundToInt (wWidth * 100.0f) << " %";
