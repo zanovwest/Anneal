@@ -136,7 +136,8 @@ peak, holding its deepest value for 1.5 s so a brief catch is readable.
 
 **Zero latency (5.1).** The Latency menu gets a first entry, *Zero 0.0 ms*, with what rests in
 brackets. When it is on, the pill reads 0.0 ms, the display adds a ZERO LATENCY tag under AUTO EQ
-("minimum-phase filters, no delay; Heat, Punch and Listen need Low or more"), the heat lane stays flat
+("minimum-phase filters, no delay; Punch on whole attacks; Heat and Listen need Low or more" since 5.2.7,
+or "Heat, Punch and Listen need Low or more" with *Punch at Zero* off), the heat lane stays flat
 and the Heat ring's live line says "off at zero latency". Nothing is hidden or greyed: the knobs keep
 their settings for when a latency mode comes back.
 
@@ -158,7 +159,7 @@ is there: "sides −8 dB" (the sides' level against the centre) or "sides mono" 
 and the tag at rest reads "as is; shading = how much is in the sides".
 
 **SHAPE and presets (5.0).** SHAPE is three compact rows in rose: Punch (bipolar ring, its inner
-arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the
+arc shows how hard the latest attack is shaped; drawn since 5.2.7, also at zero latency), Width and Mono bass. With Punch or Guard on, the
 display draws a short rose bar at the foot of the EQ lane in each band where an attack is happening
 (height and opacity grow with its strength, fading over ~0.1 s), so you see what they act on without
 another lane. (5.2.4: a preset file held over the preset bar outlines it in a dashed line with "DROP TO

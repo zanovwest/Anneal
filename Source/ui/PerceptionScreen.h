@@ -149,6 +149,8 @@ namespace anneal
         std::unique_ptr<juce::ParameterAttachment> loAttachment, hiAttachment, listenAttachment, refModeAttachment;
         std::unique_ptr<juce::ParameterAttachment> widthAttachment, monoAttachment;   // 5.2.2: the WIDTH lane
         float widthSetting = 1.0f, monoHz = 0.0f;
+        std::unique_ptr<juce::ParameterAttachment> zeroPunchAttachment;   // 5.2.7: what the ZERO LATENCY tag says
+        bool zeroPunchOn = true;
         int listenMode = 0, refMode = 0;
         juce::RangedAudioParameter* loParam = nullptr;
         juce::RangedAudioParameter* hiParam = nullptr;

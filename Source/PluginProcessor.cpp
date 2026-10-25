@@ -212,6 +212,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pMonoBass   = apvts.getRawParameterValue (ids::monoBass);
     pZero       = apvts.getRawParameterValue (ids::zeroLatency);
     pSpread     = apvts.getRawParameterValue (ids::spread);
+    pZeroPunch  = apvts.getRawParameterValue (ids::zeroPunch);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -231,6 +232,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     spread = requestedSpread();
     applySpreadToEngines();
     zeroFilter.prepare (48000.0, 2, engines[anneal::SpectralEngine::low]->getFftSize(), engines[anneal::SpectralEngine::low]->getHopSize());
+    zeroPunch.prepare (48000.0);
     setLatencySamples (totalLatency());
     startTimerHz (10);
 }
@@ -295,6 +297,7 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     applySpreadToEngines();
     engines[anneal::SpectralEngine::low]->setAnalysisOnly (zero);
     zeroFilter.reset();
+    zeroPunch.reset();
     getEngine().reset (pFreeze->load() > 0.5f && previous == mode);
     if (pFreeze->load() > 0.5f && previous != mode)   // a frozen curve stays what it is in the new mode
         getEngine().adoptCurveFrom (*engines[(size_t) previous]);
@@ -353,6 +356,7 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     applySpreadToEngines();
     zeroFilter.prepare (sampleRate, preparedChannels, engines[anneal::SpectralEngine::low]->getFftSize(),
                         engines[anneal::SpectralEngine::low]->getHopSize());
+    zeroPunch.prepare (sampleRate);
     setLatencySamples (totalLatency());
 
     // The dry ring is sized for the longest mode with Spread load, so switching never allocates.
@@ -393,6 +397,7 @@ void AnnealAudioProcessor::reset()
     for (auto& e : engines)
         e->reset (frozen);
     zeroFilter.reset();
+    zeroPunch.reset();
     limiter.reset();
     bypassRing.clear();
     bypassPos = 0;
@@ -458,10 +463,19 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.refAmount = pRefAmount->load() * 0.01f;
     zeroWidth = p.width;
     zeroMonoHz = p.monoHz;
+    // 5.2.7: at zero latency Punch is the time-domain shaper's, inside Range and by the EQ routing
+    // (Zero Latency Punch off: it rests there, as up to 5.2.6).
+    zeroPunchSettings.punch = pZeroPunch->load() > 0.5f ? p.punch : 0.0f;
+    zeroPunchSettings.midSide = p.midSide > 0.5f;
+    zeroPunchSettings.midAmount = p.eqMid;
+    zeroPunchSettings.sideAmount = p.eqSide;
+    zeroPunchSettings.rangeLoHz = p.rangeLoHz;
+    zeroPunchSettings.rangeHiHz = p.rangeHiHz;
     if (zero)
     {
-        // 5.1 Zero latency: Heat and Punch need the FFT frames (harmonics written into them, an
-        // attack boosted as it happens), and so do the Listen solos. They rest until a latency mode.
+        // 5.1 Zero latency: Heat needs the FFT frames (harmonics written into them), and so do the
+        // Listen solos. They rest until a latency mode. Punch is the shaper's here (5.2.7), so the
+        // analysis curve leaves it out.
         p.heat = 0.0f;
         p.punch = 0.0f;
         p.listen = anneal::listenOff;
@@ -548,7 +562,10 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         float* wet[2] = { buffer.getWritePointer (0, start), nch > 1 ? buffer.getWritePointer (1, start) : nullptr };
         const float* keyChunk[2] = { key[0] != nullptr ? key[0] + start : nullptr, key[1] != nullptr ? key[1] + start : nullptr };
         if (zero)
+        {
             zeroFilter.process (wet, nch, len, getEngine(), keyChannels > 0 ? keyChunk : nullptr, keyChannels, zeroWidth, zeroMonoHz);
+            zeroPunch.process (wet, nch, len, zeroPunchSettings);   // 5.2.7 (Punch 0: the audio as it is)
+        }
         else
             getEngine().process (wet, nch, len, keyChannels > 0 ? keyChunk : nullptr, keyChannels);
 
@@ -636,6 +653,9 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         const float gr = limiter.takeGainReductionDb();
         if (gr < limiterReduction.load (std::memory_order_relaxed))
             limiterReduction.store (gr, std::memory_order_relaxed);
+        const float pd = zeroPunch.takePeakDb();
+        if (std::abs (pd) > std::abs (zeroPunchDb.load (std::memory_order_relaxed)))
+            zeroPunchDb.store (pd, std::memory_order_relaxed);
     }
 
     matchGainDb.store (juce::Decibels::gainToDecibels (matchSmoothed.getCurrentValue()), std::memory_order_relaxed);
@@ -1017,6 +1037,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasMonoBass = tree.getChildWithProperty ("id", anneal::ids::monoBass).isValid();
             const bool hasZero = tree.getChildWithProperty ("id", anneal::ids::zeroLatency).isValid();
             const bool hasSpread = tree.getChildWithProperty ("id", anneal::ids::spread).isValid();
+            const bool hasZeroPunch = tree.getChildWithProperty ("id", anneal::ids::zeroPunch).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1092,6 +1113,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasSpread)
                 if (auto* sp = apvts.getParameter (anneal::ids::spread))
                     sp->setValueNotifyingHost (0.0f);
+
+            // Projects saved before 5.2.7: Punch rests at zero latency, as it did then (it only matters
+            // with Zero latency on), whatever this instance had.
+            if (! hasZeroPunch)
+                if (auto* zp = apvts.getParameter (anneal::ids::zeroPunch))
+                    zp->setValueNotifyingHost (0.0f);
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

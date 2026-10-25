@@ -430,6 +430,53 @@ int main (int argc, char* argv[])
         mixParam->setValueNotifyingHost (1.0f);
         check (zok, "Zero latency through the host", zlog);
 
+        // 5.2.7 Punch at zero latency through the host: Punch +100 % makes pluck attacks louder with
+        // nothing delayed; "Zero Latency Punch" (not automatable) off lets Punch rest there again.
+        {
+            auto* pp = findParam (*plugin, "Punch");
+            auto* zpp = findParam (*plugin, "Zero Latency Punch");
+            bool pok = zp != nullptr && pp != nullptr && zpp != nullptr && ! zpp->isAutomatable();
+            juce::String plog;
+            if (pok)
+            {
+                zp->setValueNotifyingHost (1.0f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+                const double fs = plugin->getSampleRate();
+                const int period = (int) (0.4 * fs), attack = (int) (0.015 * fs);
+                auto plucks = testsig::silence (2, 6 * period);
+                std::vector<int> onsets;
+                for (int t0 = period; t0 + period <= (int) plucks[0].size(); t0 += period)
+                {
+                    onsets.push_back (t0);
+                    for (int i = 0; i < period; ++i)
+                        plucks[0][(size_t) (t0 + i)] = plucks[1][(size_t) (t0 + i)]
+                            = (float) (0.3 * std::sin (2.0 * testsig::pi * 2000.0 * i / fs) * std::exp (-i / fs / 0.08));
+                }
+                auto attackDb = [&] (const char* punchText, float zeroPunchOn)
+                {
+                    pp->setValueNotifyingHost (pp->getValueForText (punchText));
+                    zpp->setValueNotifyingHost (zeroPunchOn);
+                    plugin->reset();
+                    testsig::Channels o;
+                    run (*plugin, plucks, o, [] { return 256; });
+                    double sum = 0.0;
+                    for (size_t k = 1; k < onsets.size(); ++k)
+                        sum += testsig::toDb (testsig::toneAmplitude (o[0].data() + onsets[k], attack, 2000.0, fs)
+                                              / testsig::toneAmplitude (plucks[0].data() + onsets[k], attack, 2000.0, fs));
+                    return sum / (double) (onsets.size() - 1);
+                };
+                const double off = attackDb ("0", 1.0f), up = attackDb ("+100", 1.0f), resting = attackDb ("+100", 0.0f);
+                pok = plugin->getLatencySamples() == 0 && up - off >= 3.0 && std::abs (resting - off) < 0.01;
+                plog << "latency " << plugin->getLatencySamples() << "; pluck attacks at +100 %: " << juce::String (up - off, 2)
+                     << " dB, with Zero Latency Punch off: " << juce::String (resting - off, 3) << " dB";
+                pp->setValueNotifyingHost (0.5f);
+                zpp->setValueNotifyingHost (1.0f);
+                zp->setValueNotifyingHost (0.0f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            }
+            check (pok, "Punch at zero latency through the host", plog);
+        }
+
         // 5.2.1 Spread load through the host: one hop (160 samples at 48 kHz) more latency, reported
         // and applied to the plug-in's output (Mix 100 %) and the dry path (Mix 0) alike; off restores Low.
         auto* sp = findParam (*plugin, "Spread Load");

@@ -78,7 +78,8 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                  "Reference amount: how far Match steers the auto EQ toward the reference's tone, up to 6 dB either way"),
       punch (p.apvts, ids::punch, "Punch", colour::rose, Size::secondary, true, {},
              "Punch: makes attacks louder (+) or softer (-) in the bands they hit, up to 8 dB, and leaves the body of the "
-             "sound alone. Sharpest in Low latency. Off = as before"),
+             "sound alone. Sharpest in Low latency. At Zero latency it shapes each attack across the whole Range at once "
+             "(not band by band), with softer Range edges. Off = as before"),
       width (p.apvts, ids::width, "Width", colour::rose, Size::secondary, false, {},
              "Width: the stereo width of Anneal's output, from mono (0 %) to twice as wide (200 %). 100 % = as before"),
       monoBass (p.apvts, ids::monoBass, "Mono bass", colour::rose, Size::secondary, false, {},
@@ -323,11 +324,15 @@ void AnnealEditorContent::updateActivity()
     const auto a = screen.getActivity();
     auto param = [this] (const char* id) { return processor.apvts.getRawParameterValue (id)->load(); };
 
-    // 5.0 Punch: how hard the latest attack is shaped (the compact knob's inner arc).
-    if (std::abs (param (ids::punch)) < 0.5f || processor.isZeroLatency())
+    // 5.0 Punch: how hard the latest attack is shaped (the compact knob's inner arc). 5.2.7: at zero
+    // latency, the time-domain shaper's strongest move since the last tick, with the display's ballistics.
+    const float zeroPunchDb = processor.takeZeroPunchDb();
+    zeroPunchShown = std::abs (zeroPunchDb) >= std::abs (zeroPunchShown) ? zeroPunchDb : zeroPunchShown * 0.955f;   // -0.4 dB a tick
+    const float punchDb = processor.isZeroLatency() ? zeroPunchShown : a.punchDb;
+    if (std::abs (param (ids::punch)) < 0.5f || (processor.isZeroLatency() && param (ids::zeroPunch) < 0.5f))
         punch.setActivity (0.0f, {});
     else
-        punch.setActivity (juce::jlimit (0.0f, 1.0f, std::abs (a.punchDb) / 8.0f), juce::String (a.punchDb, 1) + " dB");
+        punch.setActivity (juce::jlimit (0.0f, 1.0f, std::abs (punchDb) / 8.0f), juce::String (punchDb, 1) + " dB");
 
     if (param (ids::reveal) < 0.05f)        reveal.setActivity (0.0f, "off");
     else if (! a.live)                      reveal.setActivity (0.0f, {});

@@ -63,11 +63,12 @@ void Knob::setActivity (float amount01, const juce::String& text)
         return;
     activity = amount01;
     activityText = text;
-    if (size == Size::secondary)
-        return;
+    // The inner arc, also on a compact ring (5.2.7: it was dropped there, so Punch's never showed);
+    // only the big rings have the line of text.
     slider.getProperties().set ("activity", text.isEmpty() ? -1.0 : (double) amount01);
     slider.repaint();
-    repaint (0, ringDiameter (size) + ringGap + titleH, getWidth(), lineH);
+    if (size != Size::secondary)
+        repaint (0, ringDiameter (size) + ringGap + titleH, getWidth(), lineH);
 }
 
 void Knob::paint (juce::Graphics& g)

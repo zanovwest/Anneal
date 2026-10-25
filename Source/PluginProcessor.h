@@ -4,6 +4,7 @@
 #include "dsp/LoudnessMatch.h"
 #include "dsp/Reference.h"
 #include "dsp/SpectralEngine.h"
+#include "dsp/TransientShaper.h"
 #include "dsp/TruePeakLimiter.h"
 #include "dsp/ZeroLatencyFilter.h"
 
@@ -74,6 +75,8 @@ public:
     // The engine of the latency mode in use (one per mode, all prepared up front).
     anneal::SpectralEngine& getEngine() noexcept { return *engines[(size_t) mode]; }
     const anneal::ZeroLatencyFilter& getZeroFilter() const noexcept { return zeroFilter; }   // for the tests
+    // 5.2.7 Punch at zero latency: the strongest gain it applied since the last call (dB, signed).
+    float takeZeroPunchDb() noexcept { return zeroPunchDb.exchange (0.0f); }
     anneal::TripleBuffer<anneal::DisplayFrame>& getDisplay() noexcept { return display; }
     float getMatchGainDb() const noexcept { return matchGainDb.load (std::memory_order_relaxed); }
     float takeOutputPeak (int channel) noexcept;   // linear peak since the last call
@@ -180,6 +183,9 @@ private:
     bool spread = false;                                 // 5.2.1 Spread load (the engines rest it while analysis only)
     anneal::ZeroLatencyFilter zeroFilter;
     float zeroWidth = 1.0f, zeroMonoHz = 0.0f;
+    anneal::TransientShaper zeroPunch;                   // 5.2.7 Punch at zero latency (time domain)
+    anneal::TransientShaper::Settings zeroPunchSettings;
+    std::atomic<float> zeroPunchDb { 0.0f };
     anneal::LoudnessMatch match;
 
     juce::AudioBuffer<float> dryRing, dryBlock;
@@ -231,6 +237,7 @@ private:
     std::atomic<float>* pWidth = nullptr;
     std::atomic<float>* pMonoBass = nullptr;
     std::atomic<float>* pSpread = nullptr;     // 5.2.1
+    std::atomic<float>* pZeroPunch = nullptr;  // 5.2.7
 
     // 5.0 user presets
     juce::File userFolder { anneal::presets::defaultUserFolder() };

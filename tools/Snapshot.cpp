@@ -193,9 +193,9 @@ int main (int argc, char* argv[])
           }, 1200.0f, true },
         { "frozen", [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); set (p, ids::smooth, 70); }, 3150.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
-        { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat and Punch rest; the tag says so)
+        { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat rests, the tag says so; 5.2.7 Punch works)
           {
-              set (p, ids::zeroLatency, 1); set (p, ids::heat, 40);
+              set (p, ids::zeroLatency, 1); set (p, ids::heat, 40); set (p, ids::punch, 60);
               p.applyLatencyModeIfChanged();
           }, 3150.0f, true },
         { "shape", [] (AnnealAudioProcessor& p)   // 5.0: Punch, Width, Mono bass, with the attack marks

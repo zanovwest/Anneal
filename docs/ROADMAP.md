@@ -18,11 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-16. **Punch at zero latency**: Punch rests at zero latency because it works on the FFT frames. A
-    time-domain transient shaper there (a fast and a slow envelope on Mid and Side, the gain only on
-    attacks, Range respected as far as a crossover allows) so Punch acts at zero latency too, with the
-    knob's note saying how it differs. Punch 0 % stays bit-identical; tests on plucks (attacks moved,
-    body within 0.1 dB).
 17. **Loudness readout**: short-term and integrated loudness (LUFS, EBU R128 K-weighting) of the input
     and the output under the output meter, reset with a click, so you can see what Anneal does to the
     level as well as hear it (the Match gain shown next to it). Cheap on the audio thread (two biquads
@@ -66,6 +61,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.7 (2026-10-25, daily update): **Punch at zero latency** (item 16): a time-domain transient
+  shaper after the zero-latency filters (a fast and a slow envelope, Stereo linked or Mid and Side by
+  the EQ routing, inside Range with first-order edges that never turn a boost into a cut). 2 kHz
+  plucks: attacks +6.2 / −6.0 dB, body 0.001 dB; Punch 0 bit-identical. A *Punch at Zero* switch in
+  the Latency menu: on for new instances, off for projects from before 5.2.7 (they sound as made).
+  Fixed: the Punch ring's inner arc was never drawn.
 - 5.2.6 (2026-10-24, daily update): **Zero latency lighter, part 2** (item 15): the old filters stop
   when the 1.33 ms crossfade ends instead of running the whole hop (the same output, bit for bit), and
   the design's cepstrum and phase come from half-size transforms (a DCT and a DST through 2048-point

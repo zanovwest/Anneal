@@ -293,6 +293,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::spread, 1 }, "Spread Load", false,
         juce::AudioParameterBoolAttributes().withAutomatable (false)));
 
+    // 5.2.7 Punch at zero latency: Punch through the time-domain shaper while Zero latency is on. On for
+    // new instances; projects from before 5.2.7 (Punch rested at zero latency) load with it off, so
+    // they sound as they were made. Not automatable (a mode switch, like the two above).
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::zeroPunch, 1 }, "Zero Latency Punch", true,
+        juce::AudioParameterBoolAttributes().withAutomatable (false)));
+
     return layout;
 }
 }

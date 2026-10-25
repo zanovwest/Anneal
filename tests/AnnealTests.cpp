@@ -9,6 +9,7 @@
 #include "dsp/RealFft.h"
 #include "dsp/ReferenceAnalyser.h"
 #include "dsp/SpectralEngine.h"
+#include "dsp/TransientShaper.h"
 #include "dsp/TruePeakLimiter.h"
 #include "dsp/ErbScale.h"
 #include "ui/PerceptionScreen.h"
@@ -1774,6 +1775,7 @@ void benchmark()
                                     Case { 48000.0, 64, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 1 },
                                     Case { 48000.0, 64, 0, 0, 0, 0, 0, 1 }, Case { 48000.0, 512, 0, 0, 0, 0, 0, 1 },
                                     Case { 48000.0, 64, 0, 1, 0, 0, 0, 1 },
+                                    Case { 48000.0, 64, 0, 0, 0, 0, 1, 1 },   // 5.2.7: Punch working at zero latency
                                     // 5.2.1 Spread load, against the same cases without it above (and at 32)
                                     Case { 48000.0, 64, 0, 0, 0, 0, 0, 0, 1 }, Case { 48000.0, 64, 2, 0, 0, 0, 0, 0, 1 },
                                     Case { 48000.0, 64, 2, 1, 0, 0, 0, 0, 1 }, Case { 48000.0, 32, 2, 1 },
@@ -4778,6 +4780,288 @@ void testZeroLighter526()
     }
 }
 
+// The Punch knob of an open editor (a compact SHAPE row), or nullptr.
+anneal::Knob* punchKnobOf (AnnealEditorContent& content)
+{
+    for (auto* c : content.getChildren())
+        if (auto* k = dynamic_cast<anneal::Knob*> (c); k != nullptr && k->slider.getTitle() == "Punch")
+            return k;
+    return nullptr;
+}
+
+// Pixels that differ between the Punch ring drawn as it is now and with no activity shown (2x scale).
+int punchArcPixels (anneal::Knob& knob)
+{
+    auto& s = knob.slider;
+    const auto shown = s.createComponentSnapshot (s.getLocalBounds(), true, 2.0f);
+    const double was = s.getProperties().getWithDefault ("activity", -1.0);
+    s.getProperties().set ("activity", -1.0);
+    const auto plain = s.createComponentSnapshot (s.getLocalBounds(), true, 2.0f);
+    s.getProperties().set ("activity", was);
+    int differ = 0;
+    for (int y = 0; y < std::min (shown.getHeight(), plain.getHeight()); ++y)
+        for (int x = 0; x < std::min (shown.getWidth(), plain.getWidth()); ++x)
+            differ += shown.getPixelAt (x, y) != plain.getPixelAt (x, y) ? 1 : 0;
+    return differ;
+}
+
+// Plucks that stop 10 ms after their last attack, so the newest display frame holds that attack.
+Channels plucksEndingInAnAttack (double fs)
+{
+    std::vector<int> onsets;
+    auto x = pluckTrain (fs, 2.0, 2000.0, onsets);
+    for (auto& ch : x)
+        ch.resize ((size_t) (onsets.back() + (int) (0.010 * fs)));
+    return x;
+}
+
+//==============================================================================
+// 5.2.7 bug pass. The Punch ring's inner arc (5.0, docs/DESIGN.md: "its inner arc shows how hard the
+// latest attack is shaped") was never drawn: a compact knob dropped its activity in setActivity, and
+// the look-and-feel drew the arc for big rings only.
+void testFixes527()
+{
+    section ("46. 5.2.7 bug fixes");
+    const double fs = 48000.0;
+    Rig r;
+    r.setNeutral();
+    r.set (ids::punch, 100.0f);
+    r.prepare (fs, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    auto* knob = editor != nullptr ? punchKnobOf (editor->getContent()) : nullptr;
+    if (knob == nullptr)
+    {
+        check (false, "the Punch ring shows its attacks (inner arc)", "no editor or no Punch knob");
+        return;
+    }
+    auto& content = editor->getContent();
+    r.run (plucksEndingInAnAttack (fs), fixedBlocks (64));
+    content.screen.refreshNow();
+    content.tick (0.0f);
+    const double shown = knob->slider.getProperties().getWithDefault ("activity", -1.0);
+    const int arcPixels = punchArcPixels (*knob);
+    check (shown > 0.25 && arcPixels > 20, "the Punch ring shows how hard the latest attack is shaped (its inner arc)",
+           "Punch +100 %, Low, 10 ms into a 2 kHz pluck: activity " + juce::String (shown, 2) + " ("
+               + juce::String (content.screen.getActivity().punchDb, 1) + " dB), " + juce::String (arcPixels) + " pixels of arc");
+}
+
+//==============================================================================
+// 5.2.7 Punch at zero latency (roadmap item 16): a time-domain transient shaper after the zero-latency
+// filters, inside Range, by the EQ routing. Punch 0 leaves the audio exactly as it is.
+void testZeroPunch527()
+{
+    section ("47. 5.2.7 Punch at zero latency");
+    const double fs = 48000.0;
+    const double twoPi = 6.283185307179586;
+    std::vector<int> onsets;
+    const auto plucks = pluckTrain (fs, 4.0, 2000.0, onsets);
+    const int attackLen = (int) (0.015 * fs), bodyFrom = (int) (0.08 * fs), bodyLen = (int) (0.08 * fs);
+
+    struct Setup { float punch = 0.0f, rangeLo = 20.0f, rangeHi = 20000.0f; int stereoMode = 0, eqTarget = 0; float zeroPunch = 1.0f; };
+    auto runZero = [&] (const Channels& in, const Setup& s, const std::function<int()>& blocks)
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::zeroLatency, 1.0f);
+        r.set (ids::punch, s.punch);
+        r.set (ids::rangeLo, s.rangeLo);
+        r.set (ids::rangeHi, s.rangeHi);
+        r.set (ids::stereoMode, (float) s.stereoMode);
+        r.set (ids::eqTarget, (float) s.eqTarget);
+        r.set (ids::zeroPunch, s.zeroPunch);
+        r.prepare (fs, 512);
+        return r.run (in, blocks);
+    };
+    // Attack (first 15 ms) and body (80-160 ms) of the plucks' tone, relative to the input (no latency).
+    auto shape = [&] (const Channels& in, const Setup& s, double hz)
+    {
+        const auto out = runZero (in, s, fixedBlocks (256));
+        return std::pair { windowGainDb (out, in, onsets, 0, 0, attackLen, hz, fs), windowGainDb (out, in, onsets, 0, bodyFrom, bodyLen, hz, fs) };
+    };
+
+    // Attacks louder or softer, the body left alone.
+    {
+        const auto off = shape (plucks, {}, 2000.0), up = shape (plucks, { 100.0f }, 2000.0), down = shape (plucks, { -100.0f }, 2000.0);
+        info ("Zero latency, 2 kHz plucks: attack (first 15 ms) Punch off " + db (off.first, 2) + ", +100 % " + db (up.first, 2)
+              + ", -100 % " + db (down.first, 2) + ";  body (80-160 ms) " + db (off.second, 3) + " / " + db (up.second, 3) + " / " + db (down.second, 3));
+        check (up.first - off.first >= 3.0 && off.first - down.first >= 3.0
+                   && std::abs (up.second - off.second) <= 0.1 && std::abs (down.second - off.second) <= 0.1,
+               "Zero latency: Punch +100 % makes attacks louder, -100 % softer, the body within 0.1 dB",
+               "attack " + db (up.first - off.first, 2) + " / " + db (down.first - off.first, 2) + ", body "
+                   + db (up.second - off.second, 3) + " / " + db (down.second - off.second, 3));
+    }
+
+    // Punch 0 is the audio as it is, bit for bit (the shaper alone, every layout and block size), and so
+    // is a steady sound with Punch on once its start has passed: the gain is only on attacks.
+    {
+        const auto music = testsig::musicLike (fs, 3.0);
+        bool same = true;
+        for (int layout = 0; layout < 3; ++layout)
+        {
+            anneal::TransientShaper t;
+            t.prepare (fs);
+            anneal::TransientShaper::Settings s;
+            s.midSide = layout == 1;
+            s.rangeLoHz = 30.0f;
+            s.rangeHiHz = 18000.0f;
+            Channels y = music;
+            const int nch = layout == 2 ? 1 : 2;
+            auto blocks = randomBlocks (1, 700, (unsigned) (11 + layout));
+            for (int pos = 0; pos < (int) y[0].size();)
+            {
+                const int b = std::min (blocks(), (int) y[0].size() - pos);
+                float* ptrs[2] = { y[0].data() + pos, y[1].data() + pos };
+                t.process (ptrs, nch, b, s);
+                pos += b;
+            }
+            same = same && y == music;
+        }
+        // Tones from 0.1 s (after silence, so their start is an attack); "after" is from 0.35 s on.
+        const int n = (int) (2.0 * fs), from = (int) (0.1 * fs), after = (int) (0.35 * fs);
+        Channels tones (2, std::vector<float> ((size_t) n, 0.0f));
+        for (int i = from; i < n; ++i)
+        {
+            const double t = i / fs;
+            tones[0][(size_t) i] = (float) (0.1 * std::sin (twoPi * 60.0 * t) + 0.1 * std::sin (twoPi * 2000.0 * t));
+            tones[1][(size_t) i] = (float) (0.1 * std::sin (twoPi * 60.0 * t) - 0.05 * std::sin (twoPi * 3000.0 * t));
+        }
+        const auto still = runZero (tones, {}, fixedBlocks (512)), punched = runZero (tones, { 100.0f }, fixedBlocks (512));
+        double diff = 0.0, start = 0.0;
+        for (size_t c = 0; c < 2; ++c)
+            for (int i = 0; i < n; ++i)
+            {
+                double& slot = i < after ? start : diff;
+                slot = std::max (slot, (double) std::abs (punched[c][(size_t) i] - still[c][(size_t) i]));
+            }
+        check (same && diff == 0.0 && start > 0.01,
+               "Zero latency: Punch 0 leaves the audio as it is; Punch on touches attacks only",
+               juce::String (same ? "Punch 0: bit for bit in Stereo, Mid/Side and mono, random blocks" : "PUNCH 0 CHANGED THE AUDIO")
+                   + "; steady tones at +100 %: " + juce::String (diff, 9) + " difference from 250 ms after their start (at the start "
+                   + juce::String (start, 3) + ")");
+    }
+
+    // Range: the shaper splits off what is inside Range with gentle (6 dB/oct) edges, so a pluck two
+    // octaves above Range High moves a little, in the same direction, and never the wrong way.
+    {
+        std::vector<int> o4;
+        const auto high = pluckTrain (fs, 4.0, 4000.0, o4);
+        const auto off = shape (high, { 0.0f, 20.0f, 1000.0f }, 4000.0), up = shape (high, { 100.0f, 20.0f, 1000.0f }, 4000.0),
+                   down = shape (high, { -100.0f, 20.0f, 1000.0f }, 4000.0), inUp = shape (high, { 100.0f }, 4000.0);
+        const double moveUp = up.first - off.first, moveDown = down.first - off.first, inside = inUp.first - off.first;
+        check (moveUp >= 0.0 && moveDown <= 0.0 && std::max (moveUp, -moveDown) <= inside / 3.0,
+               "Zero latency: Punch works inside Range (gentle edges, never the wrong way)",
+               "4 kHz plucks, Range 20 Hz-1 kHz: +100 % " + db (moveUp, 2) + ", -100 % " + db (moveDown, 2) + "; inside Range "
+                   + db (inside, 2));
+    }
+
+    // Mid/Side: Punch follows the EQ routing (EQ: Mid leaves a pluck in the sides alone).
+    {
+        Channels mid = plucks, side = plucks;
+        for (size_t i = 0; i < plucks[0].size(); ++i)
+        {
+            mid[1][i] = plucks[0][i];
+            side[1][i] = -plucks[0][i];
+        }
+        const auto midOff = shape (mid, { 0.0f, 20.0f, 20000.0f, 1, 1 }, 2000.0), midUp = shape (mid, { 100.0f, 20.0f, 20000.0f, 1, 1 }, 2000.0);
+        const auto sideOff = shape (side, { 0.0f, 20.0f, 20000.0f, 1, 1 }, 2000.0), sideUp = shape (side, { 100.0f, 20.0f, 20000.0f, 1, 1 }, 2000.0);
+        check (midUp.first - midOff.first >= 3.0 && std::abs (sideUp.first - sideOff.first) < 0.01,
+               "Zero latency, Mid/Side: Punch follows the EQ routing",
+               "EQ: Mid, +100 %: a pluck in the centre " + db (midUp.first - midOff.first, 2) + ", in the sides "
+                   + db (sideUp.first - sideOff.first, 3));
+    }
+
+    // The same output at any block size; Punch, Range and Mid/Side automated every block stay clean.
+    {
+        const Setup s { 60.0f, 30.0f, 18000.0f, 0, 0 };
+        const auto a = runZero (plucks, s, fixedBlocks (512)), b = runZero (plucks, s, fixedBlocks (64)), c = runZero (plucks, s, randomBlocks (1, 700, 5));
+        double diff = 0.0;
+        for (size_t ch = 0; ch < 2; ++ch)
+            for (size_t i = 0; i < plucks[0].size(); ++i)
+                diff = std::max ({ diff, (double) std::abs (b[ch][i] - a[ch][i]), (double) std::abs (c[ch][i] - a[ch][i]) });
+
+        Rig r;
+        r.set (ids::zeroLatency, 1.0f);
+        r.prepare (fs, 512);
+        const auto music = testsig::musicLike (fs, 6.0, 3);
+        std::mt19937 rng (21);
+        std::uniform_real_distribution<float> u (0.0f, 1.0f);
+        Channels out = music;
+        juce::AudioBuffer<float> buf (2, 1024);
+        juce::MidiBuffer midi;
+        for (int pos = 0; pos < (int) music[0].size();)
+        {
+            const int len = std::min (1 + (int) (u (rng) * 700.0f), (int) music[0].size() - pos);
+            r.set (ids::punch, -100.0f + 200.0f * u (rng));
+            r.set (ids::rangeLo, 20.0f + 1500.0f * u (rng));
+            r.set (ids::rangeHi, 1000.0f + 19000.0f * u (rng));
+            r.set (ids::stereoMode, u (rng) < 0.1f ? 1.0f - r.proc->apvts.getRawParameterValue (ids::stereoMode)->load() : r.proc->apvts.getRawParameterValue (ids::stereoMode)->load());
+            r.set (ids::eqTarget, (float) (int) (u (rng) * 2.99f));
+            buf.setSize (2, len, false, false, true);
+            for (int ch = 0; ch < 2; ++ch)
+                buf.copyFrom (ch, 0, music[(size_t) ch].data() + pos, len);
+            r.proc->processBlock (buf, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                std::copy (buf.getReadPointer (ch), buf.getReadPointer (ch) + len, out[(size_t) ch].data() + pos);
+            pos += len;
+        }
+        check (diff < 1.0e-6 && allFinite (out) && maxAbs (out) < 8.0 * maxAbs (music),
+               "Zero latency Punch: same output at any block size, clean under automation",
+               "512 / 64 / random blocks differ by " + juce::String (diff, 9) + "; automated every block: peak "
+                   + db (toDb (maxAbs (out)), 1) + " (input " + db (toDb (maxAbs (music)), 1) + ")");
+    }
+
+    // Projects from before 5.2.7 keep Punch resting at zero latency (as they were made); new ones have it.
+    {
+        Rig a;
+        a.set (ids::zeroLatency, 1.0f);
+        a.set (ids::punch, 100.0f);
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        if (auto* el = xml->getChildByAttribute ("id", ids::zeroPunch))
+            xml->removeChildElement (el, true);
+        juce::MemoryBlock old;
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        Rig b;
+        b.proc->setStateInformation (old.getData(), (int) old.getSize());
+        const bool fresh = Rig().proc->apvts.getRawParameterValue (ids::zeroPunch)->load() > 0.5f;
+        const bool oldOff = b.proc->apvts.getRawParameterValue (ids::zeroPunch)->load() < 0.5f;
+        const auto restingOld = shape (plucks, { 100.0f, 20.0f, 20000.0f, 0, 0, 0.0f }, 2000.0), plain = shape (plucks, {}, 2000.0);
+        auto* zp = b.proc->apvts.getParameter (ids::zeroPunch);
+        check (fresh && oldOff && std::abs (restingOld.first - plain.first) < 1.0e-9 && ! zp->isAutomatable(),
+               "projects from before 5.2.7: Punch at Zero off (rests, as made); new instances: on",
+               juce::String ("new instance ") + (fresh ? "on" : "OFF") + ", old project " + (oldOff ? "off" : "ON")
+                   + "; Punch +100 % with it off moves attacks by " + db (restingOld.first - plain.first, 6));
+    }
+
+    // The editor: the Punch ring shows the shaper's move at zero latency; the tag no longer says Punch rests.
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::zeroLatency, 1.0f);
+        r.set (ids::punch, 100.0f);
+        r.prepare (fs, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        auto* knob = editor != nullptr ? punchKnobOf (editor->getContent()) : nullptr;
+        if (knob == nullptr)
+        {
+            check (false, "Zero latency: the Punch ring shows the shaper's move", "no editor or no Punch knob");
+            return;
+        }
+        r.run (plucksEndingInAnAttack (fs), fixedBlocks (64));
+        editor->getContent().tick (0.0f);
+        const double on = knob->slider.getProperties().getWithDefault ("activity", -1.0);
+        r.set (ids::zeroPunch, 0.0f);
+        r.run (plucksEndingInAnAttack (fs), fixedBlocks (64));
+        editor->getContent().tick (0.0f);
+        const double rests = knob->slider.getProperties().getWithDefault ("activity", -1.0);
+        check (on > 0.5 && rests < 0.0, "Zero latency: the Punch ring shows the shaper's move (none with Punch at Zero off)",
+               "10 ms into a pluck at +100 %: activity " + juce::String (on, 2) + "; with it off " + juce::String (rests, 2));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -4790,7 +5074,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes402();
+        testFixes527();
+        std::printf ("\n%d checks, %d failed\n", checks, failures);
+        return failures;
+    }
+    if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
+    {
+        testZeroPunch527();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -4841,6 +5131,8 @@ int main (int argc, char** argv)
     testPresetImport524();
     testZeroDesign525();
     testZeroLighter526();
+    testFixes527();
+    testZeroPunch527();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

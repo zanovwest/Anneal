@@ -83,6 +83,12 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
     monoAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::monoBass),
         [this] (float v) { monoHz = v >= monoBassMinHz ? v : 0.0f; repaint(); }, state.undoManager);
     monoAttachment->sendInitialUpdate();
+    if (auto* zp = state.getParameter (ids::zeroPunch))   // 5.2.7
+    {
+        zeroPunchAttachment = std::make_unique<juce::ParameterAttachment> (*zp,
+            [this] (float v) { zeroPunchOn = v > 0.5f; repaint(); }, state.undoManager);
+        zeroPunchAttachment->sendInitialUpdate();
+    }
 
     setPaintMode (false);   // sets the tooltip
     startTimerHz (refreshHz);
@@ -665,9 +671,10 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     if (keyActive)
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "KEY", colour::violet,
              "sidechain level (violet line)");
-    if (zeroLatency)
+    if (zeroLatency)   // 5.2.7: Punch works here too (on whole attacks) unless Punch at Zero is off
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "ZERO LATENCY", colour::text,
-             "minimum-phase filters, no delay; Heat, Punch and Listen need Low or more");
+             zeroPunchOn ? "minimum-phase filters, no delay; Punch on whole attacks; Heat and Listen need Low or more"
+                         : "minimum-phase filters, no delay; Heat, Punch and Listen need Low or more");
 
     // 4.0 Reference: what it is and what it is doing, whenever it is in use or a file is loading.
     juce::String refText;

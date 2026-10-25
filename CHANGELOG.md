@@ -4,6 +4,49 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.7 — 2026-10-25 10:21
+
+New
+- **Punch works at zero latency.** Up to now Punch rested whenever Latency was on Zero, because it
+  shapes attacks inside the FFT frames that zero latency doesn't have. Now a separate transient shaper
+  takes over there, with no delay:
+  - It listens to the sound inside your Range for attacks (a quick level against a slower one, the same
+    "4 dB starts, 12 dB is a full hit" scale as the normal Punch) and makes them up to 8 dB louder (+) or
+    softer (−) as they happen, then lets go within a few tens of milliseconds. The body of the sound
+    stays as it is.
+  - Measured on 2 kHz plucks: attacks +6.2 dB at +100 % and −6.0 dB at −100 % (the normal Punch in Low:
+    ±7.9 dB), the body within 0.001 dB.
+  - How it differs from the normal Punch: it shapes each attack across the whole Range at once, not band
+    by band, and Paint doesn't shape it. Range's edges are gentle (a pluck two octaves outside Range
+    still moves 0.6 dB, against 6 dB inside), but never the wrong way: a boost never turns into a cut.
+    In Mid/Side it follows the EQ routing, like the normal Punch. The Punch knob's tooltip and the
+    display's ZERO LATENCY tag say so.
+  - Punch at 0 % leaves the audio exactly as it was, bit for bit, and a steady sound with Punch on is
+    untouched once its start has passed.
+- **Punch at Zero**, a switch at the bottom of the Latency menu. It is on for new instances. Projects
+  saved before 5.2.7 open with it off, so a project made with Zero latency and Punch sounds exactly as
+  it did (Punch rested there). Tick it to use Punch at zero latency in such a project.
+
+Fixes
+- **The Punch knob's activity arc now shows.** Since 5.0, the small Punch ring was meant to show how hard
+  the latest attack is being shaped with a thin arc inside it, but it was never drawn (small knobs threw
+  that information away). It now shows, in the latency modes and at zero latency.
+
+Tests: 188/188 acceptance checks, 8 new:
+- the Punch ring's arc (it failed before the fix: activity −1, 0 pixels of arc; now 450 pixels);
+- zero-latency Punch: attacks ±6 dB with the body within 0.1 dB; Punch 0 bit for bit in Stereo, Mid/Side
+  and mono at random block sizes; steady tones untouched after their start; Range (4 kHz plucks, Range
+  up to 1 kHz: +0.6 / −0.2 dB, never the wrong way); Mid/Side routing (a pluck in the sides with EQ: Mid
+  untouched); the same output at any block size and clean under automation of Punch, Range and
+  Mid/Side every block; projects from before 5.2.7 open with Punch at Zero off; the Punch ring at zero
+  latency.
+
+25/25 host checks on the built VST3 (1 new: Punch at zero latency through the host) and 25/25 setup checks
+pass. CPU at 48 kHz / 64 samples: Zero latency Stereo 3.6 %, Mid/Side 6.1 % of one core with Punch off
+(5.2.6: 3.5 / 6.1 %; the shaper's detector, which always runs at zero latency, costs under 0.1 %), and
+4.3 % with Punch, Width and Mono bass all working; the slowest 0.1 % of blocks 9 % of the deadline.
+The latency modes measure as in 5.2.6 (Stereo Low 2.0 %, Precise 4.6 %; Mid/Side Precise 8.0 %).
+
 ## 5.2.6 — 2026-10-24 23:40
 
 New

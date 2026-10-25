@@ -47,8 +47,8 @@ juce::Font AnnealLookAndFeel::getPopupMenuFont()
 
 //==============================================================================
 // Knobs: a ring. Track, value arc in the role colour (from the start, or from the top for bipolar
-// controls) with a soft halo, a white thumb at the value, and for hero/primary knobs a thin inner
-// arc showing how hard the control is working right now (slider property "activity", -1 = none).
+// controls) with a soft halo, a white thumb at the value, and a thin inner arc showing how hard the
+// control is working right now (slider property "activity", -1 = none; compact rings too, 5.2.7).
 void AnnealLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float pos,
                                           float a0, float a1, juce::Slider& s)
 {
@@ -91,16 +91,17 @@ void AnnealLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w
         g.drawLine (juce::Line<float> (polar (c, r + arcW * 0.5f + 2.0f, mid), polar (c, r + arcW * 0.5f + 5.0f, mid)), 1.5f);
     }
 
-    if (! compact && activity >= 0.0)
+    if (activity >= 0.0)
     {
-        const float ri = r - arcW * 0.5f - 6.0f;
+        // A compact ring's arc is thinner and clear of its thumb.
+        const float ri = r - arcW * 0.5f - (compact ? 4.5f : 6.0f);
+        const juce::PathStrokeType thin (compact ? 1.5f : 2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
         g.setColour (colour::track.withAlpha (0.6f * alpha));
-        g.strokePath (arc (c, ri, a0, a1), juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (arc (c, ri, a0, a1), thin);
         if (activity > 0.005)
         {
             g.setColour (role.withAlpha (0.75f * alpha));
-            g.strokePath (arc (c, ri, a0, a0 + (float) activity * (a1 - a0)),
-                          juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.strokePath (arc (c, ri, a0, a0 + (float) activity * (a1 - a0)), thin);
         }
     }
 

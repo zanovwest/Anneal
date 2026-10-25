@@ -69,6 +69,7 @@ private:
     std::uint32_t shownRefSerial = ~0u, shownPaintSerial = ~0u;
     bool refLoaded = false;
     int refErrorTicks = 0;
+    float zeroPunchShown = 0.0f;   // 5.2.7: Punch at zero latency, dB (the ring's arc)
 
 public:
     void setPaintMode (bool on);   // the Paint pill and the display's paint mode, together

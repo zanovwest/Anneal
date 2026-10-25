@@ -29,7 +29,7 @@ namespace anneal
         float refSeconds = 0.0f;     // 4.0: Learn key, seconds of key learned so far
         float matchDb = 0.0f;        // 4.0: Match, strongest move inside the range, dB
         bool attacks = false;        // 5.0: Guard or Punch is on; transient[] is valid
-        bool zeroLatency = false;    // 5.1: Zero latency (Heat, Punch and Listen are off)
+        bool zeroLatency = false;    // 5.1: Zero latency (Heat and Listen are off; 5.2.7 Punch works in the time domain)
         float punchDb = 0.0f;        // 5.0: strongest Punch move inside the range, dB
         bool stereo = false;         // 5.2.3: two channels; sideRelDb[] is valid
 

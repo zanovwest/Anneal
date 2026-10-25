@@ -41,9 +41,18 @@ LatencyMenu::LatencyMenu (juce::AudioProcessorValueTreeState& state, std::functi
         }, state.undoManager);
         spreadAttachment->sendInitialUpdate();
     }
-    setTooltip ("Latency: Zero for no delay at all (Heat, Punch and the Listen solos rest), Low for tracking and "
-                "playing live, Precise for the finest bass detail. Spread load evens out the CPU at small buffers "
-                "for one update step more (3.3 ms). The host re-aligns tracks when the latency changes");
+    if (auto* pp = state.getParameter (ids::zeroPunch))
+    {
+        zeroPunchAttachment = std::make_unique<juce::ParameterAttachment> (*pp, [this] (float v)
+        {
+            zeroPunch = v > 0.5f;
+            repaint();
+        }, state.undoManager);
+        zeroPunchAttachment->sendInitialUpdate();
+    }
+    setTooltip ("Latency: Zero for no delay at all (Heat and the Listen solos rest; with Punch at Zero, Punch shapes whole "
+                "attacks), Low for tracking and playing live, Precise for the finest bass detail. Spread load evens out "
+                "the CPU at small buffers for one update step more (3.3 ms). The host re-aligns tracks when the latency changes");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
@@ -89,9 +98,10 @@ void LatencyMenu::mouseDown (const juce::MouseEvent&)
 {
     juce::PopupMenu menu;
     menu.addSectionHeader ("LATENCY");
-    // 5.1: Zero first; it is the shortest, but Heat, Punch and the Listen solos need the FFT frames.
+    // 5.1: Zero first; it is the shortest, but Heat and the Listen solos need the FFT frames (Punch
+    // works there through its time-domain shaper since 5.2.7).
     if (zeroAttachment != nullptr)
-        menu.addItem (4, "Zero   0.0 ms   (no delay; Heat, Punch and Listen rest)", true, zero);
+        menu.addItem (4, "Zero   0.0 ms   (no delay; Heat and Listen rest)", true, zero);
     for (int m = 0; m < 3; ++m)
     {
         auto text = juce::String (modeNames[m]) + "   " + juce::String (msForMode ? msForMode (m) : 0.0, 1) + " ms";
@@ -108,6 +118,13 @@ void LatencyMenu::mouseDown (const juce::MouseEvent&)
              << (zero ? "; rests at Zero)" : ")");
         menu.addItem (5, text, true, spread);
     }
+    // 5.2.7: Punch at Zero through the time-domain shaper; projects from before 5.2.7 open with it off.
+    if (zeroPunchAttachment != nullptr)
+    {
+        if (spreadAttachment == nullptr)
+            menu.addSeparator();
+        menu.addItem (6, "Punch at Zero   (shapes whole attacks, no delay)", true, zeroPunch);
+    }
 
     juce::Component::SafePointer<LatencyMenu> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withStandardItemHeight (24),
@@ -123,6 +140,11 @@ void LatencyMenu::mouseDown (const juce::MouseEvent&)
                             if (result == 5)
                             {
                                 safe->spreadAttachment->setValueAsCompleteGesture (safe->spread ? 0.0f : 1.0f);
+                                return;
+                            }
+                            if (result == 6)
+                            {
+                                safe->zeroPunchAttachment->setValueAsCompleteGesture (safe->zeroPunch ? 0.0f : 1.0f);
                                 return;
                             }
                             if (safe->zero && safe->zeroAttachment != nullptr)

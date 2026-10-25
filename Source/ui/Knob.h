@@ -8,7 +8,8 @@ namespace anneal
     //  hero / primary: a ring with the value inside it (click the value to type), the title under
     //    the ring, and a live line under the title saying how hard the control is working right
     //    now; the same amount is drawn as a thin inner arc. Without audio, a static caption.
-    //  secondary: a compact row - small ring on the left, title and value beside it.
+    //  secondary: a compact row - small ring on the left, title and value beside it; a control
+    //    that reports activity (Punch) shows it as a thin arc inside the small ring (no text).
     class Knob : public juce::Component
     {
     public:
@@ -20,7 +21,7 @@ namespace anneal
         void paint (juce::Graphics&) override;
         void resized() override;
 
-        // amount01 drives the inner arc; empty text = no audio (show the caption, no arc).
+        // amount01 drives the inner arc; empty text = no audio or nothing to show (the caption, no arc).
         void setActivity (float amount01, const juce::String& text);
 
         static int preferredHeight (Size size);

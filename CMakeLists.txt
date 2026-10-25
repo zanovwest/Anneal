@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 # (Apple Silicon + Intel), as .github/workflows/platforms.yml does.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
 
-project(Anneal VERSION 5.2.6 LANGUAGES C CXX)
+project(Anneal VERSION 5.2.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +37,7 @@ target_sources(AnnealCore INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/HarmonicSynth.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/SpectralEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/LoudnessMatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/TransientShaper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/TruePeakLimiter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/dsp/ZeroLatencyFilter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Params.cpp
