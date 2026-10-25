@@ -4611,6 +4611,173 @@ void testZeroDesign525()
     }
 }
 
+//==============================================================================
+// 5.2.6: zero latency lighter, part 2: the filter design on half-size transforms, and the old
+// filters run only while the crossfade lasts.
+void testZeroLighter526()
+{
+    section ("45. 5.2.6 lighter zero latency (half-size design transforms, crossfade)");
+    const double fs = 48000.0, twoPi = 6.283185307179586;
+    anneal::ZeroLatencyFilter now, before;
+    before.setFullTransforms (true);   // 5.2.5's design
+    now.prepare (fs, 2, 1024, 160);
+    before.prepare (fs, 2, 1024, 160);
+    const int bins = 513, taps = now.getTaps();
+
+    // Section 44's curves, and the Mid and Side curves the engine measures on music (Mid/Side,
+    // Reveal and Smooth at 100 %, zero latency).
+    std::vector<float> dip ((size_t) bins), wild ((size_t) bins), share ((size_t) bins);
+    std::mt19937 rng (5);
+    std::uniform_real_distribution<double> phaseRand (0.0, twoPi);
+    const double p1 = phaseRand (rng), p2 = phaseRand (rng);
+    for (int k = 0; k < bins; ++k)
+    {
+        const double f = std::max (1.0, k * fs / 1024.0), z = anneal::erb::hzToCam (f);
+        dip[(size_t) k] = (float) std::pow (10.0, -9.0 * std::exp (-0.5 * std::pow (std::log2 (f / 3000.0) / 0.3, 2.0)) / 20.0);
+        wild[(size_t) k] = (float) std::pow (10.0, (8.0 * std::sin (0.7 * z + p1) + 4.0 * std::sin (2.1 * z + p2)) / 20.0);
+        share[(size_t) k] = f < 1000.0 ? 0.0f : f < 2000.0 ? (float) ((f - 1000.0) / 1000.0) : 1.0f;
+    }
+    std::vector<float> realMid ((size_t) bins, 1.0f), realSide ((size_t) bins, 1.0f);
+    bool measured = false;
+    double realSpread = 0.0;   // how far the engine's curve moves (dB), so the check isn't on a flat curve
+    {
+        Rig r;
+        r.setNeutral();
+        r.set (ids::reveal, 100.0f);
+        r.set (ids::smooth, 100.0f);
+        r.set (ids::stereoMode, 1.0f);
+        r.set (ids::zeroLatency, 1.0f);
+        r.prepare (fs, 512);
+        r.run (testsig::musicLike (fs, 3.0), fixedBlocks (512));
+        const auto& e = r.proc->getEngine();
+        measured = e.getNumBins() == bins;
+        if (measured)
+        {
+            std::copy_n (e.getCurveMid(), bins, realMid.begin());
+            std::copy_n (e.getCurveSide(), bins, realSide.begin());
+        }
+        const auto [lo, hi] = std::minmax_element (realMid.begin(), realMid.end());
+        realSpread = 20.0 * std::log10 (std::max (*hi, 1.0e-6f) / std::max (*lo, 1.0e-6f));
+    }
+
+    auto response = [&] (const std::vector<float>& h, double f)
+    {
+        double re = 0.0, im = 0.0;
+        for (size_t n = 0; n < h.size(); ++n)
+        {
+            re += h[n] * std::cos (twoPi * f * (double) n / fs);
+            im -= h[n] * std::sin (twoPi * f * (double) n / fs);
+        }
+        return 10.0 * std::log10 (re * re + im * im + 1.0e-30);
+    };
+    {
+        // Responses compared from 30 Hz to 18 kHz wherever 5.2.5's is above -60 dB (not in the Mono
+        // bass notch or where the sides are painted out), taps everywhere.
+        struct Case { const std::vector<float>* curve; float scale, monoHz; const float* widthShare; };
+        const Case cases[] = {
+            { &dip, 1.0f, 0.0f, nullptr },        { &wild, 1.0f, 0.0f, nullptr },
+            { &wild, 1.5f, 120.0f, share.data() }, { &wild, 1.5f, 20.0f, nullptr },   // Mono bass at its lowest
+            { &wild, 2.0f, 400.0f, nullptr },      // Mono bass at its highest, Width 200 %
+            { &dip, 0.0f, 0.0f, share.data() },    // Width 0 % painted to act above 1 kHz
+            { &realMid, 1.0f, 0.0f, nullptr },     { &realSide, 1.0f, 0.0f, nullptr },
+            { &realSide, 1.5f, 120.0f, share.data() } };
+        double worstDb = 0.0, worstDb40 = 0.0, worstTap = 0.0;   // above -60 dB, above -40 dB
+        int compared = 0;
+        for (const auto& cs : cases)
+        {
+            std::vector<float> hn ((size_t) taps), hb ((size_t) taps);
+            now.design (cs.curve->data(), bins, cs.scale, cs.monoHz, hn.data(), cs.widthShare);
+            before.design (cs.curve->data(), bins, cs.scale, cs.monoHz, hb.data(), cs.widthShare);
+            float peak = 0.0f;
+            double tap = 0.0;
+            for (int n = 0; n < taps; ++n)
+            {
+                peak = std::max (peak, std::abs (hb[(size_t) n]));
+                tap = std::max (tap, (double) std::abs (hn[(size_t) n] - hb[(size_t) n]));
+            }
+            worstTap = std::max (worstTap, tap / std::max (peak, 1.0e-9f));
+            for (int i = 0; i < 120; ++i)
+            {
+                const double f = 30.0 * std::pow (600.0, i / 119.0);
+                const double rb = response (hb, f);
+                if (rb < -60.0)
+                    continue;
+                const double d = std::abs (response (hn, f) - rb);
+                worstDb = std::max (worstDb, d);
+                if (rb >= -40.0)
+                    worstDb40 = std::max (worstDb40, d);
+                ++compared;
+            }
+        }
+        // The running sums of the half-size transforms round a little more than 5.2.5's full ones
+        // (its distance from the exact math 0.00004 dB at 0 dB, now 0.0003 dB): far below hearing.
+        check (measured && realSpread > 3.0 && compared > 900 && worstDb40 < 0.001 && worstDb < 0.005 && worstTap < 1.0e-5,
+               "the design on half-size transforms = 5.2.5's (9 curves: music, Width, paint, Mono bass 20-400 Hz)",
+               "largest response difference " + juce::String (worstDb40, 6) + " dB above -40 dB, " + juce::String (worstDb, 6)
+                   + " dB down to -60 dB; taps " + juce::String (worstTap, 8) + " of the peak (the engine's curve moving "
+                   + db (realSpread, 1) + ")");
+    }
+
+    {
+        // The old filters run only during the 1.33 ms crossfade after each design (up to 5.2.5, at
+        // big buffers, for the whole 3.3 ms between designs), and the output doesn't depend on the
+        // block sizes. Mid/Side, Reveal and Smooth 100 %, Width 150 %, Mono bass 120 Hz.
+        const auto music = testsig::musicLike (fs, 3.0);
+        Channels outs[3];
+        double perFrame[3] {};
+        int b = 0;
+        for (const auto& blocks : { fixedBlocks (512), fixedBlocks (64), randomBlocks (1, 700, 11) })
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::reveal, 100.0f);
+            r.set (ids::smooth, 100.0f);
+            r.set (ids::stereoMode, 1.0f);
+            r.set (ids::width, 150.0f);
+            r.set (ids::monoBass, 120.0f);
+            r.set (ids::zeroLatency, 1.0f);
+            r.prepare (fs, 512);
+            const auto faded0 = r.proc->getZeroFilter().getCrossfadedSamples();
+            const auto frames0 = r.proc->getEngine().getFrameCount();
+            outs[b] = r.run (music, blocks);
+            const auto frames = r.proc->getEngine().getFrameCount() - frames0;
+            perFrame[b] = (double) (r.proc->getZeroFilter().getCrossfadedSamples() - faded0) / std::max (1u, frames);
+            ++b;
+        }
+        double diff = 0.0;
+        for (int v = 1; v < 3; ++v)
+            for (size_t c = 0; c < 2; ++c)
+                for (size_t i = 0; i < music[0].size(); ++i)
+                    diff = std::max (diff, (double) std::abs (outs[v][c][i] - outs[0][c][i]));
+        const double fadeLength = std::round (0.00133 * fs);
+        const double worstPerFrame = std::max ({ perFrame[0], perFrame[1], perFrame[2] });
+        check (worstPerFrame <= fadeLength + 0.5 && perFrame[0] > 0.5 * fadeLength && diff < 1.0e-6,
+               "zero latency: the old filters run only during the crossfade, the same output at any block size",
+               "samples with both filters per design: " + juce::String (perFrame[0], 1) + " (512-sample blocks), "
+                   + juce::String (perFrame[1], 1) + " (64), " + juce::String (perFrame[2], 1) + " (random); the fade is "
+                   + juce::String ((int) fadeLength) + "; outputs differ by " + juce::String (diff, 9));
+    }
+
+    {
+        // Speed, reported (not a check: timings follow the machine's load).
+        std::vector<float> h ((size_t) taps);
+        auto best = [&] (anneal::ZeroLatencyFilter& z)
+        {
+            double fastest = 1.0e9;
+            for (int run = 0; run < 5; ++run)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int i = 0; i < 200; ++i)
+                    z.design (wild.data(), bins, 1.0f, 0.0f, h.data());
+                fastest = std::min (fastest, 1.0e6 * std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() / 200.0);
+            }
+            return fastest;
+        };
+        const double beforeUs = best (before), nowUs = best (now);
+        info ("one zero-latency filter design: " + juce::String (nowUs, 1) + " us (5.2.5's full-size transforms: " + juce::String (beforeUs, 1) + " us)");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -4673,6 +4840,7 @@ int main (int argc, char** argv)
     testStereoImage523();
     testPresetImport524();
     testZeroDesign525();
+    testZeroLighter526();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

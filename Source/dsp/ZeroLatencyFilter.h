@@ -35,16 +35,27 @@ namespace anneal
         // 5.2.5: the design's log, exp, sin and cos go through fastmath, in batches; true = the standard
         // library one value at a time, as up to 5.2.4 (for the tests and the profile).
         void setExactMath (bool on) noexcept { exactMath = on; }
+        // 5.2.6: the cepstrum and the phase come from half-size transforms (a DCT and a DST through one
+        // N/2-point real FFT each) and the magnitude is the curve itself, not exp (log); true = 5.2.5's
+        // full-size transforms (for the tests and the profile). Exact math always uses the full ones.
+        void setFullTransforms (bool on) noexcept { fullTransforms = on; }
+        // Samples during which the old and new filters both ran (the crossfades), for the tests.
+        std::uint64_t getCrossfadedSamples() const noexcept { return crossfaded; }
 
     private:
         int filter (int which, int set, const float* x, float* out, int n) noexcept;   // returns 0 if muted
+        // The design's steps 2 to 4: logMag (natural log) -> the minimum-phase spectrum in w[0..designSize + 1].
+        void spectrumFull (float* w) noexcept;   // two designSize-point transforms (up to 5.2.5)
+        void spectrumHalf (float* w) noexcept;   // 5.2.6: two designSize / 2-point ones, magnitude from gain
 
         double sampleRate = 48000.0;
         int channels = 2, taps = 1024, designSize = 4096, maxSegment = 256, fadeLength = 64;
-        RealFft fft;
+        RealFft fft, fftHalf;                    // designSize and designSize / 2 points
         std::vector<float> work, logMag;
         std::vector<float> phase, sinPart, cosPart, fadeOut;   // 5.2.5: batched design, the fade's table
-        bool exactMath = false;
+        std::vector<float> gain, halfSin, halfCos;             // 5.2.6: the curve; sin / cos (pi k / (designSize / 2))
+        bool exactMath = false, fullTransforms = false;
+        std::uint64_t crossfaded = 0;
         std::vector<float> coef[2][2];           // [0 Mid, 1 Side][set]
         int active[2][2] {};                     // taps in use (the rest are below -120 dB)
         bool muted[2][2] {};                     // Side at Width 0 (unpainted): no Side at all

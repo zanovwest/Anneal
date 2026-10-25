@@ -73,6 +73,7 @@ public:
 
     // The engine of the latency mode in use (one per mode, all prepared up front).
     anneal::SpectralEngine& getEngine() noexcept { return *engines[(size_t) mode]; }
+    const anneal::ZeroLatencyFilter& getZeroFilter() const noexcept { return zeroFilter; }   // for the tests
     anneal::TripleBuffer<anneal::DisplayFrame>& getDisplay() noexcept { return display; }
     float getMatchGainDb() const noexcept { return matchGainDb.load (std::memory_order_relaxed); }
     float takeOutputPeak (int channel) noexcept;   // linear peak since the last call

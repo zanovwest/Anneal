@@ -19,10 +19,19 @@ void ZeroLatencyFilter::prepare (double sr, int numChannels, int analysisFftSize
     maxSegment = std::max (16, analysisHop);
     fadeLength = std::max (16, (int) std::lround (0.00133 * sr));
     fft.prepare (designSize);
+    fftHalf.prepare (designSize / 2);
     work.assign ((size_t) (2 * designSize), 0.0f);
     logMag.assign ((size_t) (designSize / 2 + 1), 0.0f);
-    for (auto* v : { &phase, &sinPart, &cosPart })
+    for (auto* v : { &phase, &sinPart, &cosPart, &gain })
         v->assign ((size_t) (designSize / 2 + 1), 0.0f);
+    const int half = designSize / 2;
+    halfSin.resize ((size_t) half);
+    halfCos.resize ((size_t) half);
+    for (int k = 0; k < half; ++k)
+    {
+        halfSin[(size_t) k] = (float) std::sin (3.141592653589793 * k / half);
+        halfCos[(size_t) k] = (float) std::cos (3.141592653589793 * k / half);
+    }
     // The impulse response's raised-cosine fade over its last eighth, as a table (the same values the
     // design computed per sample up to 5.2.4).
     const int fade = taps / 8;
@@ -86,6 +95,9 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
         }
         logMag[(size_t) k] = std::max (g, 1.0e-6f);   // floor -120 dB
     }
+    const bool halfTransforms = ! exactMath && ! fullTransforms;
+    if (halfTransforms)   // 5.2.6: the magnitude for step 4, as it is
+        std::copy (logMag.begin(), logMag.begin() + half + 1, gain.begin());
     // Natural log: 5.2.5 batched through fastmath (ln g = 10 log10 g * ln 10 / 10).
     if (exactMath)
         for (int k = 0; k <= half; ++k)
@@ -97,6 +109,24 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
         for (int k = 0; k <= half; ++k)
             logMag[(size_t) k] *= lnPerDb;
     }
+
+    // 2. to 4. The minimum-phase spectrum with that magnitude, then its impulse response.
+    if (halfTransforms)
+        spectrumHalf (w);
+    else
+        spectrumFull (w);
+    fft.inverse (w);
+
+    // 5. The first `taps` samples, faded out over the last eighth (a minimum-phase response has
+    //    its energy at the start, so little is lost).
+    const int fade = (int) fadeOut.size();
+    for (int n = 0; n < taps; ++n)
+        out[n] = n >= taps - fade ? w[n] * fadeOut[(size_t) (n - (taps - fade))] : w[n];
+}
+
+void ZeroLatencyFilter::spectrumFull (float* w) noexcept
+{
+    const int m = designSize, half = m / 2;
 
     // 2. Real cepstrum: the inverse transform of the (real, even) log magnitude.
     for (int k = 0; k <= half; ++k)
@@ -111,7 +141,7 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
         w[n] *= 2.0f;
     std::fill (w + half + 1, w + m, 0.0f);
 
-    // 4. Back to a (complex) log spectrum; exponentiate; the impulse response.
+    // 4. Back to a (complex) log spectrum; exponentiate.
     fft.forward (w);
     if (exactMath)
     {
@@ -140,13 +170,68 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
             w[2 * k + 1] = mag[k] * sinPart[(size_t) k];
         }
     }
-    fft.inverse (w);
+}
 
-    // 5. The first `taps` samples, faded out over the last eighth (a minimum-phase response has
-    //    its energy at the start, so little is lost).
-    const int fade = (int) fadeOut.size();
-    for (int n = 0; n < taps; ++n)
-        out[n] = n >= taps - fade ? w[n] * fadeOut[(size_t) (n - (taps - fade))] : w[n];
+void ZeroLatencyFilter::spectrumHalf (float* w) noexcept
+{
+    // 5.2.6: the same spectrum from two N-point real FFTs instead of two 2N-point ones (N = half).
+    // The log magnitude L is real and even, so its cepstrum is a DCT, and the minimum phase only
+    // needs the imaginary part of the folded cepstrum's transform, a DST (the real part is L again).
+    // Both come from an N-point real FFT of a mix of the sequence and its mirror image: one half of
+    // the outputs from the FFT directly, the other by a running sum (in double).
+    const int m = designSize, half = m / 2;
+    const float* L = logMag.data();
+    const float* sn = halfSin.data();
+    float* d = w + m;   // the folded cepstrum, in the upper half of the work buffer
+
+    // 2. The cepstrum, C[n] = sum over k < m of L[k] cos (2 pi k n / m), n < N.
+    double sum = 0.0;   // C[1]
+    for (int k = 0; k < half; ++k)
+    {
+        const float a = 0.5f * (L[k] + L[half - k]), b = 0.5f * (L[k] - L[half - k]);
+        w[k] = a - 2.0f * sn[k] * b;
+        sum += 2.0 * b * halfCos[(size_t) k];
+    }
+    fftHalf.forward (w);   // C[2j] = 2 Re Y[j], C[2j + 1] = C[2j - 1] - 2 Im Y[j]
+
+    // 3. Folded onto positive time: d[n] = 2 c[n] = 2 C[n] / m for 0 < n < N (d[0] and d[N] don't
+    //    reach the phase).
+    const float toFolded = 2.0f / (float) m;
+    d[0] = d[half] = 0.0f;
+    d[1] = (float) sum * toFolded;
+    for (int j = 1; j < half / 2; ++j)
+    {
+        d[2 * j] = 2.0f * w[2 * j] * toFolded;
+        sum -= 2.0 * w[2 * j + 1];
+        d[2 * j + 1] = (float) sum * toFolded;
+    }
+
+    // 4. The phase, P[k] = -sum over 0 < n < N of d[n] sin (pi k n / N), k <= N.
+    for (int n = 0; n < half; ++n)
+    {
+        const float s = 0.5f * (d[n] + d[half - n]), t = 0.5f * (d[n] - d[half - n]);
+        w[n] = 2.0f * sn[n] * s + t;
+    }
+    fftHalf.forward (w);   // P[2j] = Im Z[j], P[2j + 1] = P[2j - 1] - Re Z[j], P[1] = -Re Z[0] / 2
+    float* ph = phase.data();
+    for (int j = 0; j <= half / 2; ++j)
+        ph[2 * j] = w[2 * j + 1];
+    ph[0] = ph[half] = 0.0f;
+    sum = -0.5 * w[0];
+    ph[1] = (float) sum;
+    for (int j = 1; j < half / 2; ++j)
+    {
+        sum -= w[2 * j];
+        ph[2 * j + 1] = (float) sum;
+    }
+
+    //    The spectrum: the curve's own magnitude (no exp (log)) with that phase.
+    fastmath::sinCos (ph, sinPart.data(), cosPart.data(), half + 1);
+    for (int k = 0; k <= half; ++k)
+    {
+        w[2 * k] = gain[(size_t) k] * cosPart[(size_t) k];
+        w[2 * k + 1] = gain[(size_t) k] * sinPart[(size_t) k];
+    }
 }
 
 int ZeroLatencyFilter::filter (int which, int set, const float* x, float* out, int n) noexcept
@@ -173,7 +258,9 @@ void ZeroLatencyFilter::process (float* const* io, int numChannels, int numSampl
 
     while (done < numSamples)
     {
-        const int n = std::min ({ numSamples - done, analysis.samplesToNextFrame(), maxSegment });
+        int n = std::min ({ numSamples - done, analysis.samplesToNextFrame(), maxSegment });
+        if (fadePos >= 0)   // 5.2.6: a segment ends with the crossfade, so the old filters run only while it lasts
+            n = std::min (n, fadeLength - fadePos);
 
         // 1. This segment's Mid (and Side) after the history.
         float* xm = hist[0].data() + (taps - 1);
@@ -213,6 +300,8 @@ void ZeroLatencyFilter::process (float* const* io, int numChannels, int numSampl
                 }
             }
         }
+        if (fadePos >= 0)
+            crossfaded += (std::uint64_t) n;
         if (fadePos >= 0 && (fadePos += n) >= fadeLength)
         {
             current = 1 - current;

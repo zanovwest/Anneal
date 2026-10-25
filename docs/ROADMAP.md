@@ -18,12 +18,19 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-15. **Zero latency lighter, part 2** (5.2.5: Stereo 3.7 %, Mid/Side 6.5 % at 64 samples; the design's
-    math is already batched): design the filters at 150 a second instead of 300 (every other analysis
-    frame; the curve moves in ~7 ms steps, still inside its crossfade), or with a 2 × taps design
-    transform instead of 4 × if the cepstrum's aliasing stays under 0.01 dB. The analysis itself is
-    ~4 % in Mid/Side at 300 updates/s, so the old 3 % goal there needs a slower update rate at zero
-    latency, which is the user's call.
+16. **Punch at zero latency**: Punch rests at zero latency because it works on the FFT frames. A
+    time-domain transient shaper there (a fast and a slow envelope on Mid and Side, the gain only on
+    attacks, Range respected as far as a crossover allows) so Punch acts at zero latency too, with the
+    knob's note saying how it differs. Punch 0 % stays bit-identical; tests on plucks (attacks moved,
+    body within 0.1 dB).
+17. **Loudness readout**: short-term and integrated loudness (LUFS, EBU R128 K-weighting) of the input
+    and the output under the output meter, reset with a click, so you can see what Anneal does to the
+    level as well as hear it (the Match gain shown next to it). Cheap on the audio thread (two biquads
+    and 100 ms sums), shown through the display frame; tested against the EBU reference signals.
+18. **Max cut / Max boost**: limits for how far the auto EQ may move (for example cut no more than 6 dB,
+    boost no more than 3 dB), in AUTO EQ, defaulting to today's limits so projects sound the same.
+    Also shown as a band on the display's EQ lane. Tests: a ring that Smooth cuts 9 dB stops at the
+    limit, Reveal's lift likewise, defaults bit-identical.
 
 ## Waiting on the user
 
@@ -32,6 +39,11 @@ These need the user's own accounts or decisions. Daily updates don't take them.
 - **Plugin Alliance and source/licence choices** (JUCE, VST3): see docs/DISTRIBUTION.md.
   KVR now hosts the free Windows/Linux downloads; the GitHub repository remains private.
 - **Pro Tools (AAX)**: Avid developer account and AAX SDK, plus PACE signing (iLok).
+- **Zero latency at 150 filter designs a second** (from 300): about 0.5 % of a core less in Stereo
+  and 1 % in Mid/Side at zero latency, but the EQ there would then follow the music 150 times a second
+  instead of the 300 you asked for in 5.2.0. Say if you want it, as the default or as a switch. (The
+  other idea, a design transform half as long, was measured in 5.2.6 and dropped: 0.04-0.08 dB off on
+  music curves, up to 19 dB next to Mono bass.)
 
 ## Not now
 
@@ -54,6 +66,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.6 (2026-10-24, daily update): **Zero latency lighter, part 2** (item 15): the old filters stop
+  when the 1.33 ms crossfade ends instead of running the whole hop (the same output, bit for bit), and
+  the design's cepstrum and phase come from half-size transforms (a DCT and a DST through 2048-point
+  FFTs) with the curve's own magnitude. One design 33.3 → 26.0 µs; Zero latency Stereo 3.7 → 3.5 %
+  (3.3 % at 512 samples), Mid/Side 6.5 → 6.1 %; within 0.0008 dB of 5.2.5's above −40 dB. The
+  2 × taps transform failed its 0.01 dB test; 150 designs a second waits on the user.
 - 5.2.5 (2026-10-24, daily update): **Zero latency lighter, part 1** (item 15): the filter design's log,
   exp, sin and cos batched through `fastmath` (a new SSE2 sin / cos), the fade as a table. One design
   41.5 → 32.5 µs; Zero latency Stereo 4.0 → 3.7 %, Mid/Side 7.1 → 6.5 %; within 0.000006 dB of the

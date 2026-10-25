@@ -4,6 +4,47 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.6 — 2026-10-24 23:40
+
+New
+- **Zero latency is lighter again** (part 2 of the zero-latency CPU item). Two changes, and neither
+  changes the sound:
+  - **Crossfades only as long as they last.** At zero latency Anneal fades over to each new pair of
+    filters in 1.33 ms. With bigger buffers (like FL Studio's usual ones) the old filters kept running
+    for the whole 3.3 ms until the next update anyway. Now they stop when the fade ends. The output is
+    the same, bit for bit.
+  - **Smaller transforms in the filter design.** Each of the 300 filter designs a second needed three
+    4096-point FFTs. Two of them are now 2048-point ones (a cosine and a sine transform worked out
+    through a half-size FFT), and the filter takes the curve's own level instead of going through a
+    log and back. One design takes 26.0 µs instead of 33.3 µs. The filters stay within 0.0008 dB of
+    5.2.5's wherever the response is above −40 dB (0.002 dB down to −60 dB), far below anything you
+    could hear.
+  - Zero latency at 48 kHz: Stereo 3.7 → 3.5 % of one core with 64-sample buffers and 3.7 → 3.3 % with
+    512; Mid/Side 6.5 → 6.1 %. The slowest 0.1 % of blocks stay where they were: Stereo 8 %, Mid/Side
+    17 % of the deadline.
+  - Not done: the roadmap's two other ideas. A design transform half as long was tried and measured.
+    It moved the filters by 0.04–0.08 dB on real music curves and by up to 19 dB next to Mono bass, so
+    it isn't in. Designing the filters 150 times a second instead of 300 would save more (about 0.5 %
+    of a core in Stereo, 1 % in Mid/Side). But the EQ at zero latency would then follow the music half
+    as often as the 300 a second you asked for in 5.2.0, so that one is your call (roadmap, *Waiting
+    on the user*).
+
+Fixes
+- None found. The bug pass looked at 5.2.5's batched filter design, the zero-latency path through host
+  resets, latency switches and changing buffer sizes, today's build logs, the benchmark and the
+  zero-latency editor snapshot.
+
+Tests: 180/180 acceptance checks, 2 new:
+- the design on half-size transforms against 5.2.5's on nine curves: the engine's own Mid and Side
+  curves on music, a −9 dB dip, a curve moving ±12 dB, Width 200 % with Mono bass at 20 and 400 Hz,
+  painted Width, Width 0 % painted out. Within 0.0008 dB above −40 dB; taps within 0.000003 of the peak;
+- the old filters now run 63.9 samples per design: the 64-sample crossfade. (Up to 5.2.5, with big
+  buffers, they ran for the whole 160-sample hop.) The output is identical with 512-sample, 64-sample
+  and random buffers.
+
+24/24 host checks on the built VST3 and 25/25 setup checks pass. Everything but zero latency measures
+as in 5.2.5, within run-to-run variation.
+
 ## 5.2.5 — 2026-10-24 14:20
 
 New
