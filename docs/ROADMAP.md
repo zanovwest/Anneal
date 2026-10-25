@@ -18,8 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-14. **Import and export presets**: drop an `.annealpreset` file on the preset bar to add it, and copy
-    the folder path from the menu.
 15. **Zero latency under the 3 % budget in Mid/Side too** (Stereo 2.4 %, Mid/Side 3.9 % at 5.1.1):
     the filter design's ~2,000 log / exp per filter through `fastmath`, and its cos / sin from a
     recurrence; keep the design within 0.01 dB of its target (section 37 of the tests).
@@ -53,6 +51,9 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.2.4 (2026-10-24, daily update, catch-up for 2026-10-23): **Import and export presets** (item 14):
+  `.annealpreset` files dropped on the preset bar are checked and copied into your presets folder (a
+  single one is loaded; no duplicates; a clash becomes "Name 2"), and the menu copies the folder's path.
 - 5.2.3 (2026-10-22, daily update, done by hand that evening: "do todays entry"): **the stereo image
   on the display** (item 13): the WIDTH lane shades behind its curve by how much of the sound heard is
   in the sides at each frequency (the input's Mid and Side through the EQ curves, Width and Mono

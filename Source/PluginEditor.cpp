@@ -151,6 +151,26 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
         folder.createDirectory();
         folder.startAsProcess();
     };
+    // 5.2.4: copy the folder's path (to share presets, or find them from a file dialog); preset files
+    // dropped on the bar join your presets, and a single one is loaded (one undo step).
+    presets.onCopyFolderPath = [&p]
+    {
+        const auto folder = p.getUserPresetFolder();
+        folder.createDirectory();
+        juce::SystemClipboard::copyTextToClipboard (folder.getFullPathName());
+    };
+    presets.onFilesDropped = [this] (const juce::StringArray& files)
+    {
+        juce::StringArray errors;
+        const auto names = processor.importUserPresets (files, errors);
+        if (names.size() == 1)
+            processor.loadUserPreset (names[0]);
+        const auto quote = [] (const juce::String& s) { return juce::String::fromUTF8 ("â") + s + juce::String::fromUTF8 ("â"); };
+        juce::String note = names.size() == 1 ? "Added " + quote (names[0]) : "Added " + juce::String (names.size()) + " presets";
+        if (! errors.isEmpty())
+            note = names.isEmpty() ? errors[0] : note + juce::String::fromUTF8 (" Â· ") + juce::String (errors.size()) + " not added";
+        presets.showMessage (note);
+    };
     presets.refresh();
     harmonics.refresh();
     updateActivity();

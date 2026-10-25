@@ -7,18 +7,44 @@ using namespace theme;
 
 PresetBar::PresetBar()
 {
-    setTooltip ("Factory presets (also in your DAW's preset menu). * = changed since loading it");
+    setTooltip ("Factory presets (also in your DAW's preset menu) and your own. * = changed since loading it. "
+                "Drop .annealpreset files here to add them to your presets");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
 void PresetBar::refresh()
 {
-    const auto text = getDisplayText ? getDisplayText() : juce::String();
+    auto text = getDisplayText ? getDisplayText() : juce::String();
+    if (message.isNotEmpty() && juce::Time::getMillisecondCounterHiRes() < messageUntil)
+        text = message;
     if (text != shown)
     {
         shown = text;
         repaint();
     }
+}
+
+void PresetBar::showMessage (const juce::String& text, double seconds)
+{
+    message = text;
+    messageUntil = juce::Time::getMillisecondCounterHiRes() + 1000.0 * seconds;
+    refresh();
+}
+
+bool PresetBar::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (f.endsWithIgnoreCase (".annealpreset"))
+            return onFilesDropped != nullptr;
+    return false;
+}
+
+void PresetBar::filesDropped (const juce::StringArray& files, int, int)
+{
+    dropHover = false;
+    repaint();
+    if (onFilesDropped != nullptr)
+        onFilesDropped (files);
 }
 
 juce::Rectangle<int> PresetBar::zoneBounds (Zone z) const
@@ -91,6 +117,21 @@ void PresetBar::paint (juce::Graphics& g)
     tri.addTriangle (cx - 3.5f, cy - 1.5f, cx + 3.5f, cy - 1.5f, cx, cy + 2.5f);
     g.setColour (hover == Zone::name ? colour::text : colour::muted);
     g.fillPath (tri);
+
+    // 5.2.4: a preset file held over the bar: a dashed outline and what dropping it does.
+    if (dropHover)
+    {
+        g.setColour (colour::body);
+        g.fillRoundedRectangle (r, rad);
+        juce::Path outline, dashed;
+        outline.addRoundedRectangle (r.reduced (1.0f), rad - 1.0f);
+        const float dashes[] = { 5.0f, 4.0f };
+        juce::PathStrokeType (1.2f).createDashedStroke (dashed, outline, dashes, 2);
+        g.setColour (colour::text);
+        g.fillPath (dashed);
+        g.setFont (caps (11.0f));
+        g.drawText ("DROP TO ADD THE PRESET", r.toNearestInt(), juce::Justification::centred, false);
+    }
 }
 
 void PresetBar::mouseMove (const juce::MouseEvent& e)
@@ -148,7 +189,7 @@ void PresetBar::showMenu()
         for (int i = nf; i < n; ++i)
             menu.addItem (i + 1, getName (i), true, i == chosen);
     }
-    constexpr int saveId = 100001, deleteId = 100002, folderId = 100003;
+    constexpr int saveId = 100001, deleteId = 100002, folderId = 100003, copyPathId = 100004;
     if (onSaveAs != nullptr || onOpenFolder != nullptr)
         menu.addSeparator();
     if (onSaveAs != nullptr)
@@ -157,6 +198,8 @@ void PresetBar::showMenu()
         menu.addItem (deleteId, juce::String::fromUTF8 ("Delete \xe2\x80\x9c") + getName (chosen) + juce::String::fromUTF8 ("\xe2\x80\x9d\xe2\x80\xa6"));
     if (onOpenFolder != nullptr)
         menu.addItem (folderId, "Open the presets folder");
+    if (onCopyFolderPath != nullptr)
+        menu.addItem (copyPathId, "Copy the presets folder path");
 
     juce::Component::SafePointer<PresetBar> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this)
@@ -169,6 +212,7 @@ void PresetBar::showMenu()
                             if (result == saveId)        { if (safe->onSaveAs) safe->onSaveAs(); }
                             else if (result == deleteId) { if (safe->onDelete) safe->onDelete (chosen); }
                             else if (result == folderId) { if (safe->onOpenFolder) safe->onOpenFolder(); }
+                            else if (result == copyPathId) { if (safe->onCopyFolderPath) safe->onCopyFolderPath(); }
                             else if (safe->onChoose)     safe->onChoose (result - 1);
                             if (safe != nullptr)
                                 safe->refresh();

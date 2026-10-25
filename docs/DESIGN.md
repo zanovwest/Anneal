@@ -161,7 +161,9 @@ and the tag at rest reads "as is; shading = how much is in the sides".
 arc shows how hard the latest attack is shaped), Width and Mono bass. With Punch or Guard on, the
 display draws a short rose bar at the foot of the EQ lane in each band where an attack is happening
 (height and opacity grow with its strength, fading over ~0.1 s), so you see what they act on without
-another lane. The preset menu keeps the factory list first; your presets follow under YOUR PRESETS,
+another lane. (5.2.4: a preset file held over the preset bar outlines it in a dashed line with "DROP TO
+ADD THE PRESET"; afterwards the bar shows "Added “…”", or why a file wasn't taken, for 4 s.) The preset
+menu keeps the factory list first; your presets follow under YOUR PRESETS,
 then *Save current settings as…*, *Delete “…”* (only when one of yours is chosen) and *Open the
 presets folder*. Saving asks for a name in a small dialog; deleting asks first.
 

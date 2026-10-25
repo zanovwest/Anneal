@@ -43,4 +43,10 @@ namespace anneal::presets
     // what `values` held). False when the file is missing or isn't an Anneal preset.
     bool readUser (const juce::File& folder, const juce::String& name, Values& values);
     bool deleteUser (const juce::File& folder, const juce::String& name, bool toTrash = true);   // recycle bin when possible
+
+    // 5.2.4 Import: a preset file from elsewhere (dropped on the preset bar), checked (an Anneal preset
+    // with at least one value it knows, under 1 MB) and copied as it is into the folder under its own
+    // file name, or "<name> 2", "<name> 3"... when a different preset already has that name; the same
+    // preset isn't added twice. Returns the name it has in the folder, or empty with why in `error`.
+    juce::String importUser (const juce::File& folder, const juce::File& file, juce::String& error);
 }

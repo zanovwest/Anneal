@@ -4,6 +4,35 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.4 — 2026-10-24 14:13 (catch-up for a missed day)
+
+New
+- **Import presets by dropping them on the preset bar.** Drag one or more `.annealpreset` files (from
+  a friend, another computer, a backup) onto the preset name in the header: it outlines itself ("DROP
+  TO ADD THE PRESET"), and each file is checked and copied into your presets folder. A single preset is
+  loaded straight away (one undo step), and the bar briefly says what happened ("Added “Bright Mix”").
+  - A preset you already have isn't added twice; a different one with the same name comes in as
+    "Bright Mix 2".
+  - Anything that isn't an Anneal preset (another file type, a broken file, something that only
+    looks like one) is left alone, and the bar says which file and why.
+  - The file is copied as it is, so a preset from an older Anneal keeps meaning what it meant.
+- **Copy the presets folder path** in the preset menu (under *Open the presets folder*): handy for
+  sharing presets, finding them from a file dialog, or backing them up.
+
+Fixes
+- None found. The bug pass looked at the stereo image code from 5.2.3 (the three-step update, the
+  display's easing), its build logs and benchmark.
+
+Tests: 176/176 acceptance checks, 3 new:
+- a preset dropped on the preset bar (through the bar's own drag-and-drop) is copied into your folder,
+  loaded as one undo step, and the bar says so; only `.annealpreset` files are taken;
+- the same preset isn't added twice, a clash becomes "Bright Mix 2", and a broken preset, a `.wav` and
+  a missing file are refused with the reason shown;
+- the preset menu has *Copy the presets folder path* (not run in the tests, so they never touch your
+  clipboard).
+
+24/24 host checks on the built VST3 and 25/25 setup checks pass. CPU unchanged.
+
 ## 5.2.3 — 2026-10-22 17:57
 
 New

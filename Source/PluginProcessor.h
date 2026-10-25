@@ -60,6 +60,9 @@ public:
     bool loadUserPreset (const juce::String& name);   // false: missing or not an Anneal preset
     bool deleteUserPreset (const juce::String& name);
     juce::String getUserPresetName() const { return userChosen ? userName : juce::String(); }
+    // 5.2.4: preset files dropped on the preset bar, copied into the presets folder. Returns the names
+    // they have there; why any file wasn't taken goes to `errors`.
+    juce::StringArray importUserPresets (const juce::StringArray& paths, juce::StringArray& errors);
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;

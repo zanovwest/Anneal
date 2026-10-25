@@ -699,6 +699,21 @@ bool AnnealAudioProcessor::loadUserPreset (const juce::String& name)
     return true;
 }
 
+juce::StringArray AnnealAudioProcessor::importUserPresets (const juce::StringArray& paths, juce::StringArray& errors)
+{
+    juce::StringArray names;
+    for (const auto& path : paths)
+    {
+        juce::String error;
+        const auto name = anneal::presets::importUser (userFolder, juce::File (path), error);
+        if (name.isNotEmpty())
+            names.addIfNotAlreadyThere (name, true);
+        else
+            errors.add (error);
+    }
+    return names;
+}
+
 bool AnnealAudioProcessor::deleteUserPreset (const juce::String& name)
 {
     if (! anneal::presets::deleteUser (userFolder, name, userTrash))

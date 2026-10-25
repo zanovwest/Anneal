@@ -2,6 +2,7 @@
 #include "Params.h"
 
 #include <cmath>
+#include <limits>
 
 namespace anneal::presets
 {
@@ -130,12 +131,77 @@ bool writeUser (const juce::File& folder, const juce::String& name, const Values
     return folder.getChildFile (clean + userExtension).replaceWithText (root.toString());
 }
 
+namespace
+{
+    bool readFile (const juce::File& file, Values& values);
+
+    // Two presets read over a NaN background are the same when every value they set is the same.
+    bool sameValues (const Values& a, const Values& b)
+    {
+        for (size_t i = 0; i < a.size(); ++i)
+            if (! (std::isnan (a[i]) && std::isnan (b[i])) && ! (std::abs (a[i] - b[i]) < 1.0e-6f))
+                return false;
+        return true;
+    }
+}
+
 bool readUser (const juce::File& folder, const juce::String& name, Values& values)
 {
     const auto clean = sanitiseName (name);
     if (clean.isEmpty())
         return false;
-    const auto xml = juce::XmlDocument::parse (folder.getChildFile (clean + userExtension));
+    return readFile (folder.getChildFile (clean + userExtension), values);
+}
+
+juce::String importUser (const juce::File& folder, const juce::File& file, juce::String& error)
+{
+    error.clear();
+    const auto shownName = file.getFileName();
+    if (! file.existsAsFile() || ! file.hasFileExtension (userExtension))
+    {
+        error = shownName + juce::String::fromUTF8 (" isnât an Anneal preset (.annealpreset)");
+        return {};
+    }
+    Values incoming;
+    incoming.fill (std::numeric_limits<float>::quiet_NaN());
+    if (file.getSize() > 1024 * 1024 || ! readFile (file, incoming))
+    {
+        error = shownName + juce::String::fromUTF8 (" isnât an Anneal preset");
+        return {};
+    }
+    const auto base = sanitiseName (file.getFileNameWithoutExtension());
+    if (base.isEmpty() || ! folder.createDirectory())
+    {
+        error = shownName + juce::String::fromUTF8 (" couldnât be added");
+        return {};
+    }
+    for (int n = 1; n < 1000; ++n)
+    {
+        const auto name = n == 1 ? base : sanitiseName (base.substring (0, 58) + " " + juce::String (n));
+        const auto dest = folder.getChildFile (name + userExtension);
+        if (dest == file)
+            return name;   // dropped from the presets folder itself
+        if (! dest.existsAsFile())
+        {
+            if (file.copyFileTo (dest))
+                return name;
+            error = shownName + juce::String::fromUTF8 (" couldnât be copied");
+            return {};
+        }
+        Values there;
+        there.fill (std::numeric_limits<float>::quiet_NaN());
+        if (readFile (dest, there) && sameValues (there, incoming))
+            return name;   // already there
+    }
+    error = shownName + ": too many presets with that name";
+    return {};
+}
+
+namespace
+{
+bool readFile (const juce::File& file, Values& values)
+{
+    const auto xml = juce::XmlDocument::parse (file);
     if (xml == nullptr || ! xml->hasTagName ("AnnealPreset"))
         return false;
     int found = 0;
@@ -154,6 +220,7 @@ bool readUser (const juce::File& folder, const juce::String& name, Values& value
             }
     }
     return found > 0;
+}
 }
 
 bool deleteUser (const juce::File& folder, const juce::String& name, bool toTrash)

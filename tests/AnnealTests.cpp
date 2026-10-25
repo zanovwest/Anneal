@@ -4411,6 +4411,87 @@ void testStereoImage523()
     }
 }
 
+// 5.2.4: presets dropped on the preset bar join your presets; the menu copies the folder's path.
+void testPresetImport524()
+{
+    section ("43. 5.2.4 Import presets by dropping them on the preset bar");
+    const auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AnnealTests-import");
+    tmp.deleteRecursively();
+    const auto mine = tmp.getChildFile ("mine"), elsewhere = tmp.getChildFile ("from a friend"), other = tmp.getChildFile ("other");
+    elsewhere.createDirectory();
+    other.createDirectory();
+
+    Rig r;
+    r.proc->setUserPresetFolder (mine, false);
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    if (editor == nullptr)
+    {
+        check (false, "editor opens", "no AnnealEditor");
+        return;
+    }
+    auto& bar = editor->getContent().presets;
+
+    auto values = anneal::presets::currentValues (r.proc->apvts);
+    values[0] = 77.0f;   // Reveal
+    values[1] = 12.0f;   // Smooth
+    anneal::presets::writeUser (elsewhere, "Bright Mix", values);
+    auto different = values;
+    different[0] = 33.0f;
+    anneal::presets::writeUser (other, "Bright Mix", different);
+    const auto notPreset = elsewhere.getChildFile ("Notes.annealpreset");
+    notPreset.replaceWithText ("<NotAnneal><PARAM id=\"reveal\" value=\"10\"/></NotAnneal>");
+    const auto audio = elsewhere.getChildFile ("Song.wav");
+    audio.replaceWithText ("RIFF");
+    const auto bright = elsewhere.getChildFile ("Bright Mix.annealpreset").getFullPathName();
+
+    {
+        // Only preset files are taken; a single dropped preset is added and loaded (one undo step).
+        const bool wants = bar.isInterestedInFileDrag ({ bright }) && ! bar.isInterestedInFileDrag ({ audio.getFullPathName() });
+        while (r.proc->canUndo())
+            r.proc->undo();
+        bar.fileDragEnter ({ bright }, 10, 10);
+        const bool highlighted = bar.isDropHighlighted();
+        bar.filesDropped ({ bright }, 10, 10);
+        auto v = [&r] (const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+        const bool added = r.proc->getUserPresetNames().contains ("Bright Mix") && mine.getChildFile ("Bright Mix.annealpreset").existsAsFile();
+        const bool loaded = r.proc->getUserPresetName() == "Bright Mix" && std::abs (v (ids::reveal) - 77.0f) < 0.05f
+                            && std::abs (v (ids::smooth) - 12.0f) < 0.05f;
+        const bool told = bar.getShownText().contains ("Added") && ! bar.isDropHighlighted();
+        const bool oneStep = r.proc->canUndo();
+        check (wants && highlighted && added && loaded && told && oneStep, "a dropped preset is added to your presets and loaded",
+               juce::String (wants ? "takes .annealpreset, not .wav" : "WRONG FILES TAKEN") + "; " + (added ? "copied into your folder" : "NOT ADDED")
+                   + "; " + (loaded ? "loaded (Reveal 77 %)" : "NOT LOADED") + "; bar said \"" + bar.getShownText() + "\"");
+    }
+
+    {
+        // Dropped again: not added twice. A different preset with the same name: "Bright Mix 2". A file
+        // that isn't an Anneal preset, and a .wav: not added, and the bar says why.
+        juce::StringArray errors;
+        const auto again = r.proc->importUserPresets ({ bright }, errors);
+        const auto clash = r.proc->importUserPresets ({ other.getChildFile ("Bright Mix.annealpreset").getFullPathName() }, errors);
+        const bool noDuplicate = again.size() == 1 && again[0] == "Bright Mix" && errors.isEmpty();
+        const bool renamed = clash.size() == 1 && clash[0] == "Bright Mix 2";
+        juce::StringArray bad;
+        const auto none = r.proc->importUserPresets ({ notPreset.getFullPathName(), audio.getFullPathName(),
+                                                       elsewhere.getChildFile ("Missing.annealpreset").getFullPathName() }, bad);
+        bar.filesDropped ({ notPreset.getFullPathName() }, 10, 10);
+        const bool explained = bar.getShownText().contains ("Notes.annealpreset");
+        const auto names = r.proc->getUserPresetNames();
+        check (noDuplicate && renamed && none.isEmpty() && bad.size() == 3 && explained && names.size() == 2,
+               "the same preset isn't added twice; a clash becomes \"Name 2\"; non-presets are refused",
+               "your presets: " + names.joinIntoString (", ") + "; refused " + juce::String (bad.size()) + "; bar: \"" + bar.getShownText() + "\"");
+    }
+
+    {
+        // The menu can copy the presets folder's path (not run here: it would replace your clipboard).
+        check (bar.onCopyFolderPath != nullptr && r.proc->getUserPresetFolder() == mine,
+               "the preset menu has \"Copy the presets folder path\"", r.proc->getUserPresetFolder().getFullPathName());
+    }
+    ed.reset();
+    tmp.deleteRecursively();
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -4471,6 +4552,7 @@ int main (int argc, char** argv)
     testSpread521();
     testWidthPaint522();
     testStereoImage523();
+    testPresetImport524();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);
