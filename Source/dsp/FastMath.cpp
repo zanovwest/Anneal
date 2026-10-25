@@ -31,6 +31,16 @@ namespace
                     e4 = 0.0096181291076285f, e5 = 0.0013333558146428f, e6 = 0.0001540353039338f,
                     e7 = 0.0000152525273380f;
 
+    // sin / cos: 2/pi, pi/2 = a + b + c (a and b exact in few bits, so k * a and k * b are exact for
+    // the k that occur), and the Taylor coefficients.
+    constexpr float twoOverPi = 0.63661977236758134f;
+    constexpr float pio2a = 1.5703125f, pio2b = 4.837512969970703125e-4f, pio2c = 7.54978995489188216e-8f;
+    constexpr float angleLimit = 1.0e6f;
+    constexpr float s3 = -1.6666666666666666e-1f, s5 = 8.3333333333333333e-3f, s7 = -1.9841269841269841e-4f,
+                    s9 = 2.7557319223985893e-6f;
+    constexpr float c2 = -0.5f, c4 = 4.1666666666666667e-2f, c6 = -1.3888888888888889e-3f,
+                    c8 = 2.4801587301587302e-5f, c10 = -2.7557319223985891e-7f;
+
     inline float bitsToFloat (std::uint32_t b) noexcept { float f; std::memcpy (&f, &b, sizeof f); return f; }
     inline std::uint32_t floatToBits (float f) noexcept { std::uint32_t b; std::memcpy (&b, &f, sizeof b); return b; }
 }
@@ -78,7 +88,61 @@ void dbToGainScalar (const float* db, float* out, int n) noexcept
     }
 }
 
+void sinCosScalar (const float* x, float* s, float* c, int n) noexcept
+{
+    for (int i = 0; i < n; ++i)
+    {
+        float v = x[i] > -angleLimit ? x[i] : -angleLimit;   // NaN -> -limit
+        v = v < angleLimit ? v : angleLimit;
+        const float k = std::nearbyint (v * twoOverPi);
+        const float r = ((v - k * pio2a) - k * pio2b) - k * pio2c;
+        const float r2 = r * r;
+        const float sr = r + r * r2 * (s3 + r2 * (s5 + r2 * (s7 + r2 * s9)));
+        const float cr = 1.0f + r2 * (c2 + r2 * (c4 + r2 * (c6 + r2 * (c8 + r2 * c10))));
+        const int q = (int) k & 3;
+        s[i] = q == 0 ? sr : q == 1 ? cr : q == 2 ? -sr : -cr;
+        c[i] = q == 0 ? cr : q == 1 ? -sr : q == 2 ? -cr : sr;
+    }
+}
+
 #if ANNEAL_FASTMATH_SSE2
+void sinCos (const float* x, float* s, float* c, int n) noexcept
+{
+    const __m128 lo = _mm_set1_ps (-angleLimit), hi = _mm_set1_ps (angleLimit), k2pi = _mm_set1_ps (twoOverPi);
+    const __m128 pa = _mm_set1_ps (pio2a), pb = _mm_set1_ps (pio2b), pc = _mm_set1_ps (pio2c), one = _mm_set1_ps (1.0f);
+    const __m128i i1 = _mm_set1_epi32 (1), i2 = _mm_set1_epi32 (2), i3 = _mm_set1_epi32 (3);
+    int i = 0;
+    for (; i + 4 <= n; i += 4)
+    {
+        const __m128 v = _mm_min_ps (_mm_max_ps (_mm_loadu_ps (x + i), lo), hi);   // max: NaN -> lo
+        const __m128i ki = _mm_cvtps_epi32 (_mm_mul_ps (v, k2pi));                 // to nearest, like std::nearbyint
+        const __m128 k = _mm_cvtepi32_ps (ki);
+        __m128 r = _mm_sub_ps (v, _mm_mul_ps (k, pa));
+        r = _mm_sub_ps (r, _mm_mul_ps (k, pb));
+        r = _mm_sub_ps (r, _mm_mul_ps (k, pc));
+        const __m128 r2 = _mm_mul_ps (r, r);
+        __m128 ps = _mm_add_ps (_mm_set1_ps (s7), _mm_mul_ps (r2, _mm_set1_ps (s9)));
+        ps = _mm_add_ps (_mm_set1_ps (s5), _mm_mul_ps (r2, ps));
+        ps = _mm_add_ps (_mm_set1_ps (s3), _mm_mul_ps (r2, ps));
+        const __m128 sr = _mm_add_ps (r, _mm_mul_ps (_mm_mul_ps (r, r2), ps));
+        __m128 pcos = _mm_add_ps (_mm_set1_ps (c8), _mm_mul_ps (r2, _mm_set1_ps (c10)));
+        pcos = _mm_add_ps (_mm_set1_ps (c6), _mm_mul_ps (r2, pcos));
+        pcos = _mm_add_ps (_mm_set1_ps (c4), _mm_mul_ps (r2, pcos));
+        pcos = _mm_add_ps (_mm_set1_ps (c2), _mm_mul_ps (r2, pcos));
+        const __m128 cr = _mm_add_ps (one, _mm_mul_ps (r2, pcos));
+        // Quadrant q = k & 3: odd q swaps sin and cos; sin is negative for q = 2, 3, cos for q = 1, 2.
+        const __m128i q = _mm_and_si128 (ki, i3);
+        const __m128 swap = _mm_castsi128_ps (_mm_cmpeq_epi32 (_mm_and_si128 (q, i1), i1));
+        const __m128 sv = _mm_or_ps (_mm_and_ps (swap, cr), _mm_andnot_ps (swap, sr));
+        const __m128 cv = _mm_or_ps (_mm_and_ps (swap, sr), _mm_andnot_ps (swap, cr));
+        const __m128 sinSign = _mm_castsi128_ps (_mm_slli_epi32 (_mm_and_si128 (q, i2), 30));
+        const __m128 cosSign = _mm_castsi128_ps (_mm_slli_epi32 (_mm_and_si128 (_mm_add_epi32 (q, i1), i2), 30));
+        _mm_storeu_ps (s + i, _mm_xor_ps (sv, sinSign));
+        _mm_storeu_ps (c + i, _mm_xor_ps (cv, cosSign));
+    }
+    sinCosScalar (x + i, s + i, c + i, n - i);
+}
+
 void powerToDb (const float* x, float* out, int n) noexcept
 {
     const __m128 lo = _mm_set1_ps (powerFloor), hi = _mm_set1_ps (powerCeiling);
@@ -131,5 +195,6 @@ void dbToGain (const float* db, float* out, int n) noexcept
 #else
 void powerToDb (const float* x, float* out, int n) noexcept { powerToDbScalar (x, out, n); }
 void dbToGain (const float* db, float* out, int n) noexcept { dbToGainScalar (db, out, n); }
+void sinCos (const float* x, float* s, float* c, int n) noexcept { sinCosScalar (x, s, c, n); }
 #endif
 }

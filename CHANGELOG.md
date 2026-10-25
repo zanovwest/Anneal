@@ -4,6 +4,37 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.2.5 — 2026-10-24 14:20
+
+New
+- **Zero latency is lighter on the CPU** (part 1 of the zero-latency CPU item). At zero latency Anneal
+  designs a new pair of minimum-phase filters 300 times a second, and each design needed about 2,000
+  logarithms, 2,000 exponentials and 4,000 sines and cosines, one at a time. They now go through
+  Anneal's own fast math in batches, four at a time (a new fast sine / cosine joins the log and exp
+  from 5.1.1), and the filter's fade-out is a table instead of 128 cosines per design.
+  - One filter design: 41.5 → 32.5 µs.
+  - Zero latency at 48 kHz / 64 samples: Stereo 4.0 → 3.7 %, Mid/Side 7.1 → 6.5 % of one core; the
+    slowest 0.1 % of Mid/Side blocks 18 → 16 % of the deadline.
+  - The sound is the same: the filters match the exact math's within 0.000006 dB (and their taps
+    within 0.000005 % of the peak), and every zero-latency check from 5.1 still measures the same
+    (Smooth −8.9 dB as in Low, Width, Mono bass, Width paint).
+  - The 3 % budget in Mid/Side isn't reachable this way: since 5.2.0's 300 updates a second, the
+    analysis alone costs about 4 % there. The roadmap keeps the next ideas (fewer designs a second,
+    a shorter design transform).
+
+Fixes
+- None found. The bug pass looked at 5.2.4's preset import (names, duplicates, broken files) and its
+  build logs.
+
+Tests: 178/178 acceptance checks, 2 new:
+- the fast sine / cosine against the standard library: largest error 0.00000008 up to |x| = 10,000,
+  with SIMD and as plain loops; NaN, infinity and 1e30 stay finite;
+- the fast filter design against the exact one on three curves (a −9 dB dip, a curve moving ±12 dB, a
+  Side curve with Width painted and Mono bass): within 0.000006 dB.
+
+24/24 host checks on the built VST3 and 25/25 setup checks pass. Everything but zero latency
+measures as in 5.2.3.
+
 ## 5.2.4 — 2026-10-24 14:13 (catch-up for a missed day)
 
 New

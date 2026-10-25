@@ -32,6 +32,9 @@ namespace anneal
         // 5.2.2 widthShare (per analysis bin, or nullptr): sideScale acts by that share, 1 + s (scale - 1).
         void design (const float* binGain, int analysisBins, float sideScale, float monoHz, float* out,
                      const float* widthShare = nullptr) noexcept;
+        // 5.2.5: the design's log, exp, sin and cos go through fastmath, in batches; true = the standard
+        // library one value at a time, as up to 5.2.4 (for the tests and the profile).
+        void setExactMath (bool on) noexcept { exactMath = on; }
 
     private:
         int filter (int which, int set, const float* x, float* out, int n) noexcept;   // returns 0 if muted
@@ -40,6 +43,8 @@ namespace anneal
         int channels = 2, taps = 1024, designSize = 4096, maxSegment = 256, fadeLength = 64;
         RealFft fft;
         std::vector<float> work, logMag;
+        std::vector<float> phase, sinPart, cosPart, fadeOut;   // 5.2.5: batched design, the fade's table
+        bool exactMath = false;
         std::vector<float> coef[2][2];           // [0 Mid, 1 Side][set]
         int active[2][2] {};                     // taps in use (the rest are below -120 dB)
         bool muted[2][2] {};                     // Side at Width 0 (unpainted): no Side at all

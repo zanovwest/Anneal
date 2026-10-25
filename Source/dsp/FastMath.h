@@ -11,6 +11,12 @@ namespace anneal::fastmath
     // out[i] = 10^(db[i] / 20), db clamped to +-758 dB (NaN counts as -758). In place is fine.
     void dbToGain (const float* db, float* out, int n) noexcept;
 
+    // 5.2.5: s[i] = sin (x[i]), c[i] = cos (x[i]) for the zero-latency filter design. The angle is reduced
+    // to [-pi/4, pi/4] around the nearest multiple of pi/2 (pi/2 in three parts), then Taylor series to
+    // r^9 and r^10 (exact to 3e-8 there), the quadrant picking and signing them. Absolute error about
+    // 1e-7 for |x| up to 1e4; x is clamped to +-1e6 (NaN counts as -1e6).
+    void sinCos (const float* x, float* s, float* c, int n) noexcept;
+
     // One value at a time (also the tails of the batched loops).
     float log2 (float x) noexcept;   // x > 0 and normal
     float exp2 (float x) noexcept;   // x in [-126, 126]
@@ -18,4 +24,5 @@ namespace anneal::fastmath
     // The batched conversions without SIMD, as non-x86 builds run them (exposed for the tests).
     void powerToDbScalar (const float* x, float* out, int n) noexcept;
     void dbToGainScalar (const float* db, float* out, int n) noexcept;
+    void sinCosScalar (const float* x, float* s, float* c, int n) noexcept;
 }

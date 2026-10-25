@@ -4492,6 +4492,125 @@ void testPresetImport524()
     tmp.deleteRecursively();
 }
 
+// 5.2.5: the zero-latency filter design's log, exp, sin and cos through fastmath, in batches.
+void testZeroDesign525()
+{
+    section ("44. 5.2.5 faster zero-latency filter design");
+    namespace fm = anneal::fastmath;
+
+    {
+        // sin / cos against the standard library (in double), with SIMD and as plain loops.
+        std::mt19937 rng (31);
+        const int n = 100003;
+        std::vector<float> x ((size_t) n), s ((size_t) n), c ((size_t) n), sp ((size_t) n), cp ((size_t) n);
+        double worstNear = 0.0, worstFar = 0.0, worstPlain = 0.0;
+        for (double range : { 100.0, 10000.0 })
+        {
+            std::uniform_real_distribution<double> u (-range, range);
+            for (auto& v : x)
+                v = (float) u (rng);
+            const float special[] = { 0.0f, -0.0f, 0.78539816f, -0.78539816f, 1.57079633f, 3.14159265f, -3.14159265f, 4.71238898f, 6.28318531f };
+            std::copy (std::begin (special), std::end (special), x.begin());
+            fm::sinCos (x.data(), s.data(), c.data(), n);
+            fm::sinCosScalar (x.data(), sp.data(), cp.data(), n);
+            double& worst = range < 1000.0 ? worstNear : worstFar;
+            for (size_t i = 0; i < (size_t) n; ++i)
+            {
+                const double xs = std::sin ((double) x[i]), xc = std::cos ((double) x[i]);
+                worst = std::max ({ worst, std::abs (s[i] - xs), std::abs (c[i] - xc) });
+                worstPlain = std::max ({ worstPlain, std::abs (sp[i] - xs), std::abs (cp[i] - xc) });
+            }
+        }
+        const float edges[4] = { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+                                 -std::numeric_limits<float>::infinity(), 1.0e30f };
+        float es[4], ec[4];
+        fm::sinCos (edges, es, ec, 4);
+        bool finite = true;
+        for (int i = 0; i < 4; ++i)
+            finite = finite && std::isfinite (es[i]) && std::isfinite (ec[i]) && std::abs (es[i] * es[i] + ec[i] * ec[i] - 1.0f) < 1.0e-5f;
+        check (worstNear < 3.0e-7 && worstFar < 1.0e-6 && worstPlain < 1.0e-6 && finite, "sin / cos (fast) against the standard library",
+               "largest error " + juce::String (worstNear, 9) + " for |x| <= 100, " + juce::String (worstFar, 9) + " up to 1e4 (plain loops "
+                   + juce::String (worstPlain, 9) + "); NaN, inf, 1e30 stay finite: " + (finite ? "yes" : "NO"));
+    }
+
+    // The design, fast against exact (the standard library one value at a time, as up to 5.2.4), on
+    // three curves: the 3 kHz dip of section 37, a curve moving +-12 dB, and a Side curve with Width
+    // painted and Mono bass.
+    const double fs = 48000.0, twoPi = 6.283185307179586;
+    anneal::ZeroLatencyFilter fast, exact;
+    fast.prepare (fs, 2, 1024, 160);
+    exact.prepare (fs, 2, 1024, 160);
+    exact.setExactMath (true);
+    const int bins = 513, taps = fast.getTaps();
+    std::vector<float> dip ((size_t) bins), wild ((size_t) bins), share ((size_t) bins);
+    std::mt19937 rng (5);
+    std::uniform_real_distribution<double> phaseRand (0.0, twoPi);
+    const double p1 = phaseRand (rng), p2 = phaseRand (rng);
+    for (int k = 0; k < bins; ++k)
+    {
+        const double f = std::max (1.0, k * fs / 1024.0), z = anneal::erb::hzToCam (f);
+        dip[(size_t) k] = (float) std::pow (10.0, -9.0 * std::exp (-0.5 * std::pow (std::log2 (f / 3000.0) / 0.3, 2.0)) / 20.0);
+        wild[(size_t) k] = (float) std::pow (10.0, (8.0 * std::sin (0.7 * z + p1) + 4.0 * std::sin (2.1 * z + p2)) / 20.0);
+        share[(size_t) k] = f < 1000.0 ? 0.0f : f < 2000.0 ? (float) ((f - 1000.0) / 1000.0) : 1.0f;
+    }
+    auto response = [&] (const std::vector<float>& h, double f)
+    {
+        double re = 0.0, im = 0.0;
+        for (size_t n = 0; n < h.size(); ++n)
+        {
+            re += h[n] * std::cos (twoPi * f * (double) n / fs);
+            im -= h[n] * std::sin (twoPi * f * (double) n / fs);
+        }
+        return 10.0 * std::log10 (re * re + im * im + 1.0e-30);
+    };
+    {
+        double worstDb = 0.0, worstTap = 0.0;
+        struct Case { const std::vector<float>* curve; float scale, monoHz; const float* widthShare; };
+        const Case cases[] = { { &dip, 1.0f, 0.0f, nullptr }, { &wild, 1.0f, 0.0f, nullptr }, { &wild, 1.5f, 120.0f, share.data() } };
+        for (const auto& cs : cases)
+        {
+            std::vector<float> hf ((size_t) taps), he ((size_t) taps);
+            fast.design (cs.curve->data(), bins, cs.scale, cs.monoHz, hf.data(), cs.widthShare);
+            exact.design (cs.curve->data(), bins, cs.scale, cs.monoHz, he.data(), cs.widthShare);
+            float peak = 0.0f;
+            for (int n = 0; n < taps; ++n)
+            {
+                peak = std::max (peak, std::abs (he[(size_t) n]));
+                worstTap = std::max (worstTap, (double) std::abs (hf[(size_t) n] - he[(size_t) n]));
+            }
+            worstTap /= std::max (peak, 1.0e-9f);
+            for (int i = 0; i < 60; ++i)
+            {
+                const double f = 30.0 * std::pow (600.0, i / 59.0);   // 30 Hz .. 18 kHz
+                if (cs.monoHz > 0.0f && f < 160.0)
+                    continue;   // the Mono bass notch: both far below -60 dB
+                worstDb = std::max (worstDb, std::abs (response (hf, f) - response (he, f)));
+            }
+        }
+        check (worstDb < 0.001 && worstTap < 1.0e-4, "the fast design = the exact one (3 curves, Width paint, Mono bass)",
+               "largest response difference " + juce::String (worstDb, 6) + " dB, taps " + juce::String (worstTap, 8) + " of the peak");
+    }
+
+    {
+        // Speed, reported (not a check: timings follow the machine's load).
+        std::vector<float> h ((size_t) taps);
+        auto best = [&] (anneal::ZeroLatencyFilter& z)
+        {
+            double fastest = 1.0e9;
+            for (int run = 0; run < 5; ++run)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int i = 0; i < 200; ++i)
+                    z.design (wild.data(), bins, 1.0f, 0.0f, h.data());
+                fastest = std::min (fastest, 1.0e6 * std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() / 200.0);
+            }
+            return fastest;
+        };
+        const double exactUs = best (exact), fastUs = best (fast);
+        info ("one zero-latency filter design: " + juce::String (fastUs, 1) + " us (exact math " + juce::String (exactUs, 1) + " us)");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -4553,6 +4672,7 @@ int main (int argc, char** argv)
     testWidthPaint522();
     testStereoImage523();
     testPresetImport524();
+    testZeroDesign525();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

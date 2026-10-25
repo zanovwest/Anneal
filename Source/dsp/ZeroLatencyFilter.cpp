@@ -1,4 +1,5 @@
 #include "ZeroLatencyFilter.h"
+#include "FastMath.h"
 #include "SpectralEngine.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -20,6 +21,15 @@ void ZeroLatencyFilter::prepare (double sr, int numChannels, int analysisFftSize
     fft.prepare (designSize);
     work.assign ((size_t) (2 * designSize), 0.0f);
     logMag.assign ((size_t) (designSize / 2 + 1), 0.0f);
+    for (auto* v : { &phase, &sinPart, &cosPart })
+        v->assign ((size_t) (designSize / 2 + 1), 0.0f);
+    // The impulse response's raised-cosine fade over its last eighth, as a table (the same values the
+    // design computed per sample up to 5.2.4).
+    const int fade = taps / 8;
+    constexpr float pi = 3.14159265358979f;
+    fadeOut.resize ((size_t) fade);
+    for (int i = 0; i < fade; ++i)
+        fadeOut[(size_t) i] = 0.5f * (1.0f + std::cos (pi * (float) (i + 1) / (float) fade));
     for (auto& f : coef)
         for (auto& set : f)
             set.assign ((size_t) taps, 0.0f);
@@ -74,7 +84,18 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
             t = std::clamp (t, 0.0f, 1.0f);
             g *= t * t * (3.0f - 2.0f * t);
         }
-        logMag[(size_t) k] = std::log (std::max (g, 1.0e-6f));   // floor -120 dB
+        logMag[(size_t) k] = std::max (g, 1.0e-6f);   // floor -120 dB
+    }
+    // Natural log: 5.2.5 batched through fastmath (ln g = 10 log10 g * ln 10 / 10).
+    if (exactMath)
+        for (int k = 0; k <= half; ++k)
+            logMag[(size_t) k] = std::log (logMag[(size_t) k]);
+    else
+    {
+        constexpr float lnPerDb = 0.23025850929940457f;
+        fastmath::powerToDb (logMag.data(), logMag.data(), half + 1);
+        for (int k = 0; k <= half; ++k)
+            logMag[(size_t) k] *= lnPerDb;
     }
 
     // 2. Real cepstrum: the inverse transform of the (real, even) log magnitude.
@@ -92,25 +113,40 @@ void ZeroLatencyFilter::design (const float* binGain, int analysisBins, float si
 
     // 4. Back to a (complex) log spectrum; exponentiate; the impulse response.
     fft.forward (w);
-    for (int k = 0; k <= half; ++k)
+    if (exactMath)
     {
-        const float mag = std::exp (w[2 * k]), phase = w[2 * k + 1];
-        w[2 * k] = mag * std::cos (phase);
-        w[2 * k + 1] = mag * std::sin (phase);
+        for (int k = 0; k <= half; ++k)
+        {
+            const float mag = std::exp (w[2 * k]), ph = w[2 * k + 1];
+            w[2 * k] = mag * std::cos (ph);
+            w[2 * k + 1] = mag * std::sin (ph);
+        }
+    }
+    else
+    {
+        // 5.2.5: e^x = 10^(x * 20 / ln 10 / 20) through dbToGain, sin and cos together, four at a time.
+        constexpr float dbPerNeper = 8.6858896380650366f;
+        float* mag = logMag.data();
+        for (int k = 0; k <= half; ++k)
+        {
+            mag[k] = w[2 * k] * dbPerNeper;
+            phase[(size_t) k] = w[2 * k + 1];
+        }
+        fastmath::dbToGain (mag, mag, half + 1);
+        fastmath::sinCos (phase.data(), sinPart.data(), cosPart.data(), half + 1);
+        for (int k = 0; k <= half; ++k)
+        {
+            w[2 * k] = mag[k] * cosPart[(size_t) k];
+            w[2 * k + 1] = mag[k] * sinPart[(size_t) k];
+        }
     }
     fft.inverse (w);
 
     // 5. The first `taps` samples, faded out over the last eighth (a minimum-phase response has
     //    its energy at the start, so little is lost).
-    const int fade = taps / 8;
-    constexpr float pi = 3.14159265358979f;
+    const int fade = (int) fadeOut.size();
     for (int n = 0; n < taps; ++n)
-    {
-        float v = w[n];
-        if (n >= taps - fade)
-            v *= 0.5f * (1.0f + std::cos (pi * (float) (n - (taps - fade) + 1) / (float) fade));
-        out[n] = v;
-    }
+        out[n] = n >= taps - fade ? w[n] * fadeOut[(size_t) (n - (taps - fade))] : w[n];
 }
 
 int ZeroLatencyFilter::filter (int which, int set, const float* x, float* out, int n) noexcept
