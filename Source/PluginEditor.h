@@ -18,9 +18,10 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 // Everything laid out at a fixed base size; the editor scales it uniformly.
-// Layout (docs/DESIGN.md, 5.0): header with Undo/Redo, presets, Paint and the compare cluster
+// Layout (docs/DESIGN.md, 5.3): header with Undo/Redo, presets, Paint and the compare cluster
 // (Match, Delta, Bypass); the perception screen; a control deck in signal order: AUTO EQ, HEAT,
-// SIDECHAIN, REFERENCE, SHAPE, OUTPUT.
+// SIDECHAIN over REFERENCE in one column, SHAPE, OUTPUT. Controls that do nothing in the current
+// setting (the Mid/Side routing in Stereo, an Amount whose mode is off) are not shown.
 class AnnealEditorContent : public juce::Component
 {
 public:
@@ -64,6 +65,11 @@ private:
     // 5.0
     anneal::Knob punch, width, monoBass;
     std::unique_ptr<juce::AlertWindow> presetDialog;
+
+    // 5.3: Sidechain's and Reference's live line, beside their titles (the Amount rows are compact).
+    struct Status { juce::String text; bool active = false; };
+    Status scStatus, refStatus;
+    void setStatus (Status& s, const juce::String& text, bool active, int titleY);
 
     juce::String shownMatchText, shownRefError;
     std::uint32_t shownRefSerial = ~0u, shownPaintSerial = ~0u;

@@ -1707,37 +1707,88 @@ void testEditorLayout()
                overlaps.isEmpty() ? juce::String (kids.size()) + " controls" : overlaps);
     }
 
-    // 5.0: the SHAPE group (Punch, Width, Mono bass) between REFERENCE and OUTPUT (dividers 1136, 1288).
+    // 5.0: the SHAPE group (Punch, Width, Mono bass) between the SIDECHAIN / REFERENCE column and
+    // OUTPUT (5.3: dividers 1032, 1232).
     {
         int inShape = 0;
         for (auto* c : content.getChildren())
-            if (dynamic_cast<anneal::Knob*> (c) != nullptr && c->getX() > 1136 && c->getRight() < 1288)
+            if (dynamic_cast<anneal::Knob*> (c) != nullptr && c->getX() > 1032 && c->getRight() < 1232)
                 ++inShape;
-        check (inShape == 3 && AnnealEditorContent::baseWidth == 1464, "SHAPE group: Punch, Width and Mono bass between REFERENCE and OUTPUT",
+        check (inShape == 3 && AnnealEditorContent::baseWidth == 1464, "SHAPE group: Punch, Width and Mono bass before OUTPUT",
                juce::String (inShape) + " knobs, base width " + juce::String (AnnealEditorContent::baseWidth));
     }
 
-    // 4.0: the REFERENCE group sits between SIDECHAIN and OUTPUT (dividers at 984 and 1136), its
+    // 4.0: REFERENCE sits in the column after HEAT (5.3: under SIDECHAIN, dividers 832 and 1032), its
     // menu follows the parameter, and the Paint pill is in the header.
+    anneal::ReferenceMenu* refMenu = nullptr;
+    juce::Component* scMenu = nullptr;
+    anneal::Knob* scAmount = nullptr;
+    anneal::Knob* refAmount = nullptr;
     {
-        anneal::ReferenceMenu* refMenu = nullptr;
         juce::Component* paint = nullptr;
         for (auto* c : content.getChildren())
         {
             if (auto* m = dynamic_cast<anneal::ReferenceMenu*> (c))
                 refMenu = m;
+            if (auto* m = dynamic_cast<anneal::RoutingMenu*> (c); m != nullptr && m->getTooltip().startsWith ("Sidechain:"))
+                scMenu = c;
+            if (auto* k = dynamic_cast<anneal::Knob*> (c))
+            {
+                if (k->slider.getTooltip().startsWith ("Sidechain amount"))
+                    scAmount = k;
+                if (k->slider.getTooltip().startsWith ("Reference amount"))
+                    refAmount = k;
+            }
             if (auto* b = dynamic_cast<juce::TextButton*> (c); b != nullptr && b->getButtonText() == "PAINT")
                 paint = c;
         }
         r.set (ids::refMode, 2);
-        const bool ok = refMenu != nullptr && paint != nullptr && refMenu->getX() > 984 && refMenu->getRight() < 1136
+        const bool ok = refMenu != nullptr && scMenu != nullptr && paint != nullptr && refMenu->getX() > 832 && refMenu->getRight() < 1032
+                        && scMenu->getX() > 832 && scMenu->getRight() < 1032 && refMenu->getY() > scMenu->getBottom() + 60
                         && refMenu->getChoice() == 2 && anneal::ReferenceMenu::pillText (0) == "Reference: off"
                         && paint->getBottom() <= 48 && AnnealEditorContent::baseWidth == 1464;
-        check (ok, "REFERENCE group and Paint pill placed, menu follows the parameter",
+        check (ok, "SIDECHAIN over REFERENCE in one column, Paint pill placed, menu follows the parameter",
                (refMenu != nullptr ? "menu " + refMenu->getBounds().toString() + " shows " + anneal::ReferenceMenu::pillText (refMenu->getChoice())
                                    : juce::String ("NO MENU"))
+                   + (scMenu != nullptr ? ", sidechain " + scMenu->getBounds().toString() : juce::String (", NO SIDECHAIN MENU"))
                    + (paint != nullptr ? ", Paint " + paint->getBounds().toString() : juce::String (", NO PAINT PILL")));
         r.set (ids::refMode, 0);
+    }
+
+    // 5.3, a calmer deck: what does nothing in the current setting isn't shown. The Mid/Side routing
+    // menus appear in Mid/Side only; an Amount row only while its Sidechain / Reference mode is on.
+    // With everything shown, still nothing overlaps and everything stays inside its column.
+    {
+        auto shown = [] (juce::Component* c) { return c != nullptr && c->isVisible(); };
+        content.tick (0.0f);
+        const bool quiet = ! shown (routing.size() == 2 ? routing[0] : nullptr) && ! shown (routing.size() == 2 ? routing[1] : nullptr)
+                           && ! shown (scAmount) && ! shown (refAmount);
+        r.set (ids::stereoMode, 1.0f);
+        r.set (ids::scMode, 1.0f);
+        r.set (ids::refMode, 2.0f);
+        content.tick (0.0f);
+        const bool all = routing.size() == 2 && shown (routing[0]) && shown (routing[1]) && shown (scAmount) && shown (refAmount);
+        juce::String overlaps;
+        auto kids = content.getChildren();
+        for (int i = 0; i < kids.size(); ++i)
+            for (int j = i + 1; j < kids.size(); ++j)
+                if (kids[i]->isVisible() && kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
+                    overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
+        const bool inColumn = scAmount != nullptr && refAmount != nullptr && refMenu != nullptr
+                              && scAmount->getX() > 832 && scAmount->getRight() < 1032 && refAmount->getX() > 832 && refAmount->getRight() < 1032
+                              && scAmount->getBottom() < refMenu->getY() - 15 && refAmount->getY() > refMenu->getBottom()
+                              && refAmount->getBottom() <= 628;
+        r.set (ids::stereoMode, 0.0f);
+        r.set (ids::scMode, 0.0f);
+        r.set (ids::refMode, 0.0f);
+        content.tick (0.0f);
+        const bool quietAgain = ! shown (scAmount) && ! shown (refAmount) && ! shown (routing.size() == 2 ? routing[0] : nullptr);
+        check (quiet && all && quietAgain && overlaps.isEmpty() && inColumn,
+               "5.3 calmer deck: routing in Mid/Side only, Amount rows only while their mode is on, nothing overlapping",
+               juce::String ("at rest: ") + (quiet ? "hidden" : "SHOWN") + "; Mid/Side, sidechain and reference on: "
+                   + (all ? "shown" : "NOT ALL SHOWN") + (inColumn ? ", in their column" : ", OUT OF THE COLUMN")
+                   + (overlaps.isEmpty() ? juce::String (", no overlaps") : ", overlaps " + overlaps)
+                   + "; off again: " + (quietAgain ? "hidden" : "SHOWN"));
     }
 }
 

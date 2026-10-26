@@ -387,7 +387,7 @@ void PerceptionScreen::paintEq (juce::Graphics& g)
 
     g.setFont (font (11.0f));
     const float rx = lane.getRight() + 8.0f;
-    for (float db : { 12.0f, 6.0f, 0.0f, -6.0f, -12.0f })
+    for (float db : { 12.0f, 0.0f, -12.0f })   // 5.3: the ±6 lines speak for themselves
     {
         g.setColour (db == 0.0f ? colour::muted : colour::faint);
         g.drawText (db == 0.0f ? juce::String ("0 dB") : signedDb (db, 0),
@@ -486,11 +486,7 @@ void PerceptionScreen::paintHeat (juce::Graphics& g)
 {
     const auto lane = heatLane;
 
-    g.setFont (font (11.0f));
-    const float rx = lane.getRight() + 8.0f;
-    g.setColour (colour::faint);
-    g.drawText ("0 dB", juce::Rectangle<float> (rx, lane.getY() - 3.0f, 40.0f, 13.0f), juce::Justification::centredLeft, false);
-    g.drawText (signedDb (heatRelFloorDb, 0), juce::Rectangle<float> (rx, lane.getBottom() - 11.0f, 36.0f, 13.0f), juce::Justification::centredLeft, false);
+    // 5.3: no scale numbers here: the lane is a picture of where Heat writes, not a meter.
     g.setColour (colour::divider);
     g.drawHorizontalLine (juce::roundToInt (lane.getBottom()), lane.getX(), lane.getRight());
 
@@ -661,20 +657,17 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
         g.setColour (colour::faint);
         g.drawText (sub, juce::Rectangle<float> (at.x + textWidth (f, t) + 8.0f, at.y, 560.0f, 14.0f), juce::Justification::centredLeft, false);
     };
+    // 5.3: only what you need to read the picture; the explanations live in the tooltips.
     float y = mainLane.getY() + 8.0f;
     if (frozen)
-        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw,
-             "the curve is held; Heat still follows the music");
+        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw, {});
     else
-        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ", colour::muted,
-             midSide ? "Mid solid / Side dashed" : "live gain over the spectrum");
+        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ", colour::muted, midSide ? "Mid solid / Side dashed" : "");
     if (keyActive)
-        tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "KEY", colour::violet,
-             "sidechain level (violet line)");
+        tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "KEY", colour::violet, {});
     if (zeroLatency)   // 5.2.7: Punch works here too (on whole attacks) unless Punch at Zero is off
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "ZERO LATENCY", colour::text,
-             zeroPunchOn ? "minimum-phase filters, no delay; Punch on whole attacks; Heat and Listen need Low or more"
-                         : "minimum-phase filters, no delay; Heat, Punch and Listen need Low or more");
+             zeroPunchOn ? "Heat and Listen rest" : "Heat, Punch and Listen rest");
 
     // 4.0 Reference: what it is and what it is doing, whenever it is in use or a file is loading.
     juce::String refText;
@@ -685,11 +678,10 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
         refText = "analysing the dropped file...";
     else if (refMode == 1)
         refText = activity.refSeconds > 0.0f && refHave
-                    ? "learning the sidechain key" + dash + juce::String (juce::roundToInt (activity.refSeconds)) + " s (teal line)"
-                    : juce::String ("Learn key: waiting for the sidechain key");
-    else if (refMode == 2)
-        refText = refHave ? refName + dash + "Match steers toward it (teal line)"
-                          : juce::String ("drop an audio file here, or learn one from the sidechain key");
+                    ? "learning the key" + dash + juce::String (juce::roundToInt (activity.refSeconds)) + " s"
+                    : juce::String ("waiting for the sidechain key");
+    else if (refMode == 2)   // 5.3: just the reference's name once there is one
+        refText = refHave ? refName : juce::String ("drop an audio file here, or learn one from the sidechain key");
     if (refText.isNotEmpty())
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "REF", refError.isNotEmpty() ? colour::warning : colour::teal, refText);
 
@@ -699,12 +691,10 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "PAINT", colour::text,
              "drag in a lane: how much acts there" + dot + "Alt- or right-drag erases" + dot + "double-click resets the lane");
     }
-    tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), "harmonics written, vs output");
-    // Over a filled width curve a grey note wouldn't read; "100 %" in the gutter marks the middle.
-    const bool asIs = std::abs (widthSetting - 1.0f) < 1.0e-4f && monoHz < monoBassMinHz && PaintCurves::isFull (paintCurves.width);
+    tag ({ heatLane.getX() + 10.0f, heatLane.getY() + 2.0f }, "HEAT", colour::bronze.withAlpha (0.9f), {});
+    // "100 %" in the gutter marks the width lane's middle; in paint mode the lane says what it takes.
     tag ({ widthLane.getX() + 10.0f, widthLane.getY() + 2.0f }, "WIDTH", colour::rose.withAlpha (0.9f),
-         paintMode ? juce::String ("how much of Width acts (top = all of it)")
-                   : asIs ? juce::String ("as is; shading = how much is in the sides") : juce::String());
+         paintMode ? juce::String ("how much of Width acts (top = all of it)") : juce::String());
     legendBottom = y + 14.0f;
 }
 
@@ -952,9 +942,11 @@ void PerceptionScreen::setPaintMode (bool on)
     paintMode = on;
     setTooltip (on ? "Paint: drag in the EQ, Width or Heat lane to set how much of it acts there (top = 100 %, "
                      "bottom = none). Alt- or right-drag erases back to 100 %, double-click resets the lane"
-                   : "Drag a range handle to limit where Anneal acts; double-click a handle to reset it. Drop an audio "
-                     "file here to use it as the reference. Horizontal axis: ERB-rate scale (equal steps of the ear's "
-                     "frequency resolution).");
+                   : "AUTO EQ: the live gain over the spectrum (straw lifts, blue cuts). WIDTH: the stereo width you "
+                     "hear (100 % in the middle); the shading shows how much of the sound is in the sides. HEAT: where "
+                     "harmonics are written, against the output there. Drag a range handle to limit where Anneal acts; "
+                     "double-click a handle to reset it. Drop an audio file here to use it as the reference. Horizontal "
+                     "axis: ERB-rate scale (equal steps of the ear's frequency resolution).");
     repaint();
 }
 

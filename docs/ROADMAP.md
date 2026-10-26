@@ -61,6 +61,10 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.0 (2026-10-25, asked for by the user that evening: "make the ui way less cluttered"): **a calmer
+  interface**: SIDECHAIN over REFERENCE in one column with compact Amount rows shown only while their
+  mode is on and their live line beside the title; the Mid/Side routing menus only in Mid/Side; the
+  display's lane notes moved to its tooltip, fewer scale numbers, shorter status tags.
 - 5.2.7 (2026-10-25, daily update): **Punch at zero latency** (item 16): a time-domain transient
   shaper after the zero-latency filters (a fast and a slow envelope, Stereo linked or Mid and Side by
   the EQ routing, inside Range with first-order edges that never turn a boost into a cut). 2 kHz

@@ -40,8 +40,8 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 |---|---|---|
 | AUTO EQ | Reveal, Smooth | Freeze (3.0, title row), Tilt, Response, Guard (transients) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
-| SIDECHAIN (3.0) | Amount | Mode (Off / Make room / Unmask) |
-| REFERENCE (4.0) | Amount | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) |
+| SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Amount (5.3: a compact row, shown while a mode is on) |
+| REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
 | SHAPE (5.0) | — | Punch, Width, Mono bass (compact rows, like Tilt / Response / Guard) |
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), Match (loudness), Δ (delta listen), Bypass |
@@ -91,6 +91,18 @@ on hue alone; even vs. odd harmonics are solid vs. lighter bars.
   SIDECHAIN → REFERENCE → SHAPE → OUTPUT (dividers at x 490 / 832 / 984 / 1136 / 1288), hairlines
   between groups, no cards. The output meter is a tall bar at the right edge of the deck. (3.0 was
   1160 × 640; REFERENCE (4.0) and SHAPE (5.0) each added 152 px, the width of SIDECHAIN.)
+
+**A calmer deck (5.3).** The user asked for a far less cluttered interface. The rule since then: a
+control that does nothing in the current setting isn't shown, and text that explains rather than
+informs moves to a tooltip. SIDECHAIN and REFERENCE share one column (dividers at x 490 / 832 / 1032 /
+1232): each is its title, its menu and, only while its mode is on, a compact Amount row (like Tilt);
+their live line ("ducking −7.2 dB", "matching −6.0 dB", "no key connected") sits beside the title in
+the role colour, faint while idle. SHAPE and OUTPUT take the width this frees. The EQ / Heat routing
+menus show in Mid/Side only. On the display the lane tags are bare names (AUTO EQ, WIDTH, HEAT; "Mid
+solid / Side dashed" stays in Mid/Side because it's needed to read the curves), the gutter keeps
++12 / 0 dB / −12 and WIDTH's 100 %, the heat lane has no numbers, and status tags are short (ZERO
+LATENCY · Heat and Listen rest; AUTO EQ FROZEN; KEY; REF with the reference's name). The display's
+tooltip carries what each lane shows. Paint mode keeps its gesture line: it is needed while painting.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 

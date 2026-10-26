@@ -4,6 +4,40 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.0 — 2026-10-25 19:30
+
+New
+- **A calmer, less cluttered interface** (asked for by you: "make the ui way less cluttered"). Nothing
+  was taken away: every control is still there when it does something. What changed:
+  - **Sidechain and Reference share one column.** Each is its title and its menu. Their Amount knob
+    is now a small row that only appears while that mode is on, and what they are doing ("ducking
+    −7.2 dB", "matching −6.0 dB", "no key connected") reads right beside their title. At rest the
+    column is just two menus, instead of two big rings saying "off". SHAPE and OUTPUT get the room
+    that frees up.
+  - **The Mid/Side routing menus** (EQ: Both / Heat: Both) only show in Mid/Side mode, where they do
+    something. In Stereo they used to sit there greyed out.
+  - **The display says less.** The lanes are just named (AUTO EQ, WIDTH, HEAT) without the sentences
+    after them; those explanations are now in the display's tooltip. The scale keeps +12, 0 and
+    −12 dB (the ±6 lines stay, unlabelled), and the heat lane lost its numbers. Status tags are
+    shorter: "ZERO LATENCY · Heat and Listen rest", "AUTO EQ FROZEN", "KEY", and the reference shows
+    just its name. Paint mode still explains its gestures.
+  - The window size, the colours and every knob, menu and parameter are as before, so projects open
+    and sound exactly the same.
+
+Fixes
+- None in this update: it is the interface change you asked for, made right away. The daily updates
+  keep doing their bug pass.
+
+Tests: 189/189 acceptance checks, 1 new:
+- the calmer deck: the routing menus show in Mid/Side only, the Sidechain and Reference Amount rows
+  only while their mode is on (and go again when it is switched off), and with everything showing
+  nothing overlaps and the rows stay inside their column.
+The layout checks follow the new columns (SIDECHAIN over REFERENCE between 832 and 1032, SHAPE between
+1032 and 1232).
+
+25/25 host checks on the built VST3 and 25/25 setup checks pass. CPU unchanged (the audio code
+didn't change).
+
 ## 5.2.7 — 2026-10-25 10:21
 
 New

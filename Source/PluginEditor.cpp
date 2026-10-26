@@ -8,13 +8,22 @@ namespace ids = anneal::ids;
 
 namespace
 {
-    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> SIDECHAIN ->
-    // REFERENCE -> OUTPUT.
+    // Deck geometry (base size). Groups follow the signal: AUTO EQ -> HEAT -> SIDECHAIN over
+    // REFERENCE (5.3: one column) -> SHAPE -> OUTPUT.
     constexpr int titleY = 418, dividerTop = 424, dividerBottom = 628;
     constexpr int routingY = 412;   // 26 px pills centred on the 15 px title row
-    constexpr int dividerX[] = { 490, 832, 984, 1136, 1288 };
+    constexpr int dividerX[] = { 490, 832, 1032, 1232 };
+    constexpr int refTitleY = 528;  // REFERENCE's title, under SIDECHAIN in the same column
+    constexpr int keyX = 848, shapeX = 1048, outputX = 1248;   // the groups' left edges (titles)
 
     juce::String minus() { return juce::String::fromUTF8 ("\xe2\x88\x92"); }
+
+    float textWidth (const juce::Font& f, const juce::String& s)
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, s, 0.0f, 0.0f);
+        return ga.getBoundingBox (0, -1, false).getWidth();
+    }
 
     juce::String signedDb (float v)
     {
@@ -69,12 +78,12 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       ceiling (p.apvts, ids::ceiling, "Ceiling: ", { "Off", juce::String::fromUTF8 ("0.0 dB"), juce::String::fromUTF8 ("\xe2\x88\x92" "0.3 dB"),
                                                      juce::String::fromUTF8 ("\xe2\x88\x92" "1.0 dB") },
                "Ceiling: a true-peak limiter at the very end, so Heat and Output can never clip (dBTP, look-ahead 1.4 ms)"),
-      scAmount (p.apvts, ids::scAmount, "Amount", colour::violet, Size::primary, false, "connect a key track",
+      scAmount (p.apvts, ids::scAmount, "Amount", colour::violet, Size::secondary, false, {},
                 "Sidechain amount: how far the key ducks (Make room) or lifts (Unmask) this track, up to 9 / 6 dB"),
       undoButton (anneal::IconButton::Glyph::undo, "Undo the last change (Ctrl+Z)"),
       redoButton (anneal::IconButton::Glyph::redo, "Redo (Ctrl+Shift+Z or Ctrl+Y)"),
       refMenu (p.apvts, ids::refMode),
-      refAmount (p.apvts, ids::refAmount, "Amount", colour::teal, Size::primary, false, "drop a reference",
+      refAmount (p.apvts, ids::refAmount, "Amount", colour::teal, Size::secondary, false, {},
                  "Reference amount: how far Match steers the auto EQ toward the reference's tone, up to 6 dB either way"),
       punch (p.apvts, ids::punch, "Punch", colour::rose, Size::secondary, true, {},
              "Punch: makes attacks louder (+) or softer (-) in the bands they hit, up to 8 dB, and leaves the body of the "
@@ -215,24 +224,23 @@ void AnnealEditorContent::resized()
     harmonics.setBounds (690, 496, 122, 40);
     focus.setBounds (684, 546, 134, 53);
 
-    // SIDECHAIN: the mode, then how much.
-    scMode.setBounds (844, 438, 128, 26);
-    scAmount.setBounds (838, 474, primaryW, primaryH);
+    // 5.3: SIDECHAIN over REFERENCE (4.0) in one column, each its mode and, while that is on, a
+    // compact Amount row; what they are doing reads beside their titles.
+    scMode.setBounds (keyX - 4, 438, 176, 26);
+    scAmount.setBounds (keyX - 2, 470, 172, smallH);
+    refMenu.setBounds (keyX - 4, refTitleY + 20, 176, 26);
+    refAmount.setBounds (keyX - 2, refTitleY + 52, 172, smallH);
 
-    // REFERENCE (4.0): the mode (with Load / Clear), then how far Match steers.
-    refMenu.setBounds (996, 438, 128, 26);
-    refAmount.setBounds (990, 474, primaryW, primaryH);
+    // 5.0 SHAPE: Punch, Width and Mono bass as compact rows (like Tilt, Response and Guard).
+    punch.setBounds (shapeX, 442, 168, smallH);
+    width.setBounds (shapeX, 498, 168, smallH);
+    monoBass.setBounds (shapeX, 554, 168, smallH);
 
     // OUTPUT: what you hear (Listen), the ceiling, then Mix and Output; the meter at the edge.
-    // 5.0 SHAPE: Punch, Width and Mono bass as compact rows (like Tilt, Response and Guard).
-    punch.setBounds (1148, 442, 132, smallH);
-    width.setBounds (1148, 498, 132, smallH);
-    monoBass.setBounds (1148, 554, 132, smallH);
-
-    listen.setBounds (1300, 438, 112, 26);
-    ceiling.setBounds (1300, 472, 112, 26);
-    mix.setBounds (1302, 510, 104, smallH);
-    output.setBounds (1302, 566, 104, smallH);
+    listen.setBounds (outputX - 4, 438, 148, 26);
+    ceiling.setBounds (outputX - 4, 472, 148, 26);
+    mix.setBounds (outputX - 2, 510, 140, smallH);
+    output.setBounds (outputX - 2, 566, 140, smallH);
     meter.setBounds (1420, 438, 32, 190);
 }
 
@@ -246,26 +254,37 @@ void AnnealEditorContent::paint (juce::Graphics& g)
     g.drawText ("ANNEAL", juce::Rectangle<int> (24, 10, 170, 28), juce::Justification::centredLeft, false);
 
 
-    // Group titles with role dots, hairlines between groups.
-    auto groupTitle = [&g] (int x, const juce::String& text, std::initializer_list<juce::Colour> dots)
+    // Group titles with role dots, hairlines between groups. 5.3: Sidechain's and Reference's live
+    // line follows their title, in the role colour while they are acting.
+    auto groupTitle = [&g] (int x, int y, const juce::String& text, std::initializer_list<juce::Colour> dots,
+                            const Status* status = nullptr, juce::Colour role = colour::muted)
     {
         int dx = x;
         for (auto c : dots)
         {
             g.setColour (c);
-            g.fillEllipse ((float) dx, (float) titleY + 4.5f, 6.0f, 6.0f);
+            g.fillEllipse ((float) dx, (float) y + 4.5f, 6.0f, 6.0f);
             dx += 9;
         }
+        const auto f = caps (11.0f);
         g.setColour (colour::muted);
-        g.setFont (caps (11.0f));
-        g.drawText (text, juce::Rectangle<int> (dx + 4, titleY, 200, 15), juce::Justification::centredLeft, false);
+        g.setFont (f);
+        g.drawText (text, juce::Rectangle<int> (dx + 4, y, 200, 15), juce::Justification::centredLeft, false);
+        if (status != nullptr && status->text.isNotEmpty())
+        {
+            const int sx = dx + 4 + juce::roundToInt (textWidth (f, text)) + 8;
+            g.setColour (status->active ? role : colour::faint);
+            g.setFont (font (11.0f));
+            g.drawFittedText (status->text, juce::Rectangle<int> (sx, y, dividerX[2] - 6 - sx, 15),
+                              juce::Justification::centredLeft, 1, 0.85f);
+        }
     };
-    groupTitle (28, "AUTO EQ", { colour::straw, colour::blue });
-    groupTitle (506, "HEAT", { colour::bronze });
-    groupTitle (848, "SIDECHAIN", { colour::violet });
-    groupTitle (1000, "REFERENCE", { colour::teal });
-    groupTitle (1152, "SHAPE", { colour::rose });
-    groupTitle (1304, "OUTPUT", { colour::muted });
+    groupTitle (28, titleY, "AUTO EQ", { colour::straw, colour::blue });
+    groupTitle (506, titleY, "HEAT", { colour::bronze });
+    groupTitle (keyX, titleY, "SIDECHAIN", { colour::violet }, &scStatus, colour::violet);
+    groupTitle (keyX, refTitleY, "REFERENCE", { colour::teal }, &refStatus, colour::teal);
+    groupTitle (shapeX, titleY, "SHAPE", { colour::rose });
+    groupTitle (outputX, titleY, "OUTPUT", { colour::muted });
 
     g.setColour (colour::divider);
     for (int x : dividerX)
@@ -351,34 +370,50 @@ void AnnealEditorContent::updateActivity()
     else                                    heat.setActivity ((a.heatRelDb + 54.0f) / 48.0f,
                                                               "harmonics " + signedDb (a.heatRelDb) + " dB");
 
+    // Sidechain and Reference: the Amount ring's inner arc, and a live line beside the group title.
+    // 5.3: with the mode off, the Amount row isn't shown and the title stands alone.
+    auto show = [this] (anneal::Knob& k, Status& s, int titleY, float amount, const juce::String& text)
+    {
+        k.setActivity (amount, text);
+        setStatus (s, text, amount > 0.0f, titleY);
+    };
     const int sc = juce::roundToInt (param (ids::scMode));
-    if (sc == 0)                                     scAmount.setActivity (0.0f, "off");
-    else if (! processor.isSidechainConnected())     scAmount.setActivity (0.0f, "no key connected");
-    else if (! a.live)                               scAmount.setActivity (0.0f, {});
-    else if (! a.keyActive)                          scAmount.setActivity (0.0f, "key is silent");
-    else if (std::abs (a.scDb) < 0.1f)               scAmount.setActivity (0.0f, sc == 1 ? "nothing to duck" : "nothing masked");
-    else                                             scAmount.setActivity (std::abs (a.scDb) / (sc == 1 ? 9.0f : 6.0f),
-                                                                           (a.scDb < 0.0f ? "ducking " : "lifting ") + signedDb (a.scDb) + " dB");
-    scAmount.setAlpha (sc == 0 ? 0.55f : 1.0f);
+    if (sc == 0)                                     show (scAmount, scStatus, titleY, 0.0f, {});
+    else if (! processor.isSidechainConnected())     show (scAmount, scStatus, titleY, 0.0f, "no key connected");
+    else if (! a.live)                               show (scAmount, scStatus, titleY, 0.0f, {});
+    else if (! a.keyActive)                          show (scAmount, scStatus, titleY, 0.0f, "key is silent");
+    else if (std::abs (a.scDb) < 0.1f)               show (scAmount, scStatus, titleY, 0.0f, sc == 1 ? "nothing to duck" : "nothing masked");
+    else                                             show (scAmount, scStatus, titleY, std::abs (a.scDb) / (sc == 1 ? 9.0f : 6.0f),
+                                                           (a.scDb < 0.0f ? "ducking " : "lifting ") + signedDb (a.scDb) + " dB");
+    scAmount.setVisible (sc != 0);
 
     // 4.0 Reference: what Learn key has learned, or how far Match is steering right now.
     const int rm = juce::roundToInt (param (ids::refMode));
-    if (processor.isAnalysingReference())             refAmount.setActivity (0.0f, "analysing the file");
-    else if (rm == 0)                                 refAmount.setActivity (0.0f, "off");
+    if (processor.isAnalysingReference())             show (refAmount, refStatus, refTitleY, 0.0f, "analysing the file");
+    else if (rm == 0)                                 show (refAmount, refStatus, refTitleY, 0.0f, {});
     else if (rm == 1)
     {
-        if (! processor.isSidechainConnected())       refAmount.setActivity (0.0f, "no key connected");
-        else if (! a.live)                            refAmount.setActivity (0.0f, {});
-        else if (a.refSeconds <= 0.0f)                refAmount.setActivity (0.0f, "waiting for the key");
-        else                                          refAmount.setActivity (a.refSeconds / 30.0f,
-                                                          "learned " + juce::String (juce::roundToInt (a.refSeconds)) + " s");
+        if (! processor.isSidechainConnected())       show (refAmount, refStatus, refTitleY, 0.0f, "no key connected");
+        else if (! a.live)                            show (refAmount, refStatus, refTitleY, 0.0f, {});
+        else if (a.refSeconds <= 0.0f)                show (refAmount, refStatus, refTitleY, 0.0f, "waiting for the key");
+        else                                          show (refAmount, refStatus, refTitleY, a.refSeconds / 30.0f,
+                                                            "learned " + juce::String (juce::roundToInt (a.refSeconds)) + " s");
     }
-    else if (! refLoaded)                             refAmount.setActivity (0.0f, "no reference yet");
-    else if (! a.live)                                refAmount.setActivity (0.0f, {});
-    else if (std::abs (a.matchDb) < 0.1f)             refAmount.setActivity (0.0f, "already matched");
-    else                                              refAmount.setActivity (std::abs (a.matchDb) / 6.0f,
-                                                          "matching " + signedDb (a.matchDb) + " dB");
-    refAmount.setAlpha (rm == 0 ? 0.55f : 1.0f);
+    else if (! refLoaded)                             show (refAmount, refStatus, refTitleY, 0.0f, "no reference yet");
+    else if (! a.live)                                show (refAmount, refStatus, refTitleY, 0.0f, {});
+    else if (std::abs (a.matchDb) < 0.1f)             show (refAmount, refStatus, refTitleY, 0.0f, "already matched");
+    else                                              show (refAmount, refStatus, refTitleY, std::abs (a.matchDb) / 6.0f,
+                                                            "matching " + signedDb (a.matchDb) + " dB");
+    refAmount.setVisible (rm != 0);
+}
+
+void AnnealEditorContent::setStatus (Status& s, const juce::String& text, bool active, int y)
+{
+    if (s.text == text && s.active == active)
+        return;
+    s.text = text;
+    s.active = active;
+    repaint (keyX, y, dividerX[2] - keyX, 15);
 }
 
 void AnnealEditorContent::setPaintMode (bool on)
@@ -425,8 +460,8 @@ void AnnealEditorContent::tick (float dt)
     const bool stereo = processor.getMainBusNumInputChannels() > 1;
     stereoMode.setEnabled (stereo);
     const bool ms = stereo && processor.apvts.getRawParameterValue (ids::stereoMode)->load() > 0.5f;
-    eqTarget.setEnabled (ms);
-    heatTarget.setEnabled (ms);
+    eqTarget.setVisible (ms);   // 5.3: only in Mid/Side, where they do something (they were greyed out)
+    heatTarget.setVisible (ms);
 
     // A listen solo replaces what Delta would play, so Delta steps back while one is on.
     delta.setAlpha (listen.getChoice() > 0 ? 0.4f : 1.0f);
