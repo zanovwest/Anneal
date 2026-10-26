@@ -2,6 +2,7 @@
 
 #include "Presets.h"
 #include "dsp/LoudnessMatch.h"
+#include "dsp/LoudnessMeter.h"
 #include "dsp/Reference.h"
 #include "dsp/SpectralEngine.h"
 #include "dsp/TransientShaper.h"
@@ -80,6 +81,13 @@ public:
     anneal::TripleBuffer<anneal::DisplayFrame>& getDisplay() noexcept { return display; }
     float getMatchGainDb() const noexcept { return matchGainDb.load (std::memory_order_relaxed); }
     float takeOutputPeak (int channel) noexcept;   // linear peak since the last call
+
+    // 5.3.1 Loudness readout (EBU R128, LUFS): the input (latency-aligned, as Mix and Match use it) and
+    // the output (what leaves Anneal), short-term and integrated. LoudnessMeter::none = nothing measured.
+    // Measured all the time, editor open or not; the integrated values run until resetLoudness().
+    struct Loudness { float shortIn, shortOut, integratedIn, integratedOut; };
+    Loudness getLoudness() const noexcept;
+    void resetLoudness() noexcept { loudnessResetPending.store (true); }   // any thread; done at the next block
     double getLatencyMs() const noexcept;
     double getLatencyMsForMode (int latencyMode) const noexcept;
     int getLatencyMode() const noexcept { return mode; }
@@ -187,6 +195,10 @@ private:
     anneal::TransientShaper::Settings zeroPunchSettings;
     std::atomic<float> zeroPunchDb { 0.0f };
     anneal::LoudnessMatch match;
+    anneal::LoudnessMeter loudIn, loudOut;   // 5.3.1
+    std::atomic<float> loudness[4] { anneal::LoudnessMeter::none, anneal::LoudnessMeter::none,
+                                     anneal::LoudnessMeter::none, anneal::LoudnessMeter::none };
+    std::atomic<bool> loudnessResetPending { false };
 
     juce::AudioBuffer<float> dryRing, dryBlock;
     int dryPos = 0, ringLength = 0, chunkCapacity = 0, preparedChannels = 2;

@@ -44,7 +44,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
 | SHAPE (5.0) | — | Punch, Width, Mono bass (compact rows, like Tilt / Response / Guard) |
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
-| Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), Match (loudness), Δ (delta listen), Bypass |
+| Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), the loudness readout (5.3.1), Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
 | On the display | Range low / high handles (limits where Anneal acts) | Drop an audio file (4.0 reference); in paint mode, draw the EQ and Heat weights (4.0) and Width's (5.2.2) |
 
@@ -103,6 +103,13 @@ solid / Side dashed" stays in Mid/Side because it's needed to read the curves), 
 +12 / 0 dB / −12 and WIDTH's 100 %, the heat lane has no numbers, and status tags are short (ZERO
 LATENCY · Heat and Listen rest; AUTO EQ FROZEN; KEY; REF with the reference's name). The display's
 tooltip carries what each lane shows. Paint mode keeps its gesture line: it is needed while painting.
+
+**Loudness (5.3.1).** Two rows of numbers in the header between Paint and MATCH, no pill: S (short-term,
+3 s) over I (integrated, since the last click), each "input → output" with the input muted, the output
+in the text colour and the arrow faint, and LUFS once at the right in faint caps. A dash where there is
+nothing to measure. Everything else (what S and I mean, the gating, that a click starts I over) is in
+the tooltip, so the header stays as calm as it was. Beside MATCH on purpose: the gain Match shows is the
+level difference you also read here.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 

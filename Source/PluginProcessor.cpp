@@ -371,6 +371,8 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     dryBlock.clear();
 
     match.prepare (sampleRate);
+    loudIn.prepare (sampleRate);    // 5.3.1: like Match, the integrated measurement comes through
+    loudOut.prepare (sampleRate);
 
     for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed, &listenSmoothed })
         s->reset (sampleRate, 0.03);
@@ -408,6 +410,8 @@ void AnnealAudioProcessor::reset()
         s->setCurrentAndTargetValue (s->getTargetValue());
     matchHold = 0;
     outputPeak[0] = outputPeak[1] = 0.0f;
+    loudIn.reset();    // 5.3.1: the last 3 s go; the integrated loudness is a measurement and stays
+    loudOut.reset();
 }
 
 double AnnealAudioProcessor::getTailLengthSeconds() const
@@ -531,6 +535,11 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         matchHold = 2 * getEngine().getFftSize();
 
     float peak[2] = { 0.0f, 0.0f };
+    if (loudnessResetPending.exchange (false))   // 5.3.1: a click on the readout
+    {
+        loudIn.resetIntegrated();
+        loudOut.resetIntegrated();
+    }
 
     for (int start = 0; start < numSamples; start += chunkCapacity)
     {
@@ -557,6 +566,7 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         if (zero)
             for (int c = 0; c < nch; ++c)
                 dryBlock.copyFrom (c, 0, buffer, c, start, len);
+        loudIn.process (dryBlock.getArrayOfReadPointers(), nch, len);   // 5.3.1
 
         // 2. Spectral engine, in place -> wet.
         float* wet[2] = { buffer.getWritePointer (0, start), nch > 1 ? buffer.getWritePointer (1, start) : nullptr };
@@ -662,11 +672,28 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     for (int c = 0; c < nch; ++c)
         if (peak[c] > outputPeak[c].load (std::memory_order_relaxed))
             outputPeak[c].store (peak[c], std::memory_order_relaxed);
+
+    // 5.3.1: what leaves Anneal, after the Ceiling and Bypass.
+    loudOut.process (buffer.getArrayOfReadPointers(), nch, numSamples);
+    loudness[0].store (loudIn.getShortTerm(), std::memory_order_relaxed);
+    loudness[1].store (loudOut.getShortTerm(), std::memory_order_relaxed);
+    loudness[2].store (loudIn.getIntegrated(), std::memory_order_relaxed);
+    loudness[3].store (loudOut.getIntegrated(), std::memory_order_relaxed);
 }
 
 float AnnealAudioProcessor::takeOutputPeak (int channel) noexcept
 {
     return outputPeak[juce::jlimit (0, 1, channel)].exchange (0.0f, std::memory_order_relaxed);
+}
+
+AnnealAudioProcessor::Loudness AnnealAudioProcessor::getLoudness() const noexcept
+{
+    // A reset asked for but not yet done by the audio thread already shows as one.
+    const bool resetting = loudnessResetPending.load();
+    const auto none = anneal::LoudnessMeter::none;
+    return { loudness[0].load (std::memory_order_relaxed), loudness[1].load (std::memory_order_relaxed),
+             resetting ? none : loudness[2].load (std::memory_order_relaxed),
+             resetting ? none : loudness[3].load (std::memory_order_relaxed) };
 }
 
 juce::AudioProcessorParameter* AnnealAudioProcessor::getBypassParameter() const

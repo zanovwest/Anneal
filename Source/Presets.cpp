@@ -159,20 +159,20 @@ juce::String importUser (const juce::File& folder, const juce::File& file, juce:
     const auto shownName = file.getFileName();
     if (! file.existsAsFile() || ! file.hasFileExtension (userExtension))
     {
-        error = shownName + juce::String::fromUTF8 (" isnât an Anneal preset (.annealpreset)");
+        error = shownName + juce::String::fromUTF8 (" isn\xe2\x80\x99t an Anneal preset (.annealpreset)");
         return {};
     }
     Values incoming;
     incoming.fill (std::numeric_limits<float>::quiet_NaN());
     if (file.getSize() > 1024 * 1024 || ! readFile (file, incoming))
     {
-        error = shownName + juce::String::fromUTF8 (" isnât an Anneal preset");
+        error = shownName + juce::String::fromUTF8 (" isn\xe2\x80\x99t an Anneal preset");
         return {};
     }
     const auto base = sanitiseName (file.getFileNameWithoutExtension());
     if (base.isEmpty() || ! folder.createDirectory())
     {
-        error = shownName + juce::String::fromUTF8 (" couldnât be added");
+        error = shownName + juce::String::fromUTF8 (" couldn\xe2\x80\x99t be added");
         return {};
     }
     for (int n = 1; n < 1000; ++n)
@@ -185,7 +185,7 @@ juce::String importUser (const juce::File& folder, const juce::File& file, juce:
         {
             if (file.copyFileTo (dest))
                 return name;
-            error = shownName + juce::String::fromUTF8 (" couldnât be copied");
+            error = shownName + juce::String::fromUTF8 (" couldn\xe2\x80\x99t be copied");
             return {};
         }
         Values there;

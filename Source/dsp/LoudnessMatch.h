@@ -7,6 +7,10 @@ namespace anneal
     public:
         void setHighShelf (double sampleRate, double f0, double gainDb, double q) noexcept;
         void setHighPass (double sampleRate, double f0, double q) noexcept;
+        void setCoefficients (double nb0, double nb1, double nb2, double na1, double na2) noexcept   // a0 = 1
+        {
+            b0 = nb0; b1 = nb1; b2 = nb2; a1 = na1; a2 = na2;
+        }
         void reset() noexcept { z1 = z2 = 0.0; }
 
         double process (double x) noexcept

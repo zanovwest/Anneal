@@ -5113,6 +5113,280 @@ void testZeroPunch527()
     }
 }
 
+// 5.3.1 bug pass. The preset bar's notes after a drop (5.2.4) showed garbled characters: the curly
+// quotes, apostrophes and the middle dot were saved in the source twice-encoded (UTF-8 read as Windows-1252
+// and saved as UTF-8 again), so each showed as an "a" with a circumflex and invisible control characters.
+void testFixes531()
+{
+    section ("48. 5.3.1 bug fixes");
+    const auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AnnealTests-fixes531");
+    tmp.deleteRecursively();
+    const auto mine = tmp.getChildFile ("mine"), elsewhere = tmp.getChildFile ("elsewhere");
+    elsewhere.createDirectory();
+
+    Rig r;
+    r.proc->setUserPresetFolder (mine, false);
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    if (editor == nullptr)
+    {
+        check (false, "the preset bar's notes read correctly", "no AnnealEditor");
+        return;
+    }
+    auto& bar = editor->getContent().presets;
+    anneal::presets::writeUser (elsewhere, "Bright Mix", anneal::presets::currentValues (r.proc->apvts));
+    const auto notPreset = elsewhere.getChildFile ("Notes.annealpreset");
+    notPreset.replaceWithText ("<NotAnneal/>");
+
+    // Only letters, digits, ASCII punctuation and the typographic marks the notes use.
+    auto clean = [] (const juce::String& s)
+    {
+        for (auto ch : s)
+            if (ch >= 0x80 && ch != 0x201c && ch != 0x201d && ch != 0x2019 && ch != 0x00b7)
+                return false;
+        return true;
+    };
+    bar.filesDropped ({ elsewhere.getChildFile ("Bright Mix.annealpreset").getFullPathName() }, 10, 10);
+    const auto added = bar.getShownText();
+    bar.filesDropped ({ notPreset.getFullPathName() }, 10, 10);
+    const auto refused = bar.getShownText();
+    bar.filesDropped ({ elsewhere.getChildFile ("Bright Mix.annealpreset").getFullPathName(), notPreset.getFullPathName() }, 10, 10);
+    const auto mixed = bar.getShownText();
+    const bool ok = added == juce::String::fromUTF8 ("Added \xe2\x80\x9c" "Bright Mix\xe2\x80\x9d")
+                    && refused == juce::String::fromUTF8 ("Notes.annealpreset isn\xe2\x80\x99t an Anneal preset")
+                    && mixed == juce::String::fromUTF8 ("Added \xe2\x80\x9c" "Bright Mix\xe2\x80\x9d \xc2\xb7 1 not added")
+                    && clean (added) && clean (refused) && clean (mixed);
+    check (ok, "the preset bar's notes after a drop read correctly",
+           "\"" + added + "\" / \"" + refused + "\" / \"" + mixed + "\"");
+    ed.reset();
+    tmp.deleteRecursively();
+}
+
+//==============================================================================
+// 5.3.1 Loudness readout (roadmap item 17): EBU R128 short-term and integrated loudness of the input
+// and the output, in the header beside MATCH. Checked against EBU Tech 3341's test signals.
+namespace loudtest
+{
+    struct Part { double seconds, dbfs; };
+
+    // EBU Tech 3341's signals: a 1 kHz sine at the given peak level on every channel, part after part.
+    Channels sines1k (double fs, std::initializer_list<Part> parts, int channels = 2)
+    {
+        std::vector<float> x;
+        double phase = 0.0;
+        for (const auto& p : parts)
+        {
+            const auto n = (size_t) std::llround (p.seconds * fs);
+            const double a = std::pow (10.0, p.dbfs / 20.0);
+            for (size_t i = 0; i < n; ++i)
+            {
+                x.push_back ((float) (a * std::sin (phase)));
+                phase += 6.283185307179586 * 1000.0 / fs;
+            }
+        }
+        return Channels ((size_t) channels, x);
+    }
+
+    // Integrated and the short-term values every 100 ms, fed in random blocks.
+    struct Result { float integrated = 0.0f; std::vector<float> shortTerm; };
+    Result measure (const Channels& in, double fs, unsigned seed)
+    {
+        anneal::LoudnessMeter m;
+        m.prepare (fs);
+        Result r;
+        auto blocks = randomBlocks (1, 1500, seed);
+        const int n = (int) in[0].size(), step = (int) std::lround (0.1 * fs);
+        int nextRead = step;
+        for (int pos = 0; pos < n;)
+        {
+            const int b = std::min ({ blocks(), n - pos, nextRead - pos });
+            const float* ptrs[2] = { in[0].data() + pos, in.size() > 1 ? in[1].data() + pos : nullptr };
+            m.process (ptrs, (int) in.size(), b);
+            pos += b;
+            if (pos == nextRead)
+            {
+                r.shortTerm.push_back (m.getShortTerm());
+                nextRead += step;
+            }
+        }
+        r.integrated = m.getIntegrated();
+        return r;
+    }
+}
+
+void testLoudness531()
+{
+    section ("49. 5.3.1 Loudness readout (EBU R128)");
+    using loudtest::sines1k;
+    using loudtest::measure;
+
+    {
+        // EBU Tech 3341, cases 1-5: integrated loudness within +-0.1 LU (the gates at -70 LUFS and
+        // 10 LU under the mean leave the quiet parts out).
+        const double fs = 48000.0;
+        struct Case { const char* name; Channels in; double expected; };
+        const Case cases[] = {
+            { "1 (-23 dBFS)", sines1k (fs, { { 20.0, -23.0 } }), -23.0 },
+            { "2 (-33 dBFS)", sines1k (fs, { { 20.0, -33.0 } }), -33.0 },
+            { "3 (-36/-23/-36)", sines1k (fs, { { 10.0, -36.0 }, { 60.0, -23.0 }, { 10.0, -36.0 } }), -23.0 },
+            { "4 (-72/-36/-23/-36/-72)", sines1k (fs, { { 10.0, -72.0 }, { 10.0, -36.0 }, { 60.0, -23.0 }, { 10.0, -36.0 }, { 10.0, -72.0 } }), -23.0 },
+            { "5 (-26/-20/-26)", sines1k (fs, { { 20.0, -26.0 }, { 20.1, -20.0 }, { 20.0, -26.0 } }), -23.0 },
+        };
+        bool ok = true;
+        juce::String detail;
+        unsigned seed = 1;
+        for (const auto& c : cases)
+        {
+            const float got = measure (c.in, fs, seed++).integrated;
+            ok = ok && std::abs (got - c.expected) <= 0.1;
+            detail << "case " << c.name << ": " << juce::String (got, 2) << "  ";
+        }
+        check (ok, "integrated loudness: EBU Tech 3341 cases 1-5", detail + "(LUFS; each within 0.1 LU)");
+    }
+
+    {
+        // Case 9: 1.34 s at -20 dBFS, 1.66 s at -30, twenty times. Short-term is -23.0 +-0.1 LUFS after 3 s.
+        // A steady -23 dBFS reads -23.0 short-term too, at 44.1, 48 and 96 kHz; one channel (mono) 3 dB less.
+        const double fs = 48000.0;
+        Channels in;
+        {
+            std::vector<float> x;
+            for (int i = 0; i < 20; ++i)
+            {
+                const auto a = sines1k (fs, { { 1.34, -20.0 } }, 1)[0], b = sines1k (fs, { { 1.66, -30.0 } }, 1)[0];
+                x.insert (x.end(), a.begin(), a.end());
+                x.insert (x.end(), b.begin(), b.end());
+            }
+            in = Channels (2, x);
+        }
+        const auto r = measure (in, fs, 7);
+        float lo = 0.0f, hi = -200.0f;
+        for (size_t i = 30; i < r.shortTerm.size(); ++i)
+        {
+            lo = std::min (lo, r.shortTerm[i]);
+            hi = std::max (hi, r.shortTerm[i]);
+        }
+        float worstRate = 0.0f;
+        juce::String rates;
+        for (double rate : { 44100.0, 48000.0, 96000.0 })
+        {
+            const auto s = measure (sines1k (rate, { { 5.0, -23.0 } }), rate, 3);
+            worstRate = std::max ({ worstRate, std::abs (s.shortTerm.back() + 23.0f), std::abs (s.integrated + 23.0f) });
+            rates << juce::String (rate / 1000.0, 1) << " kHz " << juce::String (s.shortTerm.back(), 2) << "  ";
+        }
+        const auto mono = measure (sines1k (fs, { { 5.0, -20.0 } }, 1), fs, 4);
+        check (std::abs (lo + 23.0f) <= 0.1f && std::abs (hi + 23.0f) <= 0.1f && worstRate <= 0.1f
+                   && std::abs (mono.integrated + 23.01f) <= 0.1f,
+               "short-term loudness: EBU case 9, rates, mono",
+               "case 9 after 3 s: " + juce::String (lo, 2) + " to " + juce::String (hi, 2) + " LUFS; steady -23 dBFS: " + rates
+                   + "; mono -20 dBFS: " + juce::String (mono.integrated, 2));
+    }
+
+    // Through the plug-in: input and output, Output -6 dB, in a latency mode and at zero latency;
+    // Bypass reads the same in and out.
+    const double fs = 48000.0;
+    const auto tone = sines1k (fs, { { 8.0, -23.0 } });
+    auto runRig = [&] (float outputDb, bool zero, bool bypass, Rig& r)
+    {
+        r.setNeutral();
+        r.set (ids::output, outputDb);
+        r.set (ids::zeroLatency, zero ? 1.0f : 0.0f);
+        r.set (ids::bypass, bypass ? 1.0f : 0.0f);
+        r.prepare (fs, 512);
+        r.run (tone, randomBlocks (32, 1024, 5));
+        return r.proc->getLoudness();
+    };
+    {
+        Rig a, b, c;
+        const auto low = runRig (-6.0f, false, false, a);
+        const auto zero = runRig (-6.0f, true, false, b);
+        const auto byp = runRig (-6.0f, false, true, c);
+        auto near = [] (float v, float want) { return std::abs (v - want) <= 0.1f; };
+        const bool ok = near (low.shortIn, -23.0f) && near (low.integratedIn, -23.0f) && near (low.shortOut, -29.0f)
+                        && near (low.integratedOut, -29.0f) && near (zero.shortIn, -23.0f) && near (zero.integratedOut, -29.0f)
+                        && near (byp.shortOut, -23.0f) && near (byp.integratedOut, -23.0f) && near (byp.integratedIn, -23.0f);
+        check (ok, "the plug-in measures its input and its output",
+               "-23 dBFS tone, Output -6 dB, Low: in " + juce::String (low.shortIn, 2) + " / " + juce::String (low.integratedIn, 2)
+                   + ", out " + juce::String (low.shortOut, 2) + " / " + juce::String (low.integratedOut, 2) + " (S / I); Zero latency out "
+                   + juce::String (zero.integratedOut, 2) + "; Bypass out " + juce::String (byp.integratedOut, 2));
+    }
+    {
+        // A click starts the integrated values over (at once on screen); what's played after it is
+        // measured alone (8 s at -23 dBFS, then -33: without the click it would read about -25.4).
+        // A host stop or a new buffer size keeps them; short-term starts over then.
+        Rig r;
+        runRig (0.0f, false, false, r);
+        r.run (sines1k (fs, { { 0.5, -33.0 } }), fixedBlocks (256));   // the latency's worth of -23 has left
+        r.proc->resetLoudness();
+        const auto cleared = r.proc->getLoudness();
+        r.run (sines1k (fs, { { 6.0, -33.0 } }), fixedBlocks (256));
+        const auto after = r.proc->getLoudness();
+        r.proc->reset();
+        r.prepare (fs, 128);
+        r.run (sines1k (fs, { { 0.05, -33.0 } }), fixedBlocks (128));
+        const auto kept = r.proc->getLoudness();
+        const bool ok = cleared.integratedIn == anneal::LoudnessMeter::none && cleared.integratedOut == anneal::LoudnessMeter::none
+                        && std::abs (after.integratedIn + 33.0f) <= 0.1f && std::abs (after.integratedOut + 33.0f) <= 0.1f
+                        && std::abs (kept.integratedOut - after.integratedOut) < 0.01f && kept.shortOut == anneal::LoudnessMeter::none;
+        check (ok, "a click starts it over; a host stop keeps it",
+               "after the click " + juce::String (cleared.integratedIn, 0) + ", then 6 s at -33 dBFS: " + juce::String (after.integratedIn, 2)
+                   + " / " + juce::String (after.integratedOut, 2) + "; after a stop and a new buffer size " + juce::String (kept.integratedOut, 2)
+                   + " (short-term " + juce::String (kept.shortOut, 0) + ")");
+    }
+    {
+        // What the two meters (input and output) cost: 60 s of stereo noise at 48 kHz in 64-sample blocks.
+        const auto noise = pinkNoise (fs, 60.0, 0.1f, 9);
+        anneal::LoudnessMeter in, out;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (size_t pos = 0; pos + 64 <= noise[0].size(); pos += 64)
+        {
+            const float* ptrs[2] = { noise[0].data() + pos, noise[1].data() + pos };
+            in.process (ptrs, 2, 64);
+            out.process (ptrs, 2, 64);
+        }
+        const double seconds = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+        info ("the two meters: " + juce::String (100.0 * seconds / 60.0, 3) + " % of one core (stereo, 48 kHz, 64-sample blocks); "
+              "pink noise reads " + juce::String (in.getIntegrated(), 2) + " LUFS");
+    }
+    {
+        // On screen: the header, between Paint and MATCH, S over I, input -> output; a click resets I.
+        Rig r;
+        runRig (-6.0f, false, false, r);
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        if (editor == nullptr)
+        {
+            check (false, "the loudness readout shows in the header", "no AnnealEditor");
+            return;
+        }
+        auto& content = editor->getContent();
+        content.tick (0.0f);
+        const auto shown = content.loudness.getShownText();
+        const auto m = juce::String::fromUTF8 ("\xe2\x88\x92"), dash = juce::String::fromUTF8 ("\xe2\x80\x94");
+        const bool values = shown == "S " + m + "23.0 > " + m + "29.0 | I " + m + "23.0 > " + m + "29.0";
+        content.loudness.onReset();
+        content.tick (0.0f);
+        const auto afterClick = content.loudness.getShownText();
+        const bool reset = afterClick == "S " + m + "23.0 > " + m + "29.0 | I " + dash + " > " + dash;
+        juce::Component* paint = nullptr;
+        juce::Component* match = nullptr;
+        for (auto* c : content.getChildren())
+            if (auto* b = dynamic_cast<juce::TextButton*> (c))
+            {
+                if (b->getButtonText() == "PAINT")
+                    paint = c;
+                if (b->getButtonText().startsWith ("MATCH"))
+                    match = c;
+            }
+        const auto box = content.loudness.getBounds();
+        const bool placed = paint != nullptr && match != nullptr && box.getX() > paint->getRight() && box.getRight() < match->getX()
+                            && box.getY() >= 0 && box.getBottom() <= 48 && content.loudness.isVisible()
+                            && content.loudness.getTooltip().contains ("EBU R128");
+        check (values && reset && placed, "the loudness readout in the header, reset with a click",
+               "\"" + shown + "\", after a click \"" + afterClick + "\"; at " + box.toString());
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -5125,13 +5399,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes527();
+        testFixes531();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testZeroPunch527();
+        testLoudness531();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -5184,6 +5458,8 @@ int main (int argc, char** argv)
     testZeroLighter526();
     testFixes527();
     testZeroPunch527();
+    testFixes531();
+    testLoudness531();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

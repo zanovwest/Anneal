@@ -99,10 +99,11 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
              &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton,
-             &punch, &width, &monoBass })
+             &punch, &width, &monoBass, &loudness })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
+    loudness.onReset = [&p] { p.resetLoudness(); };   // 5.3.1: a click starts the integrated values over
 
     // 4.0 Reference: a file dropped on the display or chosen in the menu is analysed off the audio
     // thread; the display draws the reference and says what the loader is doing.
@@ -175,10 +176,10 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
         const auto names = processor.importUserPresets (files, errors);
         if (names.size() == 1)
             processor.loadUserPreset (names[0]);
-        const auto quote = [] (const juce::String& s) { return juce::String::fromUTF8 ("â") + s + juce::String::fromUTF8 ("â"); };
+        const auto quote = [] (const juce::String& s) { return juce::String::fromUTF8 ("\xe2\x80\x9c") + s + juce::String::fromUTF8 ("\xe2\x80\x9d"); };
         juce::String note = names.size() == 1 ? "Added " + quote (names[0]) : "Added " + juce::String (names.size()) + " presets";
         if (! errors.isEmpty())
-            note = names.isEmpty() ? errors[0] : note + juce::String::fromUTF8 (" Â· ") + juce::String (errors.size()) + " not added";
+            note = names.isEmpty() ? errors[0] : note + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (errors.size()) + " not added";
         presets.showMessage (note);
     };
     presets.refresh();
@@ -196,6 +197,7 @@ void AnnealEditorContent::resized()
     presets.setBounds (612, 10, 240, 28);
     stereoMode.setBounds (864, 11, 80, 26);
     paintButton.setBounds (956, 11, 76, 26);
+    loudness.setBounds (1044, 9, 134, 30);   // 5.3.1: two rows of numbers, beside the Match gain
     match.setBounds (1186, 11, 100, 26);
     delta.setBounds (1294, 11, 72, 26);
     bypass.setBounds (1374, 11, 78, 26);
@@ -372,10 +374,10 @@ void AnnealEditorContent::updateActivity()
 
     // Sidechain and Reference: the Amount ring's inner arc, and a live line beside the group title.
     // 5.3: with the mode off, the Amount row isn't shown and the title stands alone.
-    auto show = [this] (anneal::Knob& k, Status& s, int titleY, float amount, const juce::String& text)
+    auto show = [this] (anneal::Knob& k, Status& s, int rowY, float amount, const juce::String& text)
     {
         k.setActivity (amount, text);
-        setStatus (s, text, amount > 0.0f, titleY);
+        setStatus (s, text, amount > 0.0f, rowY);
     };
     const int sc = juce::roundToInt (param (ids::scMode));
     if (sc == 0)                                     show (scAmount, scStatus, titleY, 0.0f, {});
@@ -427,6 +429,8 @@ void AnnealEditorContent::tick (float dt)
     const float peaks[2] = { processor.takeOutputPeak (0), processor.takeOutputPeak (1) };
     meter.push (peaks, processor.getMainBusNumOutputChannels(), dt);
     meter.pushReduction (processor.takeCeilingReductionDb(), dt);
+    const auto lu = processor.getLoudness();
+    loudness.set (lu.shortIn, lu.shortOut, lu.integratedIn, lu.integratedOut);
     undoButton.setEnabled (processor.canUndo());
     redoButton.setEnabled (processor.canRedo());
     latency.refresh();

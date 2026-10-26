@@ -9,6 +9,7 @@
 #include "ui/Knob.h"
 #include "ui/LatencyMenu.h"
 #include "ui/ListenMenu.h"
+#include "ui/LoudnessReadout.h"
 #include "ui/OutputMeter.h"
 #include "ui/PerceptionScreen.h"
 #include "ui/PresetBar.h"
@@ -65,6 +66,11 @@ private:
     // 5.0
     anneal::Knob punch, width, monoBass;
     std::unique_ptr<juce::AlertWindow> presetDialog;
+
+public:
+    anneal::LoudnessReadout loudness;   // 5.3.1, in the header beside MATCH
+
+private:
 
     // 5.3: Sidechain's and Reference's live line, beside their titles (the Amount rows are compact).
     struct Status { juce::String text; bool active = false; };

@@ -18,10 +18,6 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-17. **Loudness readout**: short-term and integrated loudness (LUFS, EBU R128 K-weighting) of the input
-    and the output under the output meter, reset with a click, so you can see what Anneal does to the
-    level as well as hear it (the Match gain shown next to it). Cheap on the audio thread (two biquads
-    and 100 ms sums), shown through the display frame; tested against the EBU reference signals.
 18. **Max cut / Max boost**: limits for how far the auto EQ may move (for example cut no more than 6 dB,
     boost no more than 3 dB), in AUTO EQ, defaulting to today's limits so projects sound the same.
     Also shown as a band on the display's EQ lane. Tests: a ring that Smooth cuts 9 dB stops at the
@@ -61,6 +57,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.1 (2026-10-25, daily update): **Loudness readout** (item 17): EBU R128 short-term and integrated
+  loudness of the input and the output, two rows of numbers in the header beside MATCH (not under the
+  meter: the calmer deck has no room there), a click starts the integrated values over. Exact BS.1770
+  K-weighting; EBU Tech 3341 cases 1–5 and 9 within 0.02 LU. Fixed: the preset bar's notes after a drop
+  (5.2.4) showed garbled quotes and apostrophes.
 - 5.3.0 (2026-10-25, asked for by the user that evening: "make the ui way less cluttered"): **a calmer
   interface**: SIDECHAIN over REFERENCE in one column with compact Amount rows shown only while their
   mode is on and their live line beside the title; the Mid/Side routing menus only in Mid/Side; the

@@ -4,6 +4,39 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.1 — 2026-10-25 19:50
+
+New
+- **Loudness readout**, in the header between PAINT and MATCH: how loud your track is going in and coming
+  out, in LUFS (the EBU R128 / streaming loudness unit), so you can see what Anneal does to the level as
+  well as hear it.
+  - Two small rows, each "in → out": **S** is short-term loudness (the last 3 seconds), **I** is
+    integrated loudness (everything played since you last clicked the readout). For a mastering target
+    like −14 LUFS, watch the I output number over a whole play-through.
+  - **Click it** to start I over. A stop in FL Studio keeps I, so you can play a song in parts.
+  - It measures like a proper loudness meter: silence and very quiet passages (more than 10 LU under the
+    rest) don't pull I down, and the numbers match the EBU's own test signals within 0.02 LU.
+  - The input is the signal Mix and Match compare with; the output is what leaves Anneal, after the
+    Ceiling and Bypass. With Bypass on the two read the same.
+  - It's just numbers (no new knob, the sound doesn't change) and what they mean is in its tooltip, so
+    the calmer header stays calm. It costs about 0.05 % of a CPU core.
+
+Fixes
+- **Garbled text after dropping presets on the preset bar.** Since 5.2.4 the bar's notes ("Added “Bright
+  Mix”", "… isn’t an Anneal preset", "· 1 not added") showed broken characters in place of the quotes,
+  the apostrophe and the dot, because those characters had been saved wrongly in the source.
+
+Tests: 195/195 acceptance checks, 6 new:
+- the preset bar's notes read correctly (it failed before the fix: "Added âBright Mixâ");
+- loudness: EBU Tech 3341 cases 1–5 (integrated: −22.99, −32.99, −23.01, −23.01, −22.98 LUFS, each
+  within 0.1 LU) and case 9 (short-term −22.99 throughout), 44.1 / 48 / 96 kHz and mono; through the
+  plug-in in Low and at zero latency (a −23 dBFS tone with Output −6 dB reads −23.0 in, −29.0 out) and
+  with Bypass; a click starts I over and a host stop keeps it; the readout in the header.
+
+25/25 host checks on the built VST3 and 25/25 setup checks pass. CPU: the two meters 0.04 % of one core;
+at 48 kHz / 64 samples Stereo Low 2.0 %, Precise 4.6 %, Mid/Side Precise 8.1 % (5.2.7: 2.0 / 4.6 / 8.0 %);
+the slowest 0.1 % of blocks 5 / 13 / 24 % of the deadline, within the benchmark's usual spread.
+
 ## 5.3.0 — 2026-10-25 19:30
 
 New
