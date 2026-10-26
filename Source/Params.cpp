@@ -332,6 +332,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (limit (ids::maxCut, "Max Cut", true));
     layout.add (limit (ids::maxBoost, "Max Boost", false));
 
+    // 5.3.3 Tilt pivot: the frequency Tilt turns around (0 dB there). 1 kHz, the middle of the knob, is
+    // where it always turned: the default, and what older projects load with.
+    {
+        juce::NormalisableRange<float> r (200.0f, 5000.0f, 1.0f);
+        r.setSkewForCentre (1000.0f);
+        layout.add (std::make_unique<Float> (juce::ParameterID { ids::tiltPivot, 1 }, "Tilt Pivot", r, 1000.0f, hzAttr));
+    }
+
     return layout;
 }
 }

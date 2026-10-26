@@ -18,7 +18,8 @@ namespace anneal
     {
         float reveal       = 0.0f;     // 0..1, lift bands in a masking shadow
         float smooth       = 0.0f;     // 0..1, pull down dominant bands
-        float tiltDbPerOct = 0.0f;     // static tilt around 1 kHz
+        float tiltDbPerOct = 0.0f;     // static tilt around the pivot
+        float tiltPivotOct = 0.0f;     // 5.3.3: the pivot, octaves from 1 kHz (0 = 1 kHz, as before)
         float responseMs   = 120.0f;   // gain-curve release (attack = 1/3)
         float rangeLoHz    = 20.0f;
         float rangeHiHz    = 20000.0f;

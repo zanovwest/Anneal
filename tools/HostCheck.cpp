@@ -148,7 +148,7 @@ int main (int argc, char* argv[])
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
-                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost" })
+                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -927,6 +927,51 @@ int main (int argc, char* argv[])
         }
         check (ok && unlimited < -6.0 && limited >= -3.4 && limited < -2.0, "Max Cut / Max Boost through VST3",
                texts + "; ring at 3150 Hz " + juce::String (unlimited, 1) + " dB, with Max Cut 3 dB " + juce::String (limited, 1) + " dB");
+    }
+
+    // 11. 5.3.3 Tilt Pivot through VST3: automatable, "1.00 kHz" by default, typed values; with Tilt +1 dB/oct
+    //     a 300 Hz and a 1.2 kHz tone move -1.74 / +0.26 dB around 1 kHz and 0 / +2 dB around 300 Hz.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* pivot = inst != nullptr ? findParam (*inst, "Tilt Pivot") : nullptr;
+        bool ok = pivot != nullptr && pivot->isAutomatable();
+        juce::String texts;
+        double g[2][2] {};
+        if (ok)
+        {
+            const float at300 = pivot->getValueForText ("300 Hz");
+            texts << pivot->getText (pivot->getValue(), 32) << ", " << pivot->getText (at300, 32);
+            ok = pivot->getText (pivot->getValue(), 32) == "1.00 kHz" && pivot->getText (at300, 32) == "300 Hz"
+                 && pivot->getText (pivot->getValueForText ("2k"), 32) == "2.00 kHz";
+
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Smooth", 0.0f }, { "Heat", 0.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            auto* tilt = findParam (*inst, "Tilt");
+            tilt->setValueNotifyingHost (tilt->getValueForText ("1"));
+            const auto tones = testsig::sines (fs, (int) (3.0 * fs), { { 300.0, 0.03 }, { 1200.0, 0.03 } });
+            for (int i = 0; i < 2; ++i)
+            {
+                if (i == 1)
+                    pivot->setValueNotifyingHost (at300);
+                ok = ok && run (*inst, tones, out, [] { return 512; });
+                const int from = (int) (2.0 * fs), len = (int) (0.5 * fs), lat = inst->getLatencySamples();
+                for (int t = 0; t < 2; ++t)
+                {
+                    const double f = t == 0 ? 300.0 : 1200.0;
+                    g[i][t] = testsig::toDb (testsig::toneAmplitude (out[0].data() + from + lat, len, f, fs)
+                                             / testsig::toneAmplitude (tones[0].data() + from, len, f, fs));
+                }
+            }
+            inst->releaseResources();
+            ok = ok && std::abs (g[0][0] - std::log2 (0.3)) < 0.15 && std::abs (g[0][1] - std::log2 (1.2)) < 0.15
+                 && std::abs (g[1][0]) < 0.15 && std::abs (g[1][1] - 2.0) < 0.15;
+        }
+        check (ok, "Tilt Pivot through VST3",
+               texts + "; Tilt +1 dB/oct, 300 Hz / 1.2 kHz: around 1 kHz " + juce::String (g[0][0], 2) + " / " + juce::String (g[0][1], 2)
+                   + " dB, around 300 Hz " + juce::String (g[1][0], 2) + " / " + juce::String (g[1][1], 2) + " dB");
     }
 
     plugin->releaseResources();

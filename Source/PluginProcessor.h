@@ -252,6 +252,7 @@ private:
     std::atomic<float>* pZeroPunch = nullptr;  // 5.2.7
     std::atomic<float>* pMaxCut = nullptr;     // 5.3.2
     std::atomic<float>* pMaxBoost = nullptr;
+    std::atomic<float>* pTiltPivot = nullptr;  // 5.3.3
 
     // 5.0 user presets
     juce::File userFolder { anneal::presets::defaultUserFolder() };

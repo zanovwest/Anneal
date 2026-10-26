@@ -40,6 +40,7 @@ namespace anneal::ids
     inline constexpr const char* zeroPunch   = "zeroPunch";   // 5.2.7: Punch works at zero latency (time domain); older projects: off
     inline constexpr const char* maxCut      = "maxCut";      // 5.3.2: how far the auto EQ may cut, dB (24 = no limit, as before)
     inline constexpr const char* maxBoost    = "maxBoost";    // 5.3.2: how far the auto EQ may lift, dB (24 = no limit, as before)
+    inline constexpr const char* tiltPivot   = "tiltPivot";   // 5.3.3: where Tilt turns, Hz (1 kHz = as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -74,4 +75,11 @@ namespace anneal
 
     // 5.0 Mono bass: values under this (the knob's bottom end) mean Off.
     inline constexpr float monoBassMinHz = 20.0f;
+
+    // 5.3.3 Tilt pivot: the octaves from 1 kHz the engine turns Tilt around. Within half a hertz of
+    // 1 kHz (the default) it is exactly 0, so the curve is bit-identical to before.
+    inline float tiltPivotOctaves (float hz) noexcept
+    {
+        return std::abs (hz - 1000.0f) < 0.5f ? 0.0f : std::log2 (std::max (1.0f, hz) / 1000.0f);
+    }
 }

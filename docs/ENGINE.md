@@ -95,7 +95,11 @@ those bands are interpolated rather than independent measurements.
 8. Smoothed ±0.25 Cam across bands, then in time (falling gain: Response/3, rising: Response).
 9. Heat need = 0.35 baseline, → 1 in shadowed bands, → 0 in dominant bands;
    multiplied by Focus (body↔air) and the Range gate.
-10. Static Tilt (dB/oct around 1 kHz, ±9 dB cap) is added inside the Range.
+10. Static Tilt (dB/oct around the pivot, ±9 dB cap) is added inside the Range: per band
+    `clamp (tilt × (log2 (f / 1 kHz) − p), ±9 dB)`, with `p` the pivot's octaves from 1 kHz (5.3.3,
+    200 Hz – 5 kHz; `Params.h tiltPivotOctaves`, exactly 0 within 0.5 Hz of 1 kHz, so the default is
+    bit-identical to before). The engine glides `p` like the other settings (40 ms, per frame) and
+    sets it exactly once within 0.0001 octave, so a pivot moved back to 1 kHz is exact again.
 11. **Transient guard** (0.2.2; Guard 0 = off = exactly the steps above). Per band, the one-ERB
     level of the frame without temporal integration is compared with its ~150 ms average: a rise
     of 4 dB starts an attack, 12 dB is a full one (`T` 0..1). `T` is held for one frame length

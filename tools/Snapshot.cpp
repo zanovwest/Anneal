@@ -196,6 +196,10 @@ int main (int argc, char* argv[])
           {
               set (p, ids::reveal, 75); set (p, ids::smooth, 80); set (p, ids::maxBoost, 2); set (p, ids::maxCut, 3);
           }, 3150.0f, true },
+        { "tilt", [] (AnnealAudioProcessor& p)     // 5.3.3: Tilt with its Pivot row (300 Hz)
+          {
+              set (p, ids::tilt, 0.8f); set (p, ids::tiltPivot, 300.0f);
+          }, 300.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
         { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat rests, the tag says so; 5.2.7 Punch works)
           {

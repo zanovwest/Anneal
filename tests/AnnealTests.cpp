@@ -565,7 +565,7 @@ void testStress()
     std::uniform_real_distribution<float> u (0.0f, 1.0f);
     const char* all[] = { ids::reveal, ids::smooth, ids::tilt, ids::response, ids::rangeLo, ids::rangeHi, ids::heat,
                           ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass, ids::guard,
-                          ids::maxCut, ids::maxBoost };
+                          ids::maxCut, ids::maxBoost, ids::tiltPivot };
 
     const int n = (int) in[0].size();
     Channels out = in;
@@ -5704,6 +5704,194 @@ void testLimits532()
     }
 }
 
+void testTiltPivot533()
+{
+    section ("52. 5.3.3 Tilt pivot");
+    const double fs = 48000.0;
+
+    // The model: +1 dB/oct around 300 Hz is 0 dB at 300 Hz and +2 dB at 1.2 kHz (around 1 kHz, as before:
+    // -1.74 and +0.26 dB).
+    {
+        float g[2][2] {};
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2);
+            auto p = neutral();
+            p.tiltDbPerOct = 1.0f;
+            p.tiltPivotOct = i == 0 ? 0.0f : anneal::tiltPivotOctaves (300.0f);
+            e->setParameters (p);
+            runEngine (*e, testsig::musicLike (fs, 1.0), fixedBlocks (512));
+            g[i][0] = bandGain (*e, 300.0);
+            g[i][1] = bandGain (*e, 1200.0);
+        }
+        const float at1k[2] = { (float) std::log2 (0.3), (float) std::log2 (1.2) };
+        check (std::abs (g[1][0]) < 0.05f && std::abs (g[1][1] - 2.0f) < 0.05f
+                   && std::abs (g[0][0] - at1k[0]) < 0.05f && std::abs (g[0][1] - at1k[1]) < 0.05f,
+               "Tilt +1 dB/oct around 300 Hz: 0 dB @300, +2 dB @1.2k",
+               "around 300 Hz: 300 Hz " + db (g[1][0], 3) + ", 1.2 kHz " + db (g[1][1], 3) + "; around 1 kHz: "
+                   + db (g[0][0], 2) + " / " + db (g[0][1], 2));
+    }
+
+    // 1 kHz is exactly as before: the default is 0 octaves, and a pivot moved away and back lands exactly,
+    // so a project that turned it to 300 Hz and back to 1 kHz plays bit for bit like one that never did
+    // (music, Reveal, Smooth, Tilt and Heat on, Low latency).
+    {
+        const auto in = testsig::musicLike (fs, 4.0, 11);
+        const int half = (int) in[0].size() / 2;
+        Channels first = in, second = in;
+        for (int c = 0; c < 2; ++c)
+        {
+            first[(size_t) c].resize ((size_t) half);
+            second[(size_t) c].erase (second[(size_t) c].begin(), second[(size_t) c].begin() + half);
+        }
+        Channels outs[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            Rig r;
+            r.set (ids::reveal, 60.0f); r.set (ids::smooth, 60.0f); r.set (ids::tilt, 0.8f); r.set (ids::heat, 30.0f);
+            if (i == 1)
+                r.set (ids::tiltPivot, 300.0f);
+            r.prepare (fs, 512);
+            r.run (first, fixedBlocks (512));
+            if (i == 1)
+                r.set (ids::tiltPivot, 1000.0f);
+            outs[i] = r.run (second, fixedBlocks (512));
+        }
+        double worst = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = (size_t) fs; k < outs[0][(size_t) c].size(); ++k)
+                worst = std::max (worst, (double) std::abs (outs[0][(size_t) c][k] - outs[1][(size_t) c][k]));
+        Rig d;
+        const anneal::EngineParams ep;
+        const anneal::ModelSettings ms;
+        const bool zero = ep.tiltPivotOct == 0.0f && ms.tiltPivotOct == 0.0f && anneal::tiltPivotOctaves (1000.0f) == 0.0f
+                          && anneal::tiltPivotOctaves (d.proc->apvts.getRawParameterValue (ids::tiltPivot)->load()) == 0.0f;
+        check (worst == 0.0 && zero, "1 kHz bit-identical to before (also back from 300 Hz)",
+               "max diff after returning to 1 kHz " + juce::String (worst, 12) + (zero ? ", default 0 octaves" : ", DEFAULT NOT 0"));
+    }
+
+    // Through the plug-in, in Low, Mid/Side and Zero latency: tones at 300 Hz and 1.2 kHz with Tilt +1 dB/oct.
+    {
+        const int n = (int) (3.0 * fs);
+        const auto in = testsig::sines (fs, n, { { 300.0, 0.03 }, { 1200.0, 0.03 } });
+        juce::String log;
+        bool ok = true;
+        for (int mode = 0; mode < 3; ++mode)
+            for (float pivot : { 300.0f, 1000.0f })
+            {
+                Rig r;
+                r.setNeutral();
+                r.set (ids::tilt, 1.0f);
+                r.set (ids::tiltPivot, pivot);
+                if (mode == 1)
+                    r.set (ids::stereoMode, 1.0f);
+                if (mode == 2)
+                    r.set (ids::zeroLatency, 1.0f);
+                r.prepare (fs, 512);
+                const auto out = r.run (in, fixedBlocks (512));
+                const int lat = r.proc->getLatencySamples(), from = 2 * (int) fs, len = (int) fs / 2;
+                double g[2];
+                for (int t = 0; t < 2; ++t)
+                {
+                    const double f = t == 0 ? 300.0 : 1200.0;
+                    g[t] = toDb (testsig::toneAmplitude (out[0].data() + from + lat, len, f, fs)
+                                 / testsig::toneAmplitude (in[0].data() + from, len, f, fs));
+                }
+                const double want[2] = { pivot == 300.0f ? 0.0 : std::log2 (0.3), pivot == 300.0f ? 2.0 : std::log2 (1.2) };
+                ok = ok && std::abs (g[0] - want[0]) < 0.15 && std::abs (g[1] - want[1]) < 0.15;
+                if (pivot == 300.0f)
+                    log << (mode == 0 ? "Low" : mode == 1 ? "Mid/Side" : "Zero") << " " << db (g[0], 2) << " / " << db (g[1], 2) << "  ";
+            }
+        check (ok, "through the plug-in: Low, Mid/Side, Zero latency", "around 300 Hz (300 Hz / 1.2 kHz): " + log);
+    }
+
+    // The parameter: "1.00 kHz" by default, typed values, older projects open at 1 kHz (whatever this
+    // instance had), a project keeps its pivot, factory presets leave it alone.
+    {
+        Rig r;
+        auto* tp = r.proc->apvts.getParameter (ids::tiltPivot);
+        auto raw = [] (Rig& x) { return x.proc->apvts.getRawParameterValue (ids::tiltPivot)->load(); };
+        const bool texts = tp->getCurrentValueAsText() == "1.00 kHz" && tp->getText (tp->convertTo0to1 (300.0f), 32) == "300 Hz"
+                           && std::abs (tp->convertFrom0to1 (tp->getValueForText ("2k")) - 2000.0f) < 0.5f
+                           && std::abs (tp->convertFrom0to1 (tp->getValueForText ("300 Hz")) - 300.0f) < 0.5f
+                           && tp->convertFrom0to1 (tp->getValueForText ("50 Hz")) == 200.0f
+                           && tp->convertFrom0to1 (tp->getValueForText ("20 kHz")) == 5000.0f
+                           && tp->getName (32) == "Tilt Pivot" && tp->isAutomatable();
+
+        auto old = r.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::tiltPivot), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::tiltPivot, 300.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        const bool oldOpen = std::abs (raw (b) - 1000.0f) < 0.01f && anneal::tiltPivotOctaves (raw (b)) == 0.0f;
+
+        Rig c;
+        c.set (ids::tiltPivot, 2500.0f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = std::abs (raw (d) - 2500.0f) < 0.5f;
+        d.proc->setCurrentProgram (2);
+        const bool presetKeeps = std::abs (raw (d) - 2500.0f) < 0.5f && d.proc->getPresetDisplayName() == "Mix bus glue";
+        check (texts && oldOpen && kept && presetKeeps, "Tilt Pivot: texts, older projects, saved, presets",
+               "default " + tp->getCurrentValueAsText() + ", 300 -> " + tp->getText (tp->convertTo0to1 (300.0f), 32)
+                   + ", older project -> " + juce::String (raw (b), 0) + " Hz, saved -> " + juce::String (raw (d), 0)
+                   + " Hz, after a preset " + d.proc->getPresetDisplayName());
+    }
+
+    // The Pivot row: hidden while Tilt is 0, under Tilt inside AUTO EQ while it isn't (5.3 calmer deck),
+    // nothing overlapping with everything shown.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::Knob* pivot = nullptr;
+        anneal::Knob* tilt = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+                if (auto* k = dynamic_cast<anneal::Knob*> (c))
+                {
+                    if (k->slider.getTooltip().startsWith ("Pivot:"))
+                        pivot = k;
+                    if (k->slider.getTooltip().startsWith ("Tilt:"))
+                        tilt = k;
+                }
+        if (pivot == nullptr || tilt == nullptr)
+        {
+            check (false, "the Pivot row under Tilt", "missing");
+            return;
+        }
+        auto& content = editor->getContent();
+        content.tick (0.0f);
+        const bool hiddenAtRest = ! pivot->isVisible();
+        r.set (ids::tilt, -0.6f);
+        r.set (ids::stereoMode, 1.0f);
+        r.set (ids::scMode, 1.0f);
+        r.set (ids::refMode, 2.0f);
+        content.tick (0.0f);
+        const bool shown = pivot->isVisible();
+        juce::String overlaps;
+        auto kids = content.getChildren();
+        for (int i = 0; i < kids.size(); ++i)
+            for (int j = i + 1; j < kids.size(); ++j)
+                if (kids[i]->isVisible() && kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
+                    overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
+        const bool placed = pivot->getX() == tilt->getX() && pivot->getY() == tilt->getBottom() && pivot->getX() > 312
+                            && pivot->getRight() < 490 && pivot->getBottom() <= 628;
+        r.set (ids::tilt, 0.0f);
+        content.tick (0.0f);
+        const bool hiddenAgain = ! pivot->isVisible();
+        check (hiddenAtRest && shown && placed && overlaps.isEmpty() && hiddenAgain, "the Pivot row under Tilt, only while Tilt isn't 0",
+               pivot->getBounds().toString() + " under Tilt " + tilt->getBounds().toString() + "; at rest "
+                   + (hiddenAtRest ? "hidden" : "SHOWN") + ", Tilt -0.6 " + (shown ? "shown" : "HIDDEN") + ", Tilt 0 again "
+                   + (hiddenAgain ? "hidden" : "SHOWN") + (overlaps.isEmpty() ? juce::String (", no overlaps") : ", overlaps " + overlaps));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -5722,7 +5910,7 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testLimits532();
+        testTiltPivot533();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -5779,6 +5967,7 @@ int main (int argc, char** argv)
     testLoudness531();
     testFixes532();
     testLimits532();
+    testTiltPivot533();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

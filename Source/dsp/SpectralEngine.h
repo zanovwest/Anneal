@@ -23,6 +23,7 @@ namespace anneal
         float reveal       = 0.0f;
         float smooth       = 0.0f;
         float tiltDbPerOct = 0.0f;
+        float tiltPivotOct = 0.0f;           // 5.3.3: where Tilt turns, octaves from 1 kHz (0 = as before)
         float responseMs   = 120.0f;
         float rangeLoHz    = 20.0f;
         float rangeHiHz    = 20000.0f;

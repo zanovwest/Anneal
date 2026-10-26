@@ -68,6 +68,7 @@ private:
     anneal::Knob punch, width, monoBass;
     std::unique_ptr<juce::AlertWindow> presetDialog;
     anneal::LimitMenu limits;   // 5.3.2 Max boost / Max cut, on the AUTO EQ title row
+    anneal::Knob tiltPivot;     // 5.3.3, a compact row under Tilt, shown while Tilt isn't 0
 
 public:
     anneal::LoudnessReadout loudness;   // 5.3.1, in the header beside MATCH

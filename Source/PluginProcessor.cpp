@@ -215,6 +215,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pZeroPunch  = apvts.getRawParameterValue (ids::zeroPunch);
     pMaxCut     = apvts.getRawParameterValue (ids::maxCut);
     pMaxBoost   = apvts.getRawParameterValue (ids::maxBoost);
+    pTiltPivot  = apvts.getRawParameterValue (ids::tiltPivot);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -444,6 +445,7 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.reveal       = pReveal->load() * 0.01f;
     p.smooth       = pSmooth->load() * 0.01f;
     p.tiltDbPerOct = pTilt->load();
+    p.tiltPivotOct = anneal::tiltPivotOctaves (pTiltPivot->load());
     p.responseMs   = pResponse->load();
     p.rangeLoHz    = pRangeLo->load();
     p.rangeHiHz    = anneal::effectiveRangeHi (p.rangeLoHz, pRangeHi->load());
@@ -1071,6 +1073,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasZeroPunch = tree.getChildWithProperty ("id", anneal::ids::zeroPunch).isValid();
             const bool hasMaxCut = tree.getChildWithProperty ("id", anneal::ids::maxCut).isValid();
             const bool hasMaxBoost = tree.getChildWithProperty ("id", anneal::ids::maxBoost).isValid();
+            const bool hasTiltPivot = tree.getChildWithProperty ("id", anneal::ids::tiltPivot).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1160,6 +1163,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
                 if (! present)
                     if (auto* lp = apvts.getParameter (id))
                         lp->setValueNotifyingHost (lp->getDefaultValue());
+
+            // Projects saved before 5.3.3: Tilt turns around 1 kHz, as it did then, whatever this
+            // instance had.
+            if (! hasTiltPivot)
+                if (auto* tp = apvts.getParameter (anneal::ids::tiltPivot))
+                    tp->setValueNotifyingHost (tp->getDefaultValue());
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

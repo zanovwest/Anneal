@@ -271,6 +271,10 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.reveal, target.reveal);
     lin (current.smooth, target.smooth);
     lin (current.tiltDbPerOct, target.tiltDbPerOct);
+    // 5.3.3: the pivot glides in octaves and lands exactly (back at 1 kHz the curve is as before).
+    lin (current.tiltPivotOct, target.tiltPivotOct);
+    if (std::abs (current.tiltPivotOct - target.tiltPivotOct) < 1.0e-4f)
+        current.tiltPivotOct = target.tiltPivotOct;
     lin (current.heat, target.heat);
     lin (current.color, target.color);
     lin (current.focus, target.focus);
@@ -517,6 +521,7 @@ void SpectralEngine::runStage (int s) noexcept
         ms.reveal = current.reveal;
         ms.smooth = current.smooth;
         ms.tiltDbPerOct = current.tiltDbPerOct;
+        ms.tiltPivotOct = current.tiltPivotOct;
         ms.responseMs = current.responseMs;
         ms.rangeLoHz = current.rangeLoHz;
         ms.rangeHiHz = current.rangeHiHz;

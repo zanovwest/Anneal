@@ -38,7 +38,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
-| AUTO EQ | Reveal, Smooth | Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Tilt, Response, Guard (transients) |
+| AUTO EQ | Reveal, Smooth | Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Response, Guard (transients), Tilt and its Pivot (5.3.3, shown while Tilt isn't 0) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Amount (5.3: a compact row, shown while a mode is on) |
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
@@ -119,6 +119,12 @@ then 1, 2, 3, 4, 6, 9, 12 dB; a value set elsewhere (automation, typed in the ho
 place. On the display each limit is a dashed line (6 on, 4 off, 1.2 px) in its role colour at 60 %, across
 the Range only (where the auto EQ acts), drawn only while set and within the lane's ±12 dB. What it does is
 in the pill's tooltip; the display's tooltip names the dashed lines.
+
+**Tilt pivot (5.3.3).** Where Tilt turns is a fourth compact row in the AUTO EQ stack, *Pivot*, in the muted
+colour like Tilt. It shows only while Tilt isn't 0 (at 0 there is nothing to turn). So that it can come and go
+without moving anything, the stack beside Reveal and Smooth is now Response, Guard, Tilt, Pivot, 46 px apart
+(the rows' own height; they were 56 px apart with three), from y 442 to 626. Nothing on the display: the
+curve itself shows where Tilt crosses 0 dB. What the pivot does is in its tooltip.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 

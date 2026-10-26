@@ -20,9 +20,6 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
 Added by the 5.3.2 run (Next up was empty after item 18); reorder or drop freely:
 
-19. **Tilt pivot**: where Tilt turns (200 Hz – 5 kHz, default 1 kHz as today, so projects sound the same),
-    a compact row shown only while Tilt isn't 0 (the calmer deck). Tests: a +1 dB/oct tilt around 300 Hz
-    is 0 dB at 300 Hz and +2 dB at 1.2 kHz; 1 kHz bit-identical to before; older projects open at 1 kHz.
 20. **Key range for the sidechain**: which part of the key counts (for example only a vocal's 1–5 kHz
     presence), two Hz values in the Sidechain menu's row, full range by default (as today). Tests: a key
     tone outside the key range ducks nothing, inside it ducks as before; full range bit-identical.
@@ -64,6 +61,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.3 (2026-10-25, every-minute update): **Tilt pivot** (item 19): where Tilt turns, 200 Hz – 5 kHz, a
+  compact Pivot row under Tilt shown only while Tilt isn't 0 (Response and Guard now sit above Tilt, so the
+  row comes and goes without moving anything). +1 dB/oct around 300 Hz: 0 dB at 300 Hz, +2 dB at 1.2 kHz, in
+  every latency mode, Mid/Side and Zero latency. 1 kHz (the default, and older projects) is bit-identical,
+  also after moving it away and back.
 - 5.3.2 (2026-10-25, the first every-minute update): **Max cut / Max boost** (item 18): limits for how far
   the auto EQ (Reveal, Smooth, the sidechain and the reference together) may move, from a Limits pill on
   the AUTO EQ title row (no limit, 1–12 dB each; 0–24 dB as host parameters), drawn as dashed lines on the

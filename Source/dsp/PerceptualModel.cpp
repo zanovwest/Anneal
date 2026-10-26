@@ -433,7 +433,8 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const double z = z0 + b * dz;
         const float rg = smoothstep ((float) ((z - (zLo - 0.25)) / 0.5))
                        * smoothstep ((float) (((zHi + 0.25) - z) / 0.5));
-        const float tilt = std::clamp (s.tiltDbPerOct * bandOct[(size_t) b], -9.0f, 9.0f);
+        // 5.3.3: Tilt turns around its pivot (x - 0 is x, so at 1 kHz the curve is as before).
+        const float tilt = std::clamp (s.tiltDbPerOct * (bandOct[(size_t) b] - s.tiltPivotOct), -9.0f, 9.0f);
         // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
         const float g = limited ? std::clamp (gain[(size_t) b], lowest, highest) : gain[(size_t) b];

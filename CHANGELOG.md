@@ -4,6 +4,47 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.3 — 2026-10-25 20:26
+
+New
+- **Tilt pivot**: you can now choose where Tilt turns. Until now Tilt always pivoted at 1 kHz; now a
+  **Pivot** row (200 Hz – 5 kHz) sets the frequency that stays where it is while everything above it gets
+  brighter (or darker) and everything below it the opposite.
+  - Example: Tilt +1 dB/oct around 300 Hz leaves 300 Hz untouched and lifts 1.2 kHz by 2 dB. Around 1 kHz
+    the same Tilt would also pull 300 Hz down 1.7 dB. A low pivot brightens a bus without thinning its body;
+    a high pivot (say 3 kHz) darkens the top without touching the mids.
+  - The Pivot row only appears while Tilt isn't 0, so the deck stays as calm as before. To make room for it
+    without anything jumping around, the stack beside Reveal and Smooth is now Response, Guard, Tilt, then
+    Pivot (Tilt used to be on top).
+  - It works everywhere Tilt does: every latency mode, Zero latency, Mid/Side (with the EQ routing) and with
+    Paint and Range.
+  - Also a host parameter, "Tilt Pivot", automatable (type `300`, `2k` or `2.5 kHz`). 1 kHz is the default and
+    what older projects open with, so they sound exactly as before. Factory presets leave the pivot as it is
+    (like the Limits).
+
+Fixes
+- None found this run. The bug pass looked at the newest code (the loudness meters, the Limits, the audio
+  callback, reset and prepare), the benchmark and the rendered interface, and found nothing to fix.
+
+Tests: 209/209 acceptance checks, 5 new:
+- the model: +1 dB/oct around 300 Hz is −0.004 dB at 300 Hz and +2.003 dB at 1.2 kHz (around 1 kHz: −1.74 /
+  +0.27 dB);
+- 1 kHz is bit-identical to before: a project that moved the pivot to 300 Hz and back plays exactly like one
+  that never did (music with Reveal, Smooth, Tilt and Heat on, difference 0.000000000000), and the default is
+  exactly 0 octaves;
+- through the plug-in in Low, Mid/Side and Zero latency: 300 Hz −0.03 dB, 1.2 kHz +2.00 dB;
+- the parameter: "1.00 kHz" by default, typed values (`2k`, `300 Hz`, out of range clamped), older projects
+  open at 1 kHz whatever the instance had, a saved pivot comes back, factory presets leave it alone;
+- the Pivot row: hidden at Tilt 0, directly under Tilt inside AUTO EQ while Tilt is on, hidden again at 0,
+  nothing overlapping with everything shown.
+The automation stress test now moves the pivot too.
+
+27/27 host checks on the built VST3 (new: Tilt Pivot through VST3: "1.00 kHz" by default, typed values;
+Tilt +1 dB/oct moves 300 Hz / 1.2 kHz by −1.77 / +0.26 dB around 1 kHz and −0.03 / +2.00 dB around 300 Hz)
+and 25/25 setup checks pass. CPU: one subtraction per band, nothing measurable. At 48 kHz / 64 samples
+Stereo Low 2.0 %, Precise 4.6 %, Mid/Side Precise 6.9 % (5.3.2: 2.0 / 4.6 / 8.0 %, a quieter machine this
+time); the slowest 0.1 % of blocks 5 / 16 / 19 % of the deadline, within the benchmark's usual spread.
+
 ## 5.3.2 — 2026-10-25 20:15
 
 New

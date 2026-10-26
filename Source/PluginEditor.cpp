@@ -40,7 +40,7 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       smooth   (p.apvts, ids::smooth,   "Smooth",   colour::blue,   Size::primary,   false, "tames dominant bands",
                 "Smooth: pulls down bands that dominate their auditory neighbourhood"),
       tilt     (p.apvts, ids::tilt,     "Tilt",     colour::muted,  Size::secondary, true,  {},
-                "Tilt: static slope around 1 kHz, applied inside the range (darker to brighter)"),
+                "Tilt: static slope around the Pivot (1 kHz unless you move it), applied inside the range (darker to brighter)"),
       response (p.apvts, ids::response, "Response", colour::muted,  Size::secondary, false, {},
                 "Response: how quickly the auto EQ follows the music (release; attack is 3x faster)"),
       guard    (p.apvts, ids::guard,    "Guard",    colour::muted,  Size::secondary, false, {},
@@ -95,13 +95,16 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       monoBass (p.apvts, ids::monoBass, "Mono bass", colour::rose, Size::secondary, false, {},
                 "Mono bass: makes everything below this frequency mono (a quarter octave either side fades in), "
                 "so the low end stays centred and mono-safe. Off = as before"),
-      limits (p.apvts, ids::maxBoost, ids::maxCut)
+      limits (p.apvts, ids::maxBoost, ids::maxCut),
+      tiltPivot (p.apvts, ids::tiltPivot, "Pivot", colour::muted, Size::secondary, false, {},
+                 "Pivot: the frequency Tilt turns around. It stays at 0 dB there; above it Tilt lifts (or cuts) more and "
+                 "more, below it the opposite. Shown while Tilt isn't 0. 1 kHz = as before")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
              &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton,
-             &punch, &width, &monoBass, &loudness, &limits })
+             &punch, &width, &monoBass, &loudness, &limits, &tiltPivot })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
@@ -211,15 +214,17 @@ void AnnealEditorContent::resized()
     const int smallH = anneal::Knob::preferredHeight (Size::secondary);
 
     // AUTO EQ: the two primary rings, their settings stacked beside them; the Limits (5.3.2), Freeze
-    // and the M/S routing on the group's title row.
+    // and the M/S routing on the group's title row. 5.3.3: Response and Guard first, then Tilt with its
+    // Pivot under it, at the foot of the stack, so the Pivot comes and goes without moving anything.
     limits.setBounds (108, routingY, 138, 26);
     freeze.setBounds (252, routingY, 84, 26);
     eqTarget.setBounds (360, routingY, 114, 26);
     reveal.setBounds (26, 442, primaryW, primaryH);
     smooth.setBounds (172, 442, primaryW, primaryH);
-    tilt.setBounds (334, 442, 140, smallH);
-    response.setBounds (334, 498, 140, smallH);
-    guard.setBounds (334, 554, 140, smallH);
+    response.setBounds (334, 442, 140, smallH);
+    guard.setBounds (334, 442 + smallH, 140, smallH);
+    tilt.setBounds (334, 442 + 2 * smallH, 140, smallH);
+    tiltPivot.setBounds (334, 442 + 3 * smallH, 140, smallH);
 
     // HEAT: the largest ring; Color with the harmonics it produces, then Focus.
     flavour.setBounds (562, routingY, 122, 26);
@@ -469,6 +474,8 @@ void AnnealEditorContent::tick (float dt)
     const bool ms = stereo && processor.apvts.getRawParameterValue (ids::stereoMode)->load() > 0.5f;
     eqTarget.setVisible (ms);   // 5.3: only in Mid/Side, where they do something (they were greyed out)
     heatTarget.setVisible (ms);
+    // 5.3.3: the Pivot only while there is a Tilt to turn (the parameter reads 0.00 dB/oct under 0.005).
+    tiltPivot.setVisible (std::abs (processor.apvts.getRawParameterValue (ids::tilt)->load()) >= 0.005f);
 
     // A listen solo replaces what Delta would play, so Delta steps back while one is on.
     delta.setAlpha (listen.getChoice() > 0 ? 0.4f : 1.0f);
