@@ -92,6 +92,8 @@ namespace anneal
         // (-200 = no signal or a mono track).
         float sideRelAtHz (float hz) const noexcept;
         float xForHz (float hz) const noexcept;
+        // 5.3.2: the Max boost / Max cut lines drawn on the EQ lane, dB (24 = no limit, no line).
+        juce::Point<float> getShownLimitsDb() const noexcept { return { maxBoostDb, maxCutDb }; }
 
     private:
         enum class Handle { none, lo, hi };
@@ -151,6 +153,8 @@ namespace anneal
         float widthSetting = 1.0f, monoHz = 0.0f;
         std::unique_ptr<juce::ParameterAttachment> zeroPunchAttachment;   // 5.2.7: what the ZERO LATENCY tag says
         bool zeroPunchOn = true;
+        std::unique_ptr<juce::ParameterAttachment> maxCutAttachment, maxBoostAttachment;   // 5.3.2: the limits' lines
+        float maxCutDb = 24.0f, maxBoostDb = 24.0f;
         int listenMode = 0, refMode = 0;
         juce::RangedAudioParameter* loParam = nullptr;
         juce::RangedAudioParameter* hiParam = nullptr;

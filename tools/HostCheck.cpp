@@ -148,7 +148,7 @@ int main (int argc, char* argv[])
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
-                    "Punch", "Width", "Mono Bass" })
+                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -878,6 +878,55 @@ int main (int argc, char* argv[])
         }
         check (ok && before < -6.0 && std::abs (after - before) < 0.5, "Freeze holds through deactivate/activate",
                "3150 Hz probe " + juce::String (before, 1) + " dB frozen, " + juce::String (after, 1) + " dB after the host re-activates");
+    }
+
+    // 10. 5.3.2 Max Cut / Max Boost through VST3: automatable, "No limit" by default, typed values; a ring
+    //     at 3150 Hz that Smooth 100 % cuts by more than 6 dB is cut by no more than 3 dB with Max Cut 3 dB.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* maxCut = inst != nullptr ? findParam (*inst, "Max Cut") : nullptr;
+        auto* maxBoost = inst != nullptr ? findParam (*inst, "Max Boost") : nullptr;
+        bool ok = maxCut != nullptr && maxBoost != nullptr && maxCut->isAutomatable() && maxBoost->isAutomatable();
+        juce::String texts;
+        double unlimited = 0.0, limited = 0.0;
+        if (ok)
+        {
+            texts << maxCut->getText (maxCut->getValue(), 32) << " / " << maxBoost->getText (maxBoost->getValue(), 32) << "; "
+                  << maxCut->getText (0.25f, 32) << ", " << maxBoost->getText (0.125f, 32);
+            ok = maxCut->getValue() == 1.0f && maxBoost->getValue() == 1.0f
+                 && maxCut->getText (1.0f, 32) == "No limit" && maxBoost->getText (1.0f, 32) == "No limit"
+                 && maxCut->getText (0.25f, 32) == juce::String::fromUTF8 ("\xe2\x88\x92" "6 dB") && maxBoost->getText (0.125f, 32) == "+3 dB"
+                 && std::abs (maxCut->getValueForText ("-6 dB") - 0.25f) < 1.0e-4f && std::abs (maxBoost->getValueForText ("3") - 0.125f) < 1.0e-4f
+                 && maxCut->getValueForText ("no limit") == 1.0f;
+
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Heat", 0.0f }, { "Smooth", 1.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            const int n = (int) (3.0 * fs);
+            auto ring = testsig::silence (2, n);
+            testsig::Pink pl (3), pr (4);
+            for (int i = 0; i < n; ++i)
+            {
+                const float tone = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+                ring[0][(size_t) i] = 0.03f * pl.next() + tone;
+                ring[1][(size_t) i] = 0.03f * pr.next() + tone;
+            }
+            auto ringGainDb = [&]
+            {
+                ok = ok && run (*inst, ring, out, [] { return 512; });
+                const int from = (int) (2.0 * fs), len = (int) (0.75 * fs), lat = inst->getLatencySamples();
+                return testsig::toDb (testsig::toneAmplitude (out[0].data() + from + lat, len, 3150.0, fs)
+                                      / testsig::toneAmplitude (ring[0].data() + from, len, 3150.0, fs));
+            };
+            unlimited = ringGainDb();
+            maxCut->setValueNotifyingHost (maxCut->getValueForText ("3 dB"));
+            limited = ringGainDb();
+            inst->releaseResources();
+        }
+        check (ok && unlimited < -6.0 && limited >= -3.4 && limited < -2.0, "Max Cut / Max Boost through VST3",
+               texts + "; ring at 3150 Hz " + juce::String (unlimited, 1) + " dB, with Max Cut 3 dB " + juce::String (limited, 1) + " dB");
     }
 
     plugin->releaseResources();

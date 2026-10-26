@@ -8,6 +8,12 @@ namespace anneal
 {
     enum ReferenceMode { refOff = 0, refLearn = 1, refMatch = 2 };
 
+    // 5.3.2 Max cut / Max boost: the top of their range means no limit. No auto-EQ move can reach it
+    // (Smooth 9 + Make room 9 + Match 6 dB), so a limit there could never act; from 23.95 dB up the
+    // model doesn't even look (bit-identical to before), and the parameters read "No limit".
+    inline constexpr float noLimitDb = 24.0f;
+    inline bool isNoLimit (float db) noexcept { return db >= noLimitDb - 0.05f; }
+
     struct ModelSettings
     {
         float reveal       = 0.0f;     // 0..1, lift bands in a masking shadow
@@ -24,6 +30,8 @@ namespace anneal
         float scAmount     = 0.5f;     // 0..1
         int refMode        = refOff;   // 4.0 reference: off / learn the key / match (ReferenceMode)
         float refAmount    = 0.5f;     // 0..1
+        float maxCutDb     = noLimitDb;   // 5.3.2: how far the auto EQ may cut / lift, dB (noLimitDb = no limit)
+        float maxBoostDb   = noLimitDb;
         // 4.0 Mid/Side: the linked model's match curve (band dB), added to this model's target
         // x matchScale. nullptr = none.
         const float* matchDb = nullptr;

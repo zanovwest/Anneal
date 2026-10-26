@@ -285,6 +285,8 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.punch, target.punch);
     lin (current.width, target.width);
     lin (current.monoHz, target.monoHz);
+    lin (current.maxCutDb, target.maxCutDb);
+    lin (current.maxBoostDb, target.maxBoostDb);
     current.freeze = target.freeze;
     current.scMode = target.scMode;
     current.refMode = target.refMode;
@@ -526,6 +528,8 @@ void SpectralEngine::runStage (int s) noexcept
         ms.refMode = current.refMode;
         ms.refAmount = current.refAmount;
         ms.punch = current.punch;
+        ms.maxCutDb = current.maxCutDb;
+        ms.maxBoostDb = current.maxBoostDb;
         model.analyse (power.data(), ms, framesPerSecond, fw.keyPtr);
         if (msActive)
             analyseMidSide (0);   // needs only the linked model's match curve, made just above
@@ -765,6 +769,9 @@ void SpectralEngine::analyseMidSide (int c) noexcept
     ms.smooth *= eqAmount;
     ms.tiltDbPerOct *= eqAmount;
     ms.punch *= eqAmount;
+    // 5.3.2 fix: the sidechain is part of the auto EQ, so it follows the EQ routing too (it ducked or
+    // lifted a component the EQ wasn't routed to, e.g. the sides with EQ: Mid).
+    ms.scAmount *= eqAmount;
     // Reference match: the stereo (linked) match curve, applied to each routed component.
     ms.refMode = refOff;
     if (model.isMatching())

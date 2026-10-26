@@ -18,10 +18,17 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-18. **Max cut / Max boost**: limits for how far the auto EQ may move (for example cut no more than 6 dB,
-    boost no more than 3 dB), in AUTO EQ, defaulting to today's limits so projects sound the same.
-    Also shown as a band on the display's EQ lane. Tests: a ring that Smooth cuts 9 dB stops at the
-    limit, Reveal's lift likewise, defaults bit-identical.
+Added by the 5.3.2 run (Next up was empty after item 18); reorder or drop freely:
+
+19. **Tilt pivot**: where Tilt turns (200 Hz – 5 kHz, default 1 kHz as today, so projects sound the same),
+    a compact row shown only while Tilt isn't 0 (the calmer deck). Tests: a +1 dB/oct tilt around 300 Hz
+    is 0 dB at 300 Hz and +2 dB at 1.2 kHz; 1 kHz bit-identical to before; older projects open at 1 kHz.
+20. **Key range for the sidechain**: which part of the key counts (for example only a vocal's 1–5 kHz
+    presence), two Hz values in the Sidechain menu's row, full range by default (as today). Tests: a key
+    tone outside the key range ducks nothing, inside it ducks as before; full range bit-identical.
+21. **Peak hold on the display**: a faint line holding the output spectrum's peaks until clicked away, to
+    see where a mix builds up over a whole song. A display toggle (its tooltip says how), off by default,
+    no sound change. Tests: the held line never falls while playing, a click clears it, off draws nothing.
 
 ## Waiting on the user
 
@@ -57,6 +64,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.2 (2026-10-25, the first every-minute update): **Max cut / Max boost** (item 18): limits for how far
+  the auto EQ (Reveal, Smooth, the sidechain and the reference together) may move, from a Limits pill on
+  the AUTO EQ title row (no limit, 1–12 dB each; 0–24 dB as host parameters), drawn as dashed lines on the
+  display's EQ lane. No limit by default and for older projects, bit-identical. Fixed: in Mid/Side the
+  sidechain ducked or lifted the part the EQ wasn't routed to.
 - 5.3.1 (2026-10-25, daily update): **Loudness readout** (item 17): EBU R128 short-term and integrated
   loudness of the input and the output, two rows of numbers in the header beside MATCH (not under the
   meter: the calmer deck has no room there), a click starts the integrated values over. Exact BS.1770

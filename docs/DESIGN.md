@@ -38,7 +38,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
-| AUTO EQ | Reveal, Smooth | Freeze (3.0, title row), Tilt, Response, Guard (transients) |
+| AUTO EQ | Reveal, Smooth | Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Tilt, Response, Guard (transients) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Amount (5.3: a compact row, shown while a mode is on) |
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
@@ -110,6 +110,15 @@ in the text colour and the arrow faint, and LUFS once at the right in faint caps
 nothing to measure. Everything else (what S and I mean, the gating, that a click starts I over) is in
 the tooltip, so the header stays as calm as it was. Beside MATCH on purpose: the gain Match shows is the
 level difference you also read here.
+
+**Limits (5.3.2).** Max boost and Max cut share one pill on the AUTO EQ title row, between the group's title
+and Freeze, so the deck gains no row. At rest it is a plain raised pill, "Limits: none". With a limit set it
+reads "Max +3 / −6 dB" on a faintly lit pill (text at 7 %, a muted outline): the lift number in straw, the
+cut in blue, the rest in the text colour. Its menu has two sections, MAX BOOST and MAX CUT, each "No limit"
+then 1, 2, 3, 4, 6, 9, 12 dB; a value set elsewhere (automation, typed in the host) is listed ticked in its
+place. On the display each limit is a dashed line (6 on, 4 off, 1.2 px) in its role colour at 60 %, across
+the Range only (where the auto EQ acts), drawn only while set and within the lane's ±12 dB. What it does is
+in the pill's tooltip; the display's tooltip names the dashed lines.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 

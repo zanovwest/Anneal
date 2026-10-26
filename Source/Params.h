@@ -38,6 +38,8 @@ namespace anneal::ids
     inline constexpr const char* zeroLatency = "zeroLatency"; // 5.1: no latency (Heat and Listen off), off = as before
     inline constexpr const char* spread      = "spread";      // 5.2.1: frame work spread over the hop (+1 hop latency), off = as before
     inline constexpr const char* zeroPunch   = "zeroPunch";   // 5.2.7: Punch works at zero latency (time domain); older projects: off
+    inline constexpr const char* maxCut      = "maxCut";      // 5.3.2: how far the auto EQ may cut, dB (24 = no limit, as before)
+    inline constexpr const char* maxBoost    = "maxBoost";    // 5.3.2: how far the auto EQ may lift, dB (24 = no limit, as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -61,6 +63,10 @@ namespace anneal
     int parseListen (const juce::String& text);   // "reveal", "smooth", "harmonics"/"heat", "off" or 0-3
     int parseFlavour (const juce::String& text);  // "clean", "tape", "tube", "transformer", "exciter" or 0-4
     int parseReference (const juce::String& text); // "off", "learn"/"key", "match" or 0-2
+    // 5.3.2 Max cut / Max boost: "No limit" at the top of the range, else "−6.0 dB" (cut) / "+3.0 dB"
+    // (boost); typed text takes the number's size ("-6", "6 dB") or "none" / "no limit" / "off".
+    juce::String formatLimit (float db, bool cut);
+    float parseLimit (const juce::String& text);
 
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };

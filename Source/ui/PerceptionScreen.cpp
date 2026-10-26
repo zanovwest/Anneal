@@ -2,6 +2,7 @@
 #include "Params.h"
 #include "Theme.h"
 #include "dsp/ErbScale.h"
+#include "dsp/PerceptualModel.h"   // 5.3.2: isNoLimit
 
 namespace anneal
 {
@@ -89,6 +90,14 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
             [this] (float v) { zeroPunchOn = v > 0.5f; repaint(); }, state.undoManager);
         zeroPunchAttachment->sendInitialUpdate();
     }
+    for (auto [id, value, attachment] : { std::tuple { ids::maxCut, &maxCutDb, &maxCutAttachment },
+                                          std::tuple { ids::maxBoost, &maxBoostDb, &maxBoostAttachment } })
+        if (auto* lp = state.getParameter (id))   // 5.3.2
+        {
+            float* v = value;
+            *attachment = std::make_unique<juce::ParameterAttachment> (*lp, [this, v] (float x) { *v = x; repaint(); }, state.undoManager);
+            (*attachment)->sendInitialUpdate();
+        }
 
     setPaintMode (false);   // sets the tooltip
     startTimerHz (refreshHz);
@@ -392,6 +401,20 @@ void PerceptionScreen::paintEq (juce::Graphics& g)
         g.setColour (db == 0.0f ? colour::muted : colour::faint);
         g.drawText (db == 0.0f ? juce::String ("0 dB") : signedDb (db, 0),
                     juce::Rectangle<float> (rx, eqY (db) - 7.0f, 38.0f, 14.0f), juce::Justification::centredLeft, false);
+    }
+
+    // 5.3.2 Max boost / Max cut: where the auto EQ stops, as dashed lines in the lift and cut colours
+    // across the Range (where it acts); only while a limit is set and within the lane's +-12 dB.
+    {
+        const auto shown = getShownRange();
+        const float xLo = juce::jmax (lane.getX(), xForHz (shown.x)), xHi = juce::jmin (lane.getRight(), xForHz (shown.y));
+        const float dashes[] = { 6.0f, 4.0f };
+        for (auto [db, c] : { std::pair { maxBoostDb, colour::straw }, std::pair { -maxCutDb, colour::blue } })
+            if (! isNoLimit (std::abs (db)) && std::abs (db) <= eqRangeDb && xHi > xLo)
+            {
+                g.setColour (c.withAlpha (0.6f));
+                g.drawDashedLine (juce::Line<float> (xLo, eqY (db), xHi, eqY (db)), dashes, 2, 1.2f);
+            }
     }
 
     if (! haveFrame)
@@ -942,7 +965,8 @@ void PerceptionScreen::setPaintMode (bool on)
     paintMode = on;
     setTooltip (on ? "Paint: drag in the EQ, Width or Heat lane to set how much of it acts there (top = 100 %, "
                      "bottom = none). Alt- or right-drag erases back to 100 %, double-click resets the lane"
-                   : "AUTO EQ: the live gain over the spectrum (straw lifts, blue cuts). WIDTH: the stereo width you "
+                   : "AUTO EQ: the live gain over the spectrum (straw lifts, blue cuts); dashed lines are the Limits you "
+                     "set (how far it may lift and cut). WIDTH: the stereo width you "
                      "hear (100 % in the middle); the shading shows how much of the sound is in the sides. HEAT: where "
                      "harmonics are written, against the output there. Drag a range handle to limit where Anneal acts; "
                      "double-click a handle to reset it. Drop an audio file here to use it as the reference. Horizontal "

@@ -65,7 +65,8 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       stereoMode (p.apvts, ids::stereoMode, "", { "Stereo", "Mid/Side" },
                   "Stereo links the EQ curve across left and right. Mid/Side analyses the centre and sides independently. Mono uses linked processing."),
       eqTarget (p.apvts, ids::eqTarget, "EQ: ", { "Both", "Mid", "Side" },
-                "In Mid/Side mode, route Reveal, Smooth and Tilt to both components, the centre (Mid), or the sides (Side)."),
+                "In Mid/Side mode, route the auto EQ (Reveal, Smooth, Tilt, the sidechain and the reference) and Punch "
+                "to both components, the centre (Mid), or the sides (Side)."),
       heatTarget (p.apvts, ids::heatTarget, "Heat: ", { "Both", "Mid", "Side" },
                   "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
       listen (p.apvts, ids::listen),
@@ -93,13 +94,14 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
              "Width: the stereo width of Anneal's output, from mono (0 %) to twice as wide (200 %). 100 % = as before"),
       monoBass (p.apvts, ids::monoBass, "Mono bass", colour::rose, Size::secondary, false, {},
                 "Mono bass: makes everything below this frequency mono (a quarter octave either side fades in), "
-                "so the low end stays centred and mono-safe. Off = as before")
+                "so the low end stays centred and mono-safe. Off = as before"),
+      limits (p.apvts, ids::maxBoost, ids::maxCut)
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
              &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton,
-             &punch, &width, &monoBass, &loudness })
+             &punch, &width, &monoBass, &loudness, &limits })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
@@ -208,8 +210,9 @@ void AnnealEditorContent::resized()
     const int heroW = anneal::Knob::preferredWidth (Size::hero), heroH = anneal::Knob::preferredHeight (Size::hero);
     const int smallH = anneal::Knob::preferredHeight (Size::secondary);
 
-    // AUTO EQ: the two primary rings, their settings stacked beside them; Freeze and the M/S
-    // routing on the group's title row.
+    // AUTO EQ: the two primary rings, their settings stacked beside them; the Limits (5.3.2), Freeze
+    // and the M/S routing on the group's title row.
+    limits.setBounds (108, routingY, 138, 26);
     freeze.setBounds (252, routingY, 84, 26);
     eqTarget.setBounds (360, routingY, 114, 26);
     reveal.setBounds (26, 442, primaryW, primaryH);

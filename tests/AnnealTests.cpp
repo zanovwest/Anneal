@@ -564,7 +564,8 @@ void testStress()
     std::mt19937 rng (77);
     std::uniform_real_distribution<float> u (0.0f, 1.0f);
     const char* all[] = { ids::reveal, ids::smooth, ids::tilt, ids::response, ids::rangeLo, ids::rangeHi, ids::heat,
-                          ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass, ids::guard };
+                          ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass, ids::guard,
+                          ids::maxCut, ids::maxBoost };
 
     const int n = (int) in[0].size();
     Channels out = in;
@@ -5387,6 +5388,322 @@ void testLoudness531()
     }
 }
 
+//==============================================================================
+// 5.3.2 bug fix: in Mid/Side the sidechain follows the EQ routing, like the rest of the auto EQ. It used to
+// duck (or lift) a component the EQ wasn't routed to: the sides with EQ: Mid, the centre with EQ: Side.
+void testFixes532()
+{
+    section ("50. 5.3.2 bug fixes");
+    const double fs = 48000.0;
+    const auto noise = pinkNoise (fs, 3.0, 0.03f, 41);
+    const int n = (int) noise[0].size();
+    const auto key = testsig::sines (fs, n, { { 2000.0, 0.2 } });   // a loud key at 2 kHz: Make room ducks there
+    Channels sides = noise, centre = noise;                          // pure sides (R = -L), pure centre (R = L)
+    for (int i = 0; i < n; ++i)
+    {
+        sides[1][(size_t) i] = -noise[0][(size_t) i];
+        centre[1][(size_t) i] = noise[0][(size_t) i];
+    }
+    struct Case { const char* name; const Channels* in; float eqMid, eqSide; };
+    juce::String detail;
+    double untargetedError = 0.0, routedDb = 0.0;
+    for (const auto& c : { Case { "EQ: Mid, sides", &sides, 1.0f, 0.0f }, Case { "EQ: Side, centre", &centre, 0.0f, 1.0f },
+                           Case { "EQ: Both, sides", &sides, 1.0f, 1.0f } })
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.midSide = 1.0f;
+        p.eqMid = c.eqMid;
+        p.eqSide = c.eqSide;
+        p.scMode = 1;
+        p.scAmount = 1.0f;
+        e->setParameters (p);
+        const auto out = runEngineWithKey (*e, *c.in, key, 512);
+        const int lat = e->getLatencySamples();
+        const double err = delayedError (out, *c.in, lat);
+        const double change = toDb (testsig::toneAmplitude (out[0].data() + n / 2 + lat, n / 3, 2000.0, fs)
+                                    / testsig::toneAmplitude ((*c.in)[0].data() + n / 2, n / 3, 2000.0, fs));
+        if (c.eqMid == 1.0f && c.eqSide == 1.0f)
+            routedDb = change;
+        else
+            untargetedError = std::max (untargetedError, err);
+        detail << c.name << " " << db (change) << " at 2 kHz (error " << juce::String (err, 7) << ")  ";
+    }
+    check (untargetedError < 1.0e-4 && routedDb < -2.0, "M/S: the sidechain follows the EQ routing", detail);
+}
+
+//==============================================================================
+// 5.3.2 Max cut / Max boost (roadmap item 18): how far the auto EQ (Reveal, Smooth, the sidechain and the
+// reference together) may move. No limit by default, as before.
+void testLimits532()
+{
+    section ("51. 5.3.2 Max cut / Max boost");
+    const double fs = 48000.0;
+    const int n = (int) (4 * fs);
+    // Section 7's signals: pink noise with a sustained ring at 3150 Hz (Smooth cuts it), and a pink bed
+    // under a dense 150-350 Hz build-up (Reveal lifts the shadowed band above it).
+    Channels ringy = testsig::silence (2, n), muddy = testsig::silence (2, n);
+    {
+        testsig::Pink pl (1), pr (2), ml (3), mr (4);
+        std::mt19937 rng (9);
+        std::uniform_real_distribution<double> ph (0.0, 2.0 * testsig::pi);
+        std::vector<std::pair<double, double>> partials;
+        for (double f = 150.0; f <= 350.0; f += 2.5)
+            partials.push_back ({ f, ph (rng) });
+        for (int i = 0; i < n; ++i)
+        {
+            const float ring = 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+            ringy[0][(size_t) i] = 0.03f * pl.next() + ring;
+            ringy[1][(size_t) i] = 0.03f * pr.next() + ring;
+            double bump = 0.0;
+            for (auto [f, phase] : partials)
+                bump += std::sin (2.0 * testsig::pi * f * i / fs + phase);
+            muddy[0][(size_t) i] = 0.01f * ml.next() + (float) (0.004 * bump);
+            muddy[1][(size_t) i] = 0.01f * mr.next() + (float) (0.004 * bump);
+        }
+    }
+    const float none = anneal::noLimitDb;
+    auto engineFor = [fs] (const Channels& in, float reveal, float smooth, float maxCut, float maxBoost,
+                           int mode = anneal::SpectralEngine::precise)
+    {
+        auto e = std::make_unique<anneal::SpectralEngine>();
+        e->prepare (fs, 2, mode);
+        auto p = neutral();
+        p.reveal = reveal;
+        p.smooth = smooth;
+        p.maxCutDb = maxCut;
+        p.maxBoostDb = maxBoost;
+        e->setParameters (p);
+        runEngine (*e, in, fixedBlocks (512));
+        return e;
+    };
+    auto gains = [] (const anneal::SpectralEngine& e) { return e.getModel().getBandGainDb(); };
+    auto lowest = [&gains] (const anneal::SpectralEngine& e)
+    {
+        const float* g = gains (e);
+        return *std::min_element (g, g + anneal::PerceptualModel::numBands);
+    };
+    auto highest = [&gains] (const anneal::SpectralEngine& e)
+    {
+        const float* g = gains (e);
+        return *std::max_element (g, g + anneal::PerceptualModel::numBands);
+    };
+
+    // Smooth: the deepest cut stops at Max cut (set to half of it); what Smooth cuts less than the limit
+    // stays as it was.
+    {
+        const auto unlimited = engineFor (ringy, 0.0f, 1.0f, none, none);
+        const float freeCut = lowest (*unlimited);
+        const float limit = std::round (-freeCut * 5.0f) / 10.0f;
+        const auto lim = engineFor (ringy, 0.0f, 1.0f, limit, none);
+        const float cut = lowest (*lim);
+        float elsewhere = 0.0f;
+        for (int b = 0; b < anneal::PerceptualModel::numBands; ++b)
+            if (gains (*unlimited)[b] > -limit + 0.5f)
+                elsewhere = std::max (elsewhere, std::abs (gains (*unlimited)[b] - gains (*lim)[b]));
+        check (freeCut < -4.0f && cut >= -limit - 1.0e-4f && cut <= -limit + 0.05f && elsewhere < 0.25f,
+               "Max cut: Smooth's cut stops at the limit",
+               "no limit " + db (freeCut, 2) + ", Max cut " + db (limit, 1) + " -> " + db (cut, 3) + "; bands cut less move "
+                   + db (elsewhere, 3) + "; 3150 Hz " + db (bandGain (*lim, 3150.0), 2));
+    }
+
+    // Reveal: the strongest lift stops at Max boost.
+    {
+        const auto unlimited = engineFor (muddy, 1.0f, 0.0f, none, none);
+        const float freeLift = highest (*unlimited);
+        const float limit = std::round (freeLift * 5.0f) / 10.0f;
+        const auto lim = engineFor (muddy, 1.0f, 0.0f, none, limit);
+        const float lift = highest (*lim);
+        check (freeLift > 1.0f && lift <= limit + 1.0e-4f && lift >= limit - 0.05f, "Max boost: Reveal's lift stops at the limit",
+               "no limit " + db (freeLift, 2) + ", Max boost " + db (limit, 1) + " -> " + db (lift, 3) + "; 470 Hz "
+                   + db (bandGain (*lim, 470.0), 2));
+    }
+
+    // No limit is no limit: with everything that moves the auto EQ at full (Reveal, Smooth, Make room) the
+    // output is bit-identical whether the limits are skipped (24 dB) or clamp just under it (23.94 dB),
+    // because no move reaches that far.
+    {
+        const auto key = testsig::sines (fs, n, { { 3150.0, 0.3 }, { 470.0, 0.3 } });
+        double worst = 0.0;
+        float largest = 0.0f;
+        Channels outs[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            auto p = neutral();
+            p.reveal = 1.0f; p.smooth = 1.0f; p.heat = 0.5f; p.scMode = 1; p.scAmount = 1.0f;
+            p.maxCutDb = p.maxBoostDb = i == 0 ? none : none - 0.06f;
+            e->setParameters (p);
+            outs[i] = runEngineWithKey (*e, ringy, key, 512);
+            largest = std::max ({ largest, -lowest (*e), highest (*e) });
+        }
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < outs[0][(size_t) c].size(); ++i)
+                worst = std::max (worst, (double) std::abs (outs[0][(size_t) c][i] - outs[1][(size_t) c][i]));
+        const anneal::EngineParams defaults;
+        check (worst == 0.0 && largest < none - 0.06f && defaults.maxCutDb == none && defaults.maxBoostDb == none,
+               "no limit (the default) changes nothing", "largest move " + db (largest, 2) + ", max diff " + juce::String (worst, 12));
+    }
+
+    // Freeze: a frozen curve is limited too, and comes back whole when the limit is raised again.
+    {
+        auto e = engineFor (ringy, 0.0f, 1.0f, none, none, anneal::SpectralEngine::low);
+        const float frozenCut = lowest (*e);
+        auto p = neutral();
+        p.smooth = 1.0f;
+        p.freeze = true;
+        p.maxCutDb = 3.0f;
+        e->setParameters (p);
+        runEngine (*e, ringy, fixedBlocks (512));
+        const float limitedCut = lowest (*e);
+        p.maxCutDb = none;
+        e->setParameters (p);
+        runEngine (*e, ringy, fixedBlocks (512));
+        const float back = lowest (*e);
+        check (frozenCut < -4.0f && limitedCut >= -3.0001f && limitedCut <= -2.95f && std::abs (back - frozenCut) < 0.001f,
+               "a frozen curve is limited, and whole again without the limit",
+               "frozen " + db (frozenCut, 2) + ", Max cut 3 dB " + db (limitedCut, 3) + ", no limit again " + db (back, 2));
+    }
+
+    // Mid/Side and zero latency: each component's curve (what the zero-latency filters apply) is limited.
+    {
+        float worst[2] = { 0.0f, 0.0f }, freeMid = 0.0f;
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            e->setAnalysisOnly (true);
+            auto p = neutral();
+            p.smooth = 1.0f; p.reveal = 1.0f; p.midSide = 1.0f;
+            p.maxCutDb = i == 0 ? none : 3.0f;
+            p.maxBoostDb = i == 0 ? none : 1.0f;
+            e->setParameters (p);
+            runEngine (*e, ringy, fixedBlocks (512));
+            const float* mid = e->getCurveMid();
+            const float* side = e->getCurveSide();
+            float lo = 0.0f, hi = -100.0f;
+            for (int k = 0; k < e->getNumBins(); ++k)
+                for (float g : { mid[k], side[k] })
+                {
+                    lo = std::min (lo, (float) toDb (g));
+                    hi = std::max (hi, (float) toDb (g));
+                }
+            if (i == 0)
+                freeMid = lo;
+            worst[0] = lo;
+            worst[1] = hi;
+        }
+        check (freeMid < -4.0f && worst[0] >= -3.001f && worst[1] <= 1.001f, "Mid/Side and zero-latency curves stay inside the limits",
+               "no limit " + db (freeMid, 2) + " deepest; Max cut 3 / Max boost 1 dB: " + db (worst[0], 3) + " .. " + db (worst[1], 3));
+    }
+
+    // Through the processor at zero latency: the ring is cut by no more than Max cut.
+    {
+        double change[2] {};
+        for (int i = 0; i < 2; ++i)
+        {
+            Rig r;
+            r.setNeutral();
+            r.set (ids::smooth, 100.0f);
+            r.set (ids::zeroLatency, 1.0f);
+            if (i == 1)
+                r.set (ids::maxCut, 3.0f);
+            r.prepare (fs, 512);
+            const auto out = r.run (ringy, fixedBlocks (512));
+            const int lat = r.proc->getLatencySamples(), from = n - (int) fs;
+            change[i] = toDb (testsig::toneAmplitude (out[0].data() + from + lat, (int) fs - lat, 3150.0, fs)
+                              / testsig::toneAmplitude (ringy[0].data() + from, (int) fs - lat, 3150.0, fs));
+        }
+        check (change[0] < -4.0 && change[1] >= -3.4 && change[1] < -2.0, "zero latency: the ring is cut no more than Max cut",
+               "3150 Hz: no limit " + db (change[0]) + ", Max cut 3 dB " + db (change[1]));
+    }
+
+    // The parameters: "No limit" by default, typed values, older projects open without limits (whatever this
+    // instance had), a project with limits keeps them, factory presets leave them alone.
+    {
+        Rig r;
+        auto* mc = r.proc->apvts.getParameter (ids::maxCut);
+        auto* mb = r.proc->apvts.getParameter (ids::maxBoost);
+        const auto minus = juce::String::fromUTF8 ("\xe2\x88\x92");
+        const bool texts = mc->getCurrentValueAsText() == "No limit" && mb->getCurrentValueAsText() == "No limit"
+                           && mc->getText (mc->convertTo0to1 (6.0f), 32) == minus + "6 dB" && mb->getText (mb->convertTo0to1 (4.5f), 32) == "+4.5 dB"
+                           && anneal::parseLimit ("6") == 6.0f && anneal::parseLimit ("-6 dB") == 6.0f && anneal::parseLimit (minus + "3 dB") == 3.0f
+                           && anneal::parseLimit ("none") == none && anneal::parseLimit ("No limit") == none && anneal::parseLimit ("100") == none;
+
+        auto old = r.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::maxCut), nullptr);
+        old.removeChild (old.getChildWithProperty ("id", ids::maxBoost), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::maxCut, 3.0f);
+        b.set (ids::maxBoost, 2.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        auto raw = [] (Rig& x, const char* id) { return x.proc->apvts.getRawParameterValue (id)->load(); };
+        const bool oldOpen = raw (b, ids::maxCut) == none && raw (b, ids::maxBoost) == none;
+
+        Rig c;
+        c.set (ids::maxCut, 6.0f);
+        c.set (ids::maxBoost, 1.5f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = std::abs (raw (d, ids::maxCut) - 6.0f) < 1.0e-4f && std::abs (raw (d, ids::maxBoost) - 1.5f) < 1.0e-4f;
+        d.proc->setCurrentProgram (2);
+        const bool presetKeeps = std::abs (raw (d, ids::maxCut) - 6.0f) < 1.0e-4f && d.proc->getPresetDisplayName() == "Mix bus glue";
+        check (texts && oldOpen && kept && presetKeeps, "Max cut / Max boost: texts, older projects, saved, presets",
+               "default " + mc->getCurrentValueAsText() + ", 6 -> " + mc->getText (mc->convertTo0to1 (6.0f), 32) + ", older project -> "
+                   + juce::String (raw (b, ids::maxCut), 1) + " / " + juce::String (raw (b, ids::maxBoost), 1) + ", saved -> "
+                   + juce::String (raw (d, ids::maxCut), 1) + " / " + juce::String (raw (d, ids::maxBoost), 1) + ", after a preset "
+                   + d.proc->getPresetDisplayName());
+    }
+
+    // The Limits pill: on the AUTO EQ title row before Freeze, its menu sets the parameters, the display
+    // draws what is set.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::LimitMenu* menu = nullptr;
+        juce::Component* freeze = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+            {
+                if (auto* m = dynamic_cast<anneal::LimitMenu*> (c))
+                    menu = m;
+                if (auto* t = dynamic_cast<juce::TextButton*> (c); t != nullptr && t->getButtonText() == "FREEZE")
+                    freeze = c;
+            }
+        if (menu == nullptr || freeze == nullptr)
+        {
+            check (false, "the Limits pill on the AUTO EQ title row", "missing");
+            return;
+        }
+        auto raw = [&r] (const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+        auto shown = [menu] { return anneal::LimitMenu::pillText (menu->getMaxBoostDb(), menu->getMaxCutDb()); };
+        const bool placed = menu->isVisible() && menu->getY() == freeze->getY() && menu->getX() > 100 && menu->getRight() < freeze->getX();
+        const auto atRest = shown();
+        menu->choose (4);     // Max boost: +3 dB (1 no limit, then 1, 2, 3 dB)
+        menu->choose (106);   // Max cut: -6 dB (101 no limit, then 1, 2, 3, 4, 6 dB)
+        const bool set = raw (ids::maxBoost) == 3.0f && raw (ids::maxCut) == 6.0f;
+        const auto both = shown();
+        const auto lines = editor->getContent().screen.getShownLimitsDb();
+        menu->choose (1);
+        const auto cutOnly = shown();
+        menu->choose (101);
+        const bool off = raw (ids::maxBoost) == none && raw (ids::maxCut) == none && shown() == "Limits: none";
+        const auto minus = juce::String::fromUTF8 ("\xe2\x88\x92");
+        check (placed && atRest == "Limits: none" && set && both == "Max +3 / " + minus + "6 dB" && cutOnly == "Max " + minus + "6 dB"
+                   && anneal::LimitMenu::pillText (4.5f, none) == "Max +4.5 dB" && lines == juce::Point<float> (3.0f, 6.0f) && off,
+               "the Limits pill on the AUTO EQ title row",
+               menu->getBounds().toString() + ": \"" + atRest + "\", \"" + both + "\", \"" + cutOnly + "\"; display lines +"
+                   + juce::String (lines.x, 1) + " / -" + juce::String (lines.y, 1) + " dB");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -5399,13 +5716,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes531();
+        testFixes532();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testLoudness531();
+        testLimits532();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -5460,6 +5777,8 @@ int main (int argc, char** argv)
     testZeroPunch527();
     testFixes531();
     testLoudness531();
+    testFixes532();
+    testLimits532();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

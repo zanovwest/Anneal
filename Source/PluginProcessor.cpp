@@ -213,6 +213,8 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pZero       = apvts.getRawParameterValue (ids::zeroLatency);
     pSpread     = apvts.getRawParameterValue (ids::spread);
     pZeroPunch  = apvts.getRawParameterValue (ids::zeroPunch);
+    pMaxCut     = apvts.getRawParameterValue (ids::maxCut);
+    pMaxBoost   = apvts.getRawParameterValue (ids::maxBoost);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -465,6 +467,8 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.scAmount = pScAmount->load() * 0.01f;
     p.refMode = juce::jlimit (0, 2, juce::roundToInt (pRefMode->load()));
     p.refAmount = pRefAmount->load() * 0.01f;
+    p.maxCutDb = pMaxCut->load();
+    p.maxBoostDb = pMaxBoost->load();
     zeroWidth = p.width;
     zeroMonoHz = p.monoHz;
     // 5.2.7: at zero latency Punch is the time-domain shaper's, inside Range and by the EQ routing
@@ -1065,6 +1069,8 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasZero = tree.getChildWithProperty ("id", anneal::ids::zeroLatency).isValid();
             const bool hasSpread = tree.getChildWithProperty ("id", anneal::ids::spread).isValid();
             const bool hasZeroPunch = tree.getChildWithProperty ("id", anneal::ids::zeroPunch).isValid();
+            const bool hasMaxCut = tree.getChildWithProperty ("id", anneal::ids::maxCut).isValid();
+            const bool hasMaxBoost = tree.getChildWithProperty ("id", anneal::ids::maxBoost).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1146,6 +1152,14 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasZeroPunch)
                 if (auto* zp = apvts.getParameter (anneal::ids::zeroPunch))
                     zp->setValueNotifyingHost (0.0f);
+
+            // Projects saved before 5.3.2: the auto EQ without limits, as it was then, whatever this
+            // instance had.
+            for (auto [id, present] : { std::pair { anneal::ids::maxCut, hasMaxCut },
+                                       std::pair { anneal::ids::maxBoost, hasMaxBoost } })
+                if (! present)
+                    if (auto* lp = apvts.getParameter (id))
+                        lp->setValueNotifyingHost (lp->getDefaultValue());
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

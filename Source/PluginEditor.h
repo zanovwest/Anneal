@@ -8,6 +8,7 @@
 #include "ui/IconButton.h"
 #include "ui/Knob.h"
 #include "ui/LatencyMenu.h"
+#include "ui/LimitMenu.h"
 #include "ui/ListenMenu.h"
 #include "ui/LoudnessReadout.h"
 #include "ui/OutputMeter.h"
@@ -66,6 +67,7 @@ private:
     // 5.0
     anneal::Knob punch, width, monoBass;
     std::unique_ptr<juce::AlertWindow> presetDialog;
+    anneal::LimitMenu limits;   // 5.3.2 Max boost / Max cut, on the AUTO EQ title row
 
 public:
     anneal::LoudnessReadout loudness;   // 5.3.1, in the header beside MATCH

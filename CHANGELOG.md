@@ -4,6 +4,51 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.2 — 2026-10-25 20:15
+
+New
+- **Max cut and Max boost**: limits for how far the auto EQ may move. A new pill on the AUTO EQ title row,
+  "Limits: none", opens a menu with *Max boost* (no limit, +1 … +12 dB) and *Max cut* (no limit, −1 … −12 dB).
+  - Set Max cut to 6 dB and nothing is ever pulled down more than 6 dB, however much Smooth (or Make room,
+    or the reference) would like to; set Max boost to 3 dB and Reveal never lifts more than 3 dB. Everything
+    that moves less than the limit stays exactly as it was. Useful on a master or a vocal bus, where you
+    want Anneal's tone but a hard rule on how far it goes.
+  - The limits cover the whole auto EQ: Reveal, Smooth, the sidechain and the reference together. Tilt
+    and Punch are your own moves and aren't limited.
+  - With a limit set the pill reads "Max +3 / −6 dB" (lift in straw, cut in blue), and the display draws
+    the limits as dashed lines across the Range, so you see the curve flatten against them. Reveal's and
+    Smooth's live lines show the limited amounts.
+  - It works everywhere: every latency mode, Zero latency, Mid/Side (each part limited), Freeze (a frozen
+    curve is limited too, and comes back whole when you raise the limit), the Listen solos.
+  - Both are also host parameters, automatable, with any value from 0 to 24 dB (type `6`, `-6 dB` or
+    `none`); 24 dB reads "No limit". No limit is the default and what older projects open with, and no
+    move of the auto EQ can reach 24 dB, so projects sound exactly as before. Factory presets leave the
+    limits as they are (like the Ceiling).
+
+Fixes
+- **Mid/Side: the sidechain ignored the EQ routing.** With EQ: Mid (or Side) the sidechain still ducked or
+  lifted the other part: in Make room, a vocal key dipped the sides of a bus by up to 9 dB even though the
+  EQ was routed to the centre only. Now the sidechain follows the EQ routing like Reveal, Smooth, Tilt, the
+  reference and Punch already did. Only projects in Mid/Side with EQ: Mid or Side and a sidechain mode on
+  sound different: the part the EQ isn't routed to is left alone, as the routing promised.
+
+Tests: 204/204 acceptance checks, 9 new:
+- the sidechain follows the EQ routing (it failed before the fix: the untargeted part ducked −9.0 dB at
+  2 kHz; now untouched, error 0.0000000, and EQ: Both still ducks −9.0 dB);
+- Max cut stops a 9.0 dB Smooth cut at 4.5 dB exactly (bands cut less move 0.000 dB); Max boost stops a
+  7.39 dB Reveal lift at 3.70 dB; no limit with Reveal, Smooth and Make room at full is bit-identical to a
+  clamp just under 24 dB (largest move 18 dB); a frozen −9 dB cut reads −3.000 dB with Max cut 3 and −9.00
+  again without; Mid/Side and zero-latency curves stay inside Max cut 3 / Max boost 1 dB; at zero latency
+  through the plug-in a 3150 Hz ring cut 8.9 dB is cut 3.0 dB with Max cut 3; texts, typed values, older
+  projects (no limits, whatever the instance had), saved projects and presets; the Limits pill (placed
+  before Freeze, its menu, its text, the display's lines).
+
+26/26 host checks on the built VST3 (new: Max Cut / Max Boost through VST3: "No limit" by default, typed
+values, a 3150 Hz ring cut 8.9 dB is cut 3.0 dB with Max Cut 3 dB) and 25/25 setup checks pass. CPU: with no
+limit the code doesn't run; with limits, two comparisons per band. At 48 kHz / 64 samples Stereo Low 2.0 %,
+Precise 4.6 %, Mid/Side Precise 8.0 % (5.3.1: 2.0 / 4.6 / 8.1 %); the slowest 0.1 % of blocks 6 / 12 / 21 % of
+the deadline, within the benchmark's usual spread.
+
 ## 5.3.1 — 2026-10-25 19:50
 
 New

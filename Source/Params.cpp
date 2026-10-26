@@ -1,4 +1,5 @@
 #include "Params.h"
+#include "dsp/PerceptualModel.h"   // noLimitDb
 
 namespace anneal
 {
@@ -67,6 +68,25 @@ int parseReference (const juce::String& text)
     if (l.contains ("learn") || l.contains ("key")) return 1;
     if (l.contains ("match") || l.contains ("ref"))  return 2;
     return 0;
+}
+
+juce::String formatLimit (float db, bool cut)
+{
+    if (isNoLimit (db))
+        return "No limit";
+    const float r = std::round (db * 10.0f) / 10.0f;
+    const auto number = std::abs (r - std::round (r)) < 0.05f ? juce::String (juce::roundToInt (r)) : juce::String (r, 1);
+    if (r < 0.05f)
+        return "0 dB";
+    return (cut ? juce::String::fromUTF8 ("\xe2\x88\x92") : juce::String ("+")) + number + " dB";
+}
+
+float parseLimit (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim();
+    if (! l.containsAnyOf ("0123456789"))
+        return noLimitDb;   // "No limit", "none", "off", "unlimited"
+    return std::min (noLimitDb, std::abs (leadingNumber (l.replace (juce::String::fromUTF8 ("\xe2\x88\x92"), "-"))));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -298,6 +318,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     // they sound as they were made. Not automatable (a mode switch, like the two above).
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::zeroPunch, 1 }, "Zero Latency Punch", true,
         juce::AudioParameterBoolAttributes().withAutomatable (false)));
+
+    // 5.3.2 Max cut / Max boost: how far the auto EQ (Reveal, Smooth, the sidechain and the reference
+    // together) may move. The top, 24 dB, is no limit: as before, and what older projects load with.
+    auto limit = [] (const char* id, const char* name, bool cut)
+    {
+        return std::make_unique<Float> (juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> (0.0f, noLimitDb, 0.1f), noLimitDb,
+            Attr().withLabel ("dB")
+                  .withStringFromValueFunction ([cut] (float v, int) { return formatLimit (v, cut); })
+                  .withValueFromStringFunction ([] (const juce::String& t) { return parseLimit (t); }));
+    };
+    layout.add (limit (ids::maxCut, "Max Cut", true));
+    layout.add (limit (ids::maxBoost, "Max Boost", false));
 
     return layout;
 }

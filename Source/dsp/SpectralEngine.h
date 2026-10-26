@@ -43,6 +43,8 @@ namespace anneal
         float punch        = 0.0f;           // 5.0: -1..1 (0 = off)
         float width        = 1.0f;           // 5.0: 0..2 (1 = as is)
         float monoHz       = 0.0f;           // 5.0: mono below this, Hz (under 20 = off)
+        float maxCutDb     = noLimitDb;      // 5.3.2: how far the auto EQ may cut / lift (noLimitDb = no limit)
+        float maxBoostDb   = noLimitDb;
     };
 
     // STFT host for the perceptual model and the harmonic synth.

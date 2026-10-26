@@ -58,7 +58,9 @@ after, so Match never chases the quieter solo.
 
 After the two L/R FFTs, encode `M=(L+R)/2`, `S=(L-R)/2`. Each component gets its own model and
 harmonic synthesis, with separate EQ and Heat targets (Both / Mid / Side). EQ targeting includes
-Reveal, Smooth and Tilt; Heat targeting leaves its placement model active. Decode `L=M+S`,
+Reveal, Smooth, Tilt, Punch, the reference's match curve and (since 5.3.2; it was missed until then) the
+sidechain's Amount, so an untargeted component has no auto-EQ move at all; Heat targeting leaves its
+placement model active. Decode `L=M+S`,
 `R=M-S` before inverse FFT and overlap-add, so every audio FIFO stays L/R. A 40 ms spectral
 crossfade and smoothed routing amounts handle automation without reallocating or changing
 latency. Pre-onset harmonic guards are measured separately for Mid and Side. The existing
@@ -101,6 +103,16 @@ those bands are interpolated rather than independent measurements.
     then decays with ~50 ms. With Guard `g`: the auto-EQ gain (not Tilt) is scaled by `1 − g·T`,
     its time smoothing is slowed by the same factor (the curve doesn't chase hits), and the heat
     need is scaled by `1 − g·T` (no harmonics smeared over attacks).
+12. **Max cut / Max boost** (5.3.2; parameters `maxCut` / `maxBoost`, 0–24 dB, smoothed per frame like
+    the others). The band-smoothed target (step 8, before the time smoothing) is clamped to
+    [−Max cut, +Max boost], so the curve lets go as soon as the music does instead of first falling back
+    from beyond a limit; the time-smoothed curve is clamped again where it is used (before Guard's relax,
+    Tilt, Punch, Range and Paint), which limits a frozen curve, or one still beyond a limit just lowered,
+    without changing what is held (raising the limit gives it back whole). It covers the whole auto-EQ
+    target (Reveal, Smooth, the sidechain, the reference); Tilt and Punch are added after it. 24 dB is no
+    limit: the largest possible move is Smooth 9 + Make room 9 + Match 6 = 24 dB, so a limit there could
+    never act, and from 23.95 dB up (`isNoLimit`) neither clamp runs: bit-identical to 5.3.1. Mid/Side
+    components each clamp their own curve; the zero-latency filters apply the clamped curve.
 
 ### Reference match (4.0)
 

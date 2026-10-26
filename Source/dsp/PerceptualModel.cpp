@@ -388,6 +388,17 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
 
     boxSum (target.data(), targetSmoothed.data(), smoothHalf, true);
 
+    // 5.3.2 Max cut / Max boost. The target is held inside the limits, so the curve lets go as soon as
+    // the music does (no time spent above a limit first); the curve itself is limited again below, for
+    // a frozen curve or one still beyond a limit that was just lowered. No limit: neither runs.
+    const bool cutLimited = ! isNoLimit (s.maxCutDb), boostLimited = ! isNoLimit (s.maxBoostDb);
+    const bool limited = cutLimited || boostLimited;
+    const float lowest = cutLimited ? -std::max (0.0f, s.maxCutDb) : -noLimitDb;
+    const float highest = boostLimited ? std::max (0.0f, s.maxBoostDb) : noLimitDb;
+    if (limited)
+        for (auto& t : targetSmoothed)
+            t = std::clamp (t, lowest, highest);
+
     const float tauSlow = std::max (0.005f, s.responseMs * 0.001f);
     const float aSlow = 1.0f - std::exp (-1.0f / (tauSlow * fps));
     const float aFast = 1.0f - std::exp (-3.0f / (tauSlow * fps));
@@ -425,7 +436,8 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float tilt = std::clamp (s.tiltDbPerOct * bandOct[(size_t) b], -9.0f, 9.0f);
         // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
-        const float autoDb = guarded ? gain[(size_t) b] * relax : gain[(size_t) b];
+        const float g = limited ? std::clamp (gain[(size_t) b], lowest, highest) : gain[(size_t) b];
+        const float autoDb = guarded ? g * relax : g;
         // 5.0 Punch: attacks louder or softer in the bands they hit (up to 8 dB), like the rest of the
         // EQ inside Range and Paint. Punch 0 adds exactly 0, so the curve is unchanged.
         const float punchDb = s.punch * 8.0f * punchW[(size_t) b];

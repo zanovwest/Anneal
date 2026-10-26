@@ -192,6 +192,10 @@ int main (int argc, char* argv[])
               set (p, ids::ceiling, 2); set (p, ids::output, 6.0f); set (p, ids::heat, 60);
           }, 1200.0f, true },
         { "frozen", [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); set (p, ids::smooth, 70); }, 3150.0f, true },
+        { "limits", [] (AnnealAudioProcessor& p)   // 5.3.2: Max boost / Max cut, the pill and the display's lines
+          {
+              set (p, ids::reveal, 75); set (p, ids::smooth, 80); set (p, ids::maxBoost, 2); set (p, ids::maxCut, 3);
+          }, 3150.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
         { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat rests, the tag says so; 5.2.7 Punch works)
           {
