@@ -24,6 +24,8 @@ namespace anneal
         bool keyActive = false;      // 3.0: a sidechain mode is on and the key carries signal
         bool frozen = false;         // 3.0: the auto-EQ curve is held (Freeze)
         float scDb = 0.0f;           // 3.0: strongest sidechain move, dB (< 0 ducking, > 0 lifting)
+        float keyLoHz = 20.0f;       // 5.3.4: the part of the key that counts (20 Hz - 20 kHz = all of it)
+        float keyHiHz = 20000.0f;
         int refMode = 0;             // 4.0: Reference Off / Learn key / Match
         bool refValid = false;       // 4.0: a reference is loaded
         float refSeconds = 0.0f;     // 4.0: Learn key, seconds of key learned so far

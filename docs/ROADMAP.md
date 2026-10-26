@@ -20,9 +20,6 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
 Added by the 5.3.2 run (Next up was empty after item 18); reorder or drop freely:
 
-20. **Key range for the sidechain**: which part of the key counts (for example only a vocal's 1–5 kHz
-    presence), two Hz values in the Sidechain menu's row, full range by default (as today). Tests: a key
-    tone outside the key range ducks nothing, inside it ducks as before; full range bit-identical.
 21. **Peak hold on the display**: a faint line holding the output spectrum's peaks until clicked away, to
     see where a mix builds up over a whole song. A display toggle (its tooltip says how), off by default,
     no sound change. Tests: the held line never falls while playing, a click clears it, off draws nothing.
@@ -61,6 +58,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.4 (2026-10-26, every-minute update): **Key range for the sidechain** (item 20): which part of the key
+  counts, from a Key pill beside the Sidechain menu (shown while a mode is on; whole key, three ready ranges,
+  From / Up to), two host parameters (Sidechain Key Low / High). With 1–5 kHz a 300 Hz key ducks nothing and
+  2 kHz ducks as before, in Low, Mid/Side and Zero latency; the key's line on the display is faint outside
+  the range. The whole key (the default, and older projects) is bit-identical, also after moving it and back.
 - 5.3.3 (2026-10-25, every-minute update): **Tilt pivot** (item 19): where Tilt turns, 200 Hz – 5 kHz, a
   compact Pivot row under Tilt shown only while Tilt isn't 0 (Response and Guard now sit above Tilt, so the
   row comes and goes without moving anything). +1 dB/oct around 300 Hz: 0 dB at 300 Hz, +2 dB at 1.2 kHz, in

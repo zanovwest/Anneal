@@ -4,6 +4,57 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.4 — 2026-10-26 09:55
+
+New
+- **Key range for the sidechain**: you can now choose which part of the sidechain key counts. Until now the
+  whole key did: a vocal routed in to *Make room* on a bus ducked the bus wherever the vocal had energy,
+  its low end included. A **Key** pill beside the Sidechain menu sets the range.
+  - Example: a vocal key with the key range at 1–5 kHz ducks the bus only around the vocal's presence; its
+    body at 300 Hz no longer pulls the bus's low mids down. Set it "up to 150 Hz" and only a kick or bass in
+    the key does anything (*Unmask* likewise lifts only where that part of the key masks the track).
+  - The menu has *Whole key*, three ready ranges (Low end up to 150 Hz, Vocal presence 1–5 kHz, Highs above
+    5 kHz) and *From* / *Up to* steps. Choosing a From above the Up to (or the other way round) opens the
+    other end, so the range never crosses. The pill reads "Key: all", or "Key 1k–5k" with a range set.
+  - On the display, the key's violet line stays bright inside the range and goes faint outside it, so you see
+    which part of the key is acting.
+  - The pill only shows while a sidechain mode is on, next to the mode (the menu got narrower), so the deck
+    gains no row.
+  - It works everywhere the sidechain does: every latency mode, Zero latency and Mid/Side (with the EQ
+    routing). Learn key (Reference) still learns the whole key.
+  - Also two host parameters, "Sidechain Key Low" and "Sidechain Key High", automatable (type `1k`, `5 kHz`
+    or `all`). The whole key, 20 Hz – 20 kHz, is the default and what older projects open with, so they
+    sound exactly as before. Factory presets leave the key range as it is (like the routing).
+
+Fixes
+- None found this run. The bug pass looked at the sidechain path (processBlock's key bus, the model's key
+  term, Mid/Side routing), the dry path across latency switches, reset and prepare, the newest build log,
+  the benchmark and the rendered interface, and found nothing to fix.
+
+Tests: 214/214 acceptance checks, 5 new:
+- the model: with the key range at 1–5 kHz a 300 Hz key ducks the main 0.000 dB there (the whole key:
+  −9.00 dB) and 2 kHz −9.00 dB as before; *Unmask* with the key up to 150 Hz lifts a masked 2 kHz tone
+  0.000 dB (the whole key: +5.64 dB);
+- the whole key is bit-identical to before: the defaults are the open ends, and a key range moved to
+  1–5 kHz and back plays exactly like one that never moved (music with Reveal, Smooth and Make room on,
+  difference 0.000000000000);
+- through the plug-in's sidechain bus in Low, Mid/Side and Zero latency: with 1–5 kHz the main's 300 Hz is
+  untouched (0.00 dB) and 2 kHz ducks −9.0 dB; with the whole key both duck (−8.7 / −9.0 dB);
+- the parameters: "20 Hz" / "20.0 kHz" by default, typed values (`1k`, `all`), older projects open with the
+  whole key whatever the instance had, a saved range comes back, factory presets leave it alone;
+- the Key pill: hidden with the sidechain off, on the Sidechain menu's row while a mode is on, nothing
+  overlapping with everything shown, its menu items and texts, and the display drawing the range the
+  engine uses.
+
+28/28 host checks on the built VST3 (new: Sidechain Key Low / High through VST3: "20 Hz" / "20.0 kHz" by
+default, typed values; a key at 300 Hz and 2 kHz routed into the sidechain bus ducks the main −9.00 /
+−9.00 dB with the whole key and −0.00 / −9.00 dB with the key range at 1–5 kHz) and 25/25 setup checks
+pass. CPU: nothing with the sidechain off or the whole key (the window isn't computed); with a range set,
+one multiply per band while a sidechain mode is on. At 48 kHz / 64 samples Stereo Low 2.1 %, Precise
+4.6 %, Mid/Side Precise 7.9 % (5.3.3: 2.0 / 4.6 / 6.9 %, 5.3.2: 2.0 / 4.6 / 8.0 %: the machine was busier
+this time, Zero latency measured higher by the same amount, and none of these cases run new code); the
+slowest 0.1 % of blocks 8 / 13 / 21 % of the deadline, within the benchmark's usual spread.
+
 ## 5.3.3 — 2026-10-25 20:26
 
 New

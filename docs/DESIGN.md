@@ -40,7 +40,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 |---|---|---|
 | AUTO EQ | Reveal, Smooth | Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Response, Guard (transients), Tilt and its Pivot (5.3.3, shown while Tilt isn't 0) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
-| SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Amount (5.3: a compact row, shown while a mode is on) |
+| SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Key range (5.3.4: a pill beside the mode), Amount (5.3: a compact row); both shown while a mode is on |
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
 | SHAPE (5.0) | — | Punch, Width, Mono bass (compact rows, like Tilt / Response / Guard) |
 | OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
@@ -125,6 +125,15 @@ colour like Tilt. It shows only while Tilt isn't 0 (at 0 there is nothing to tur
 without moving anything, the stack beside Reveal and Smooth is now Response, Guard, Tilt, Pivot, 46 px apart
 (the rows' own height; they were 56 px apart with three), from y 442 to 626. Nothing on the display: the
 curve itself shows where Tilt crosses 0 dB. What the pivot does is in its tooltip.
+
+**Key range (5.3.4).** Which part of the sidechain key counts is a pill on the Sidechain menu's row, so the
+column gains no row: the mode menu is 100 px now and the Key pill (78 px) sits beside it, shown only while a
+mode is on. At rest it reads "Key: all" on a plain pill; with a range set, "Key 1k–5k" (or "Key < 150",
+"Key > 5k" with one end open) with the numbers in violet on a faintly violet pill. Its menu: *Whole key*,
+three ready ranges (Low end up to 150 Hz, Vocal presence 1–5 kHz, Highs above 5 kHz), then FROM and UP TO
+sections; a From above Up to (or the other way round) opens the other end, so the range never crosses. On
+the display the key's violet line stays at its full strength inside the range and drops to 25 % outside it,
+so you see which part of the key counts. What it does is in the pill's tooltip.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 

@@ -296,6 +296,13 @@ void SpectralEngine::smoothParameters() noexcept
     current.refMode = target.refMode;
     lg  (current.rangeLoHz, target.rangeLoHz);
     lg  (current.rangeHiHz, target.rangeHiHz);
+    // 5.3.4: the key range glides like Range and lands exactly (back at the ends, the whole key as before).
+    for (auto [v, t] : { std::pair { &current.scKeyLoHz, target.scKeyLoHz }, std::pair { &current.scKeyHiHz, target.scKeyHiHz } })
+    {
+        lg (*v, t);
+        if (std::abs (*v - t) <= 1.0e-4f * t)
+            *v = t;
+    }
     current.responseMs = target.responseMs;
     current.listen = target.listen;   // a switch per frame; the overlap-add fades it over one frame
     current.flavour = target.flavour; // likewise: the harmonic stream's overlap-add crossfades it
@@ -530,6 +537,8 @@ void SpectralEngine::runStage (int s) noexcept
         ms.freeze = current.freeze;
         ms.scMode = current.scMode;
         ms.scAmount = current.scAmount;
+        ms.scKeyLoHz = current.scKeyLoHz;
+        ms.scKeyHiHz = current.scKeyHiHz;
         ms.refMode = current.refMode;
         ms.refAmount = current.refAmount;
         ms.punch = current.punch;
@@ -634,6 +643,8 @@ void SpectralEngine::runStage (int s) noexcept
         f.cutDb = model.getMaxCutDb();
         f.midSide = msActive;
         f.keyActive = fw.keyHasSignal;
+        f.keyLoHz = current.scKeyLoHz;
+        f.keyHiHz = current.scKeyHiHz;
         f.scDb = msActive ? (std::abs (msModel[0].getSidechainPeakDb()) > std::abs (msModel[1].getSidechainPeakDb())
                                  ? msModel[0].getSidechainPeakDb() : msModel[1].getSidechainPeakDb())
                           : model.getSidechainPeakDb();

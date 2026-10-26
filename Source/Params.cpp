@@ -1,5 +1,5 @@
 #include "Params.h"
-#include "dsp/PerceptualModel.h"   // noLimitDb
+#include "dsp/PerceptualModel.h"   // noLimitDb, keyFullLoHz / keyFullHiHz
 
 namespace anneal
 {
@@ -338,6 +338,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         juce::NormalisableRange<float> r (200.0f, 5000.0f, 1.0f);
         r.setSkewForCentre (1000.0f);
         layout.add (std::make_unique<Float> (juce::ParameterID { ids::tiltPivot, 1 }, "Tilt Pivot", r, 1000.0f, hzAttr));
+    }
+
+    // 5.3.4 Key range: which part of the sidechain key counts (only a vocal's 1-5 kHz presence, say).
+    // 20 Hz - 20 kHz, the whole key, is the default and what older projects load with (as before). Typed
+    // text without a number ("all", "full", "off") opens that end.
+    auto keyEnd = [] (const char* id, const char* name, juce::NormalisableRange<float> r, float open)
+    {
+        return std::make_unique<Float> (juce::ParameterID { id, 1 }, name, r, open,
+            Attr().withLabel ("Hz")
+                  .withStringFromValueFunction ([] (float v, int) { return formatHz (v); })
+                  .withValueFromStringFunction ([open] (const juce::String& t)
+                  {
+                      return t.containsAnyOf ("0123456789") ? parseHz (t) : open;
+                  }));
+    };
+    {
+        juce::NormalisableRange<float> r (keyFullLoHz, 10000.0f, 1.0f);
+        r.setSkewForCentre (450.0f);
+        layout.add (keyEnd (ids::scKeyLo, "Sidechain Key Low", r, keyFullLoHz));
+    }
+    {
+        juce::NormalisableRange<float> r (50.0f, keyFullHiHz, 1.0f);
+        r.setSkewForCentre (1000.0f);
+        layout.add (keyEnd (ids::scKeyHi, "Sidechain Key High", r, keyFullHiHz));
     }
 
     return layout;

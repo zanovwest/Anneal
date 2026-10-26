@@ -216,6 +216,8 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pMaxCut     = apvts.getRawParameterValue (ids::maxCut);
     pMaxBoost   = apvts.getRawParameterValue (ids::maxBoost);
     pTiltPivot  = apvts.getRawParameterValue (ids::tiltPivot);
+    pScKeyLo    = apvts.getRawParameterValue (ids::scKeyLo);
+    pScKeyHi    = apvts.getRawParameterValue (ids::scKeyHi);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -467,6 +469,9 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.monoHz = pMonoBass->load() >= anneal::monoBassMinHz ? pMonoBass->load() : 0.0f;
     p.scMode = juce::jlimit (0, 2, juce::roundToInt (pScMode->load()));
     p.scAmount = pScAmount->load() * 0.01f;
+    // 5.3.4: crossed by automation, the key range works like Range (High at least 1.5 x Low).
+    p.scKeyLoHz = pScKeyLo->load();
+    p.scKeyHiHz = anneal::effectiveRangeHi (p.scKeyLoHz, pScKeyHi->load());
     p.refMode = juce::jlimit (0, 2, juce::roundToInt (pRefMode->load()));
     p.refAmount = pRefAmount->load() * 0.01f;
     p.maxCutDb = pMaxCut->load();
@@ -1074,6 +1079,8 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasMaxCut = tree.getChildWithProperty ("id", anneal::ids::maxCut).isValid();
             const bool hasMaxBoost = tree.getChildWithProperty ("id", anneal::ids::maxBoost).isValid();
             const bool hasTiltPivot = tree.getChildWithProperty ("id", anneal::ids::tiltPivot).isValid();
+            const bool hasScKeyLo = tree.getChildWithProperty ("id", anneal::ids::scKeyLo).isValid();
+            const bool hasScKeyHi = tree.getChildWithProperty ("id", anneal::ids::scKeyHi).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1169,6 +1176,14 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasTiltPivot)
                 if (auto* tp = apvts.getParameter (anneal::ids::tiltPivot))
                     tp->setValueNotifyingHost (tp->getDefaultValue());
+
+            // Projects saved before 5.3.4: the whole sidechain key counts, as it did then, whatever this
+            // instance had.
+            for (auto [id, present] : { std::pair { anneal::ids::scKeyLo, hasScKeyLo },
+                                       std::pair { anneal::ids::scKeyHi, hasScKeyHi } })
+                if (! present)
+                    if (auto* kp = apvts.getParameter (id))
+                        kp->setValueNotifyingHost (kp->getDefaultValue());
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

@@ -200,6 +200,11 @@ int main (int argc, char* argv[])
           {
               set (p, ids::tilt, 0.8f); set (p, ids::tiltPivot, 300.0f);
           }, 300.0f, true },
+        { "keyrange", [] (AnnealAudioProcessor& p)   // 5.3.4: Make room with the key range 2-5 kHz (the 1.2 kHz tone faint)
+          {
+              enableSidechain (p);
+              set (p, ids::scMode, 1); set (p, ids::scAmount, 80); set (p, ids::scKeyLo, 2000.0f); set (p, ids::scKeyHi, 5000.0f);
+          }, 3000.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
         { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat rests, the tag says so; 5.2.7 Punch works)
           {

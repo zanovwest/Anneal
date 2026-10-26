@@ -5892,6 +5892,293 @@ void testTiltPivot533()
     }
 }
 
+// 5.3.4: Key range for the sidechain. Only the part of the key inside it ducks (Make room) or lifts
+// (Unmask); the whole key, the default, is exactly as before.
+void testKeyRange534()
+{
+    section ("53. 5.3.4 Key range for the sidechain");
+    const double fs = 48000.0;
+    const auto main = pinkNoise (fs, 3.0, 0.03f, 21);
+    const int n = (int) main[0].size();
+    const auto keyTones = testsig::sines (fs, n, { { 300.0, 0.2 }, { 2000.0, 0.2 } });
+
+    // The model: Make room with a key at 300 Hz and 2 kHz. With the key range at 1-5 kHz the 300 Hz part
+    // ducks nothing and 2 kHz ducks as with the whole key; Unmask with the key up to 150 Hz lifts nothing
+    // at 2 kHz, where the whole key lifts.
+    {
+        float g[2][2] {};
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            auto p = neutral();
+            p.scMode = 1; p.scAmount = 1.0f;
+            if (i == 1) { p.scKeyLoHz = 1000.0f; p.scKeyHiHz = 5000.0f; }
+            e->setParameters (p);
+            runEngineWithKey (*e, main, keyTones, 512);
+            g[i][0] = bandGain (*e, 300.0);
+            g[i][1] = bandGain (*e, 2000.0);
+        }
+        float lift[2] {};
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            auto p = neutral();
+            p.scMode = 2; p.scAmount = 1.0f;
+            if (i == 1) p.scKeyHiHz = 150.0f;
+            e->setParameters (p);
+            runEngineWithKey (*e, testsig::sines (fs, n, { { 2000.0, 0.003 } }), pinkNoise (fs, 3.0, 0.2f, 33), 512);
+            lift[i] = bandGain (*e, 2000.0);
+        }
+        check (g[0][0] <= -3.0f && g[0][1] <= -3.0f && std::abs (g[1][0]) < 0.05f && std::abs (g[1][1] - g[0][1]) < 0.05f
+                   && lift[0] >= 1.0f && std::abs (lift[1]) < 0.05f,
+               "key range 1-5 kHz: a 300 Hz key ducks nothing, 2 kHz as before; Unmask up to 150 Hz lifts nothing at 2 kHz",
+               "Make room 300 Hz / 2 kHz: whole key " + db (g[0][0], 2) + " / " + db (g[0][1], 2) + ", 1-5 kHz " + db (g[1][0], 3)
+                   + " / " + db (g[1][1], 2) + "; Unmask at 2 kHz: whole key " + db (lift[0], 2) + ", up to 150 Hz " + db (lift[1], 3));
+    }
+
+    // The whole key is exactly as before: the defaults are the open ends, and a key range moved away and
+    // back lands exactly (music with Reveal, Smooth and Make room on; the key, silent while the range was
+    // away, plays from 2 s on): bit for bit the output of an engine that never moved it.
+    {
+        const auto in = testsig::musicLike (fs, 4.0, 7);
+        const int len = (int) in[0].size();
+        auto key = testsig::sines (fs, len, { { 300.0, 0.2 }, { 2000.0, 0.2 } });
+        for (auto& ch : key)
+            std::fill (ch.begin(), ch.begin() + 2 * (int) fs, 0.0f);
+        Channels outs[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::low);
+            auto p = neutral();
+            p.reveal = 0.6f; p.smooth = 0.6f; p.scMode = 1; p.scAmount = 1.0f;
+            auto moved = p;
+            moved.scKeyLoHz = 1000.0f; moved.scKeyHiHz = 5000.0f;
+            e->setParameters (i == 1 ? moved : p);
+            outs[i] = in;
+            bool back = i == 0;
+            for (int pos = 0; pos < len; pos += 512)
+            {
+                if (! back && pos >= (int) fs)
+                {
+                    e->setParameters (p);
+                    back = true;
+                }
+                const int b = std::min (512, len - pos);
+                float* ptrs[2] = { outs[i][0].data() + pos, outs[i][1].data() + pos };
+                const float* k[2] = { key[0].data() + pos, key[1].data() + pos };
+                e->process (ptrs, 2, b, k, 2);
+            }
+        }
+        double worst = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = 0; k < outs[0][(size_t) c].size(); ++k)
+                worst = std::max (worst, (double) std::abs (outs[0][(size_t) c][k] - outs[1][(size_t) c][k]));
+        Rig d;
+        const anneal::EngineParams ep;
+        const anneal::ModelSettings ms;
+        const float lo = d.proc->apvts.getRawParameterValue (ids::scKeyLo)->load();
+        const float hi = d.proc->apvts.getRawParameterValue (ids::scKeyHi)->load();
+        const bool open = ep.scKeyLoHz == 20.0f && ep.scKeyHiHz == 20000.0f && ms.scKeyLoHz == 20.0f && ms.scKeyHiHz == 20000.0f
+                          && lo == 20.0f && hi == 20000.0f && anneal::keyLoIsOpen (lo) && anneal::keyHiIsOpen (anneal::effectiveRangeHi (lo, hi));
+        check (worst == 0.0 && open, "the whole key bit-identical to before (also back from 1-5 kHz)",
+               "max diff " + juce::String (worst, 12) + (open ? ", defaults 20 Hz - 20 kHz" : ", DEFAULTS NOT OPEN"));
+    }
+
+    // Through the plug-in's sidechain bus, in Low, Mid/Side and at Zero latency: the key range 1-5 kHz
+    // leaves the main's 300 Hz alone and ducks 2 kHz; the whole key ducks both.
+    {
+        juce::String log;
+        bool ok = true;
+        for (int mode = 0; mode < 3; ++mode)
+            for (int ranged = 0; ranged < 2; ++ranged)
+            {
+                Rig r;
+                juce::AudioProcessor::BusesLayout l;
+                l.inputBuses.add (juce::AudioChannelSet::stereo());
+                l.inputBuses.add (juce::AudioChannelSet::stereo());
+                l.outputBuses.add (juce::AudioChannelSet::stereo());
+                const bool accepted = r.proc->setBusesLayout (l);
+                r.setNeutral();
+                r.set (ids::scMode, 1.0f);
+                r.set (ids::scAmount, 100.0f);
+                if (ranged == 1)
+                {
+                    r.set (ids::scKeyLo, 1000.0f);
+                    r.set (ids::scKeyHi, 5000.0f);
+                }
+                if (mode == 1)
+                    r.set (ids::stereoMode, 1.0f);
+                if (mode == 2)
+                    r.set (ids::zeroLatency, 1.0f);
+                r.prepare (fs, 512);
+                juce::AudioBuffer<float> buf (4, 512);
+                juce::MidiBuffer midi;
+                Channels out = main;
+                for (int pos = 0; pos + 512 <= n; pos += 512)
+                {
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                        buf.copyFrom (c + 2, 0, keyTones[(size_t) c].data() + pos, 512);
+                    }
+                    r.proc->processBlock (buf, midi);
+                    for (int c = 0; c < 2; ++c)
+                        std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + 512, out[(size_t) c].data() + pos);
+                }
+                const int lat = r.proc->getLatencySamples();
+                double change[2];
+                for (int t = 0; t < 2; ++t)
+                {
+                    const double f = t == 0 ? 300.0 : 2000.0;
+                    change[t] = toDb ((testsig::toneAmplitude (out[0].data() + n / 2 + lat, n / 3, f, fs) + 1.0e-12)
+                                      / (testsig::toneAmplitude (main[0].data() + n / 2, n / 3, f, fs) + 1.0e-12));
+                }
+                ok = ok && accepted && (mode != 2 || lat == 0) && change[1] < -2.0
+                     && (ranged == 1 ? std::abs (change[0]) < 0.3 : change[0] < -2.0);
+                log << (mode == 0 ? "Low" : mode == 1 ? "Mid/Side" : "Zero") << (ranged == 1 ? " 1-5 kHz " : " whole key ")
+                    << db (change[0], 2) << " / " << db (change[1], 2) << "  ";
+            }
+        check (ok, "through the plug-in: the key range in Low, Mid/Side and at Zero latency", "main at 300 Hz / 2 kHz: " + log);
+    }
+
+    // The parameters: "20 Hz" and "20.0 kHz" by default, typed values ("1k", "all"), older projects open
+    // with the whole key (whatever this instance had), a project keeps its range, factory presets leave it.
+    {
+        Rig r;
+        auto* lp = r.proc->apvts.getParameter (ids::scKeyLo);
+        auto* hp = r.proc->apvts.getParameter (ids::scKeyHi);
+        auto raw = [] (Rig& x, const char* id) { return x.proc->apvts.getRawParameterValue (id)->load(); };
+        const bool texts = lp->getCurrentValueAsText() == "20 Hz" && hp->getCurrentValueAsText() == "20.0 kHz"
+                           && std::abs (lp->convertFrom0to1 (lp->getValueForText ("1k")) - 1000.0f) < 0.5f
+                           && std::abs (hp->convertFrom0to1 (hp->getValueForText ("5 kHz")) - 5000.0f) < 0.5f
+                           && lp->convertFrom0to1 (lp->getValueForText ("all")) == 20.0f
+                           && hp->convertFrom0to1 (hp->getValueForText ("full")) == 20000.0f
+                           && lp->getName (32) == "Sidechain Key Low" && hp->getName (32) == "Sidechain Key High"
+                           && lp->isAutomatable() && hp->isAutomatable();
+
+        auto old = r.proc->apvts.copyState();
+        for (auto id : { ids::scKeyLo, ids::scKeyHi })
+            old.removeChild (old.getChildWithProperty ("id", id), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::scKeyLo, 1000.0f);
+        b.set (ids::scKeyHi, 5000.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        const bool oldOpen = raw (b, ids::scKeyLo) == 20.0f && raw (b, ids::scKeyHi) == 20000.0f;
+
+        Rig c;
+        c.set (ids::scKeyLo, 1000.0f);
+        c.set (ids::scKeyHi, 5000.0f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = std::abs (raw (d, ids::scKeyLo) - 1000.0f) < 0.5f && std::abs (raw (d, ids::scKeyHi) - 5000.0f) < 0.5f;
+        d.proc->setCurrentProgram (2);
+        const bool presetKeeps = std::abs (raw (d, ids::scKeyLo) - 1000.0f) < 0.5f && std::abs (raw (d, ids::scKeyHi) - 5000.0f) < 0.5f;
+        check (texts && oldOpen && kept && presetKeeps, "Sidechain Key Low / High: texts, older projects, saved, presets",
+               "defaults " + lp->getCurrentValueAsText() + " / " + hp->getCurrentValueAsText() + ", older project -> "
+                   + juce::String (raw (b, ids::scKeyLo), 0) + " / " + juce::String (raw (b, ids::scKeyHi), 0) + " Hz, saved -> "
+                   + juce::String (raw (d, ids::scKeyLo), 0) + " / " + juce::String (raw (d, ids::scKeyHi), 0) + " Hz"
+                   + (presetKeeps ? ", a preset leaves it" : ", A PRESET CHANGED IT"));
+    }
+
+    // The Key pill: hidden while the sidechain is off, on the Sidechain menu's row inside the column
+    // while a mode is on (5.3 calmer deck), nothing overlapping with everything shown; its menu items and
+    // texts; the display draws the range the engine uses.
+    {
+        Rig r;
+        juce::AudioProcessor::BusesLayout l;
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.outputBuses.add (juce::AudioChannelSet::stereo());
+        r.proc->setBusesLayout (l);
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::KeyRangeMenu* menu = nullptr;
+        juce::Component* scMenu = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+            {
+                if (auto* m = dynamic_cast<anneal::KeyRangeMenu*> (c))
+                    menu = m;
+                if (auto* m = dynamic_cast<anneal::RoutingMenu*> (c); m != nullptr && m->getTooltip().startsWith ("Sidechain:"))
+                    scMenu = c;
+            }
+        if (menu == nullptr || scMenu == nullptr)
+        {
+            check (false, "the Key pill on the Sidechain row", "missing");
+            return;
+        }
+        auto& content = editor->getContent();
+        content.tick (0.0f);
+        const bool hiddenAtRest = ! menu->isVisible();
+        r.set (ids::scMode, 1.0f);
+        r.set (ids::stereoMode, 1.0f);
+        r.set (ids::refMode, 2.0f);
+        r.set (ids::tilt, 0.5f);
+        content.tick (0.0f);
+        const bool shown = menu->isVisible();
+        juce::String overlaps;
+        auto kids = content.getChildren();
+        for (int i = 0; i < kids.size(); ++i)
+            for (int j = i + 1; j < kids.size(); ++j)
+                if (kids[i]->isVisible() && kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
+                    overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
+        const bool placed = menu->getY() == scMenu->getY() && menu->getX() > scMenu->getRight() && menu->getRight() < 1032
+                            && scMenu->getX() > 832;
+
+        auto raw = [&r] (const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+        const auto atRest = anneal::KeyRangeMenu::pillText (raw (ids::scKeyLo), raw (ids::scKeyHi));
+        menu->choose (3);     // Vocal presence (1-5 kHz)
+        const bool vocal = raw (ids::scKeyLo) == 1000.0f && raw (ids::scKeyHi) == 5000.0f;
+        const auto vocalText = anneal::KeyRangeMenu::pillText (menu->getLoHz(), menu->getHiHz());
+
+        // The display: half a second of audio with a key, then the range the key's line is bright in.
+        r.prepare (fs, 512);
+        {
+            juce::AudioBuffer<float> buf (4, 512);
+            juce::MidiBuffer midi;
+            for (int pos = 0; pos + 512 <= (int) fs / 2; pos += 512)
+            {
+                for (int c = 0; c < 2; ++c)
+                {
+                    buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                    buf.copyFrom (c + 2, 0, keyTones[(size_t) c].data() + pos, 512);
+                }
+                r.proc->processBlock (buf, midi);
+            }
+        }
+        content.screen.refreshNow();
+        const auto drawn = content.screen.getShownKeyRangeHz();
+
+        menu->choose (106);   // From 2 kHz (102 = 100 Hz ... 106 = 2 kHz)
+        menu->choose (204);   // Up to 800 Hz: below From, so From opens
+        const auto crossed = anneal::KeyRangeMenu::pillText (raw (ids::scKeyLo), raw (ids::scKeyHi));
+        const bool crossedOk = raw (ids::scKeyLo) == 20.0f && raw (ids::scKeyHi) == 800.0f;
+        menu->choose (1);
+        const bool whole = raw (ids::scKeyLo) == 20.0f && raw (ids::scKeyHi) == 20000.0f;
+        r.set (ids::scMode, 0.0f);
+        content.tick (0.0f);
+        const bool hiddenAgain = ! menu->isVisible();
+        const auto dash = juce::String::fromUTF8 ("\xe2\x80\x93");
+        check (hiddenAtRest && shown && placed && overlaps.isEmpty() && hiddenAgain && atRest == "Key: all" && vocal
+                   && vocalText == "Key 1k" + dash + "5k" && crossedOk && crossed == "Key < 800" && whole
+                   && anneal::KeyRangeMenu::pillText (5000.0f, 20000.0f) == "Key > 5k"
+                   && anneal::KeyRangeMenu::pillText (2500.0f, 12000.0f) == "Key 2.5k" + dash + "12k"
+                   && std::abs (drawn.x - 1000.0f) < 1.0f && std::abs (drawn.y - 5000.0f) < 1.0f,
+               "the Key pill on the Sidechain row, only while a mode is on",
+               menu->getBounds().toString() + " beside " + scMenu->getBounds().toString() + "; \"" + atRest + "\", \"" + vocalText
+                   + "\", crossed \"" + crossed + "\"; display " + juce::String (drawn.x, 0) + " - " + juce::String (drawn.y, 0)
+                   + " Hz; " + (hiddenAtRest && hiddenAgain ? "hidden with the sidechain off" : "SHOWN WITH THE SIDECHAIN OFF")
+                   + (overlaps.isEmpty() ? juce::String (", no overlaps") : ", overlaps " + overlaps));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -5910,7 +6197,7 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testTiltPivot533();
+        testKeyRange534();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -5968,6 +6255,7 @@ int main (int argc, char** argv)
     testFixes532();
     testLimits532();
     testTiltPivot533();
+    testKeyRange534();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

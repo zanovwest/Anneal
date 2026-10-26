@@ -41,6 +41,8 @@ namespace anneal::ids
     inline constexpr const char* maxCut      = "maxCut";      // 5.3.2: how far the auto EQ may cut, dB (24 = no limit, as before)
     inline constexpr const char* maxBoost    = "maxBoost";    // 5.3.2: how far the auto EQ may lift, dB (24 = no limit, as before)
     inline constexpr const char* tiltPivot   = "tiltPivot";   // 5.3.3: where Tilt turns, Hz (1 kHz = as before)
+    inline constexpr const char* scKeyLo     = "scKeyLo";     // 5.3.4: the sidechain key counts from here, Hz (20 = as before)
+    inline constexpr const char* scKeyHi     = "scKeyHi";     // 5.3.4: ... up to here, Hz (20 kHz = as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.

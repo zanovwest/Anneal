@@ -94,6 +94,8 @@ namespace anneal
         float xForHz (float hz) const noexcept;
         // 5.3.2: the Max boost / Max cut lines drawn on the EQ lane, dB (24 = no limit, no line).
         juce::Point<float> getShownLimitsDb() const noexcept { return { maxBoostDb, maxCutDb }; }
+        // 5.3.4: the key range the key's line is drawn bright in, Hz (20 Hz - 20 kHz = all of it).
+        juce::Point<float> getShownKeyRangeHz() const noexcept { return { keyLoHz, keyHiHz }; }
 
     private:
         enum class Handle { none, lo, hi };
@@ -134,6 +136,7 @@ namespace anneal
         // content reads as a flowing line rather than one-ERB-wide plateaus. Display only.
         std::array<float, nb> inView {}, outView {}, heatView {};
         std::array<float, nb> keyDb {}, keyView {};   // sidechain key (3.0)
+        float keyLoHz = 20.0f, keyHiHz = 20000.0f;    // 5.3.4: the part of the key that counts
         std::array<float, nb> attack {};               // 5.0: attack per band, 0..1 (held briefly)
         std::array<float, nb> sideRel {}, sideRelView {}; // 5.2.3: the stereo image (Side vs Mid, dB)
         bool stereoImage = false;

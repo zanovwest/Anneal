@@ -6,6 +6,7 @@
 #include "ui/FlavourMenu.h"
 #include "ui/HarmonicGraph.h"
 #include "ui/IconButton.h"
+#include "ui/KeyRangeMenu.h"
 #include "ui/Knob.h"
 #include "ui/LatencyMenu.h"
 #include "ui/LimitMenu.h"
@@ -69,6 +70,7 @@ private:
     std::unique_ptr<juce::AlertWindow> presetDialog;
     anneal::LimitMenu limits;   // 5.3.2 Max boost / Max cut, on the AUTO EQ title row
     anneal::Knob tiltPivot;     // 5.3.3, a compact row under Tilt, shown while Tilt isn't 0
+    anneal::KeyRangeMenu keyRange;   // 5.3.4, beside the Sidechain menu, shown while a sidechain mode is on
 
 public:
     anneal::LoudnessReadout loudness;   // 5.3.1, in the header beside MATCH

@@ -98,13 +98,14 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       limits (p.apvts, ids::maxBoost, ids::maxCut),
       tiltPivot (p.apvts, ids::tiltPivot, "Pivot", colour::muted, Size::secondary, false, {},
                  "Pivot: the frequency Tilt turns around. It stays at 0 dB there; above it Tilt lifts (or cuts) more and "
-                 "more, below it the opposite. Shown while Tilt isn't 0. 1 kHz = as before")
+                 "more, below it the opposite. Shown while Tilt isn't 0. 1 kHz = as before"),
+      keyRange (p.apvts, ids::scKeyLo, ids::scKeyHi)
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
              &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton,
-             &punch, &width, &monoBass, &loudness, &limits, &tiltPivot })
+             &punch, &width, &monoBass, &loudness, &limits, &tiltPivot, &keyRange })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
@@ -235,8 +236,10 @@ void AnnealEditorContent::resized()
     focus.setBounds (684, 546, 134, 53);
 
     // 5.3: SIDECHAIN over REFERENCE (4.0) in one column, each its mode and, while that is on, a
-    // compact Amount row; what they are doing reads beside their titles.
-    scMode.setBounds (keyX - 4, 438, 176, 26);
+    // compact Amount row; what they are doing reads beside their titles. 5.3.4: the Key range pill
+    // shares the Sidechain menu's row (shown while a mode is on).
+    scMode.setBounds (keyX - 4, 438, 100, 26);
+    keyRange.setBounds (keyX + 102, 438, 78, 26);
     scAmount.setBounds (keyX - 2, 470, 172, smallH);
     refMenu.setBounds (keyX - 4, refTitleY + 20, 176, 26);
     refAmount.setBounds (keyX - 2, refTitleY + 52, 172, smallH);
@@ -396,6 +399,7 @@ void AnnealEditorContent::updateActivity()
     else                                             show (scAmount, scStatus, titleY, std::abs (a.scDb) / (sc == 1 ? 9.0f : 6.0f),
                                                            (a.scDb < 0.0f ? "ducking " : "lifting ") + signedDb (a.scDb) + " dB");
     scAmount.setVisible (sc != 0);
+    keyRange.setVisible (sc != 0);
 
     // 4.0 Reference: what Learn key has learned, or how far Match is steering right now.
     const int rm = juce::roundToInt (param (ids::refMode));

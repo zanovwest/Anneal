@@ -148,7 +148,7 @@ int main (int argc, char* argv[])
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
-                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot" })
+                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -972,6 +972,85 @@ int main (int argc, char* argv[])
         check (ok, "Tilt Pivot through VST3",
                texts + "; Tilt +1 dB/oct, 300 Hz / 1.2 kHz: around 1 kHz " + juce::String (g[0][0], 2) + " / " + juce::String (g[0][1], 2)
                    + " dB, around 300 Hz " + juce::String (g[1][0], 2) + " / " + juce::String (g[1][1], 2) + " dB");
+    }
+
+    // 12. 5.3.4 Sidechain Key Low / High through VST3: automatable, "20 Hz" / "20.0 kHz" by default, typed
+    //     values; a key at 300 Hz and 2 kHz routed into the sidechain bus (Make room) ducks the main at both
+    //     with the whole key, and only at 2 kHz with the key range 1-5 kHz.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* keyLo = inst != nullptr ? findParam (*inst, "Sidechain Key Low") : nullptr;
+        auto* keyHi = inst != nullptr ? findParam (*inst, "Sidechain Key High") : nullptr;
+        bool ok = keyLo != nullptr && keyHi != nullptr && keyLo->isAutomatable() && keyHi->isAutomatable();
+        juce::String texts;
+        double change[2][2] {};
+        if (ok)
+        {
+            texts << keyLo->getText (keyLo->getValue(), 32) << " - " << keyHi->getText (keyHi->getValue(), 32);
+            ok = keyLo->getText (keyLo->getValue(), 32) == "20 Hz" && keyHi->getText (keyHi->getValue(), 32) == "20.0 kHz"
+                 && keyLo->getText (keyLo->getValueForText ("1k"), 32) == "1.00 kHz" && keyHi->getText (keyHi->getValueForText ("5 kHz"), 32) == "5.00 kHz"
+                 && keyLo->getText (keyLo->getValueForText ("all"), 32) == "20 Hz";
+            auto layout = inst->getBusesLayout();
+            ok = ok && inst->getBusCount (true) == 2;
+            if (ok)
+            {
+                layout.inputBuses.getReference (1) = juce::AudioChannelSet::stereo();
+                ok = inst->setBusesLayout (layout);
+            }
+            if (ok)
+            {
+                const double fs = 48000.0;
+                inst->setRateAndBufferSizeDetails (fs, 512);
+                inst->prepareToPlay (fs, 512);
+                findParam (*inst, "Sidechain")->setValueNotifyingHost (0.5f);   // Make room
+                findParam (*inst, "Sidechain Amount")->setValueNotifyingHost (1.0f);
+                const int n = 3 * (int) fs;
+                const auto main = testsig::sines (fs, n, { { 300.0, 0.03 }, { 2000.0, 0.03 } });
+                const auto key = testsig::sines (fs, n, { { 300.0, 0.2 }, { 2000.0, 0.2 } });
+                auto runWith = [&] (bool withKey)
+                {
+                    inst->reset();
+                    testsig::Channels o = main;
+                    juce::AudioBuffer<float> buf (4, 512);
+                    juce::MidiBuffer midi;
+                    for (int pos = 0; pos + 512 <= n; pos += 512)
+                    {
+                        for (int c = 0; c < 2; ++c)
+                        {
+                            buf.copyFrom (c, 0, main[(size_t) c].data() + pos, 512);
+                            if (withKey) buf.copyFrom (c + 2, 0, key[(size_t) c].data() + pos, 512);
+                            else         buf.clear (c + 2, 0, 512);
+                        }
+                        inst->processBlock (buf, midi);
+                        for (int c = 0; c < 2; ++c)
+                            std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + 512, o[(size_t) c].data() + pos);
+                    }
+                    return o;
+                };
+                const auto dry = runWith (false);
+                for (int i = 0; i < 2; ++i)
+                {
+                    if (i == 1)
+                    {
+                        keyLo->setValueNotifyingHost (keyLo->getValueForText ("1 kHz"));
+                        keyHi->setValueNotifyingHost (keyHi->getValueForText ("5 kHz"));
+                    }
+                    const auto keyed = runWith (true);
+                    for (int t = 0; t < 2; ++t)
+                    {
+                        const double f = t == 0 ? 300.0 : 2000.0;
+                        change[i][t] = testsig::toDb ((testsig::toneAmplitude (keyed[0].data() + n / 2, n / 3, f, fs) + 1.0e-12)
+                                                      / (testsig::toneAmplitude (dry[0].data() + n / 2, n / 3, f, fs) + 1.0e-12));
+                    }
+                }
+                inst->releaseResources();
+                ok = change[0][0] < -2.0 && change[0][1] < -2.0 && std::abs (change[1][0]) < 0.3 && change[1][1] < -2.0;
+            }
+        }
+        check (ok, "Sidechain Key Low / High through VST3",
+               texts + "; key at 300 Hz / 2 kHz ducks the main: whole key " + juce::String (change[0][0], 2) + " / "
+                   + juce::String (change[0][1], 2) + " dB, key range 1-5 kHz " + juce::String (change[1][0], 2) + " / "
+                   + juce::String (change[1][1], 2) + " dB");
     }
 
     plugin->releaseResources();

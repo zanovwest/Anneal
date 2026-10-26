@@ -14,6 +14,13 @@ namespace anneal
     inline constexpr float noLimitDb = 24.0f;
     inline bool isNoLimit (float db) noexcept { return db >= noLimitDb - 0.05f; }
 
+    // 5.3.4 Key range: the part of the sidechain key that counts. Its ends are the model's own 20 Hz and
+    // 20 kHz; at an end the range has no edge on that side, and with both there (the whole key, the
+    // default) the model doesn't even look (bit-identical to before).
+    inline constexpr float keyFullLoHz = 20.0f, keyFullHiHz = 20000.0f;
+    inline bool keyLoIsOpen (float hz) noexcept { return hz <= keyFullLoHz + 0.5f; }
+    inline bool keyHiIsOpen (float hz) noexcept { return hz >= keyFullHiHz - 50.0f; }
+
     struct ModelSettings
     {
         float reveal       = 0.0f;     // 0..1, lift bands in a masking shadow
@@ -29,6 +36,8 @@ namespace anneal
         bool freeze        = false;    // hold the auto-EQ curve where it is (3.0)
         int scMode         = 0;        // sidechain: 0 off, 1 make room (duck where the key needs space), 2 unmask
         float scAmount     = 0.5f;     // 0..1
+        float scKeyLoHz    = keyFullLoHz;   // 5.3.4: the key counts only from here ...
+        float scKeyHiHz    = keyFullHiHz;   // ... to here (both at the ends = the whole key, as before)
         int refMode        = refOff;   // 4.0 reference: off / learn the key / match (ReferenceMode)
         float refAmount    = 0.5f;     // 0..1
         float maxCutDb     = noLimitDb;   // 5.3.2: how far the auto EQ may cut / lift, dB (noLimitDb = no limit)

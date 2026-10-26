@@ -39,6 +39,8 @@ namespace anneal
         bool freeze        = false;          // hold the auto-EQ curve
         int scMode         = 0;              // sidechain: 0 off, 1 make room, 2 unmask
         float scAmount     = 0.5f;
+        float scKeyLoHz    = keyFullLoHz;    // 5.3.4: the part of the key that counts (the ends = the whole key)
+        float scKeyHiHz    = keyFullHiHz;
         int refMode        = refOff;         // 4.0 reference: off / learn the key / match
         float refAmount    = 0.5f;
         float punch        = 0.0f;           // 5.0: -1..1 (0 = off)

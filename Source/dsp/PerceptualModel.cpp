@@ -347,6 +347,12 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         toDb (keyAudDb.data(), keyAudDb.data(), numBands);
     }
 
+    // 5.3.4 Key range: only the key inside it ducks or lifts, with edges a quarter Cam either side like
+    // Range's; outside it the sidechain moves nothing. The whole key (both ends open): not looked at.
+    const bool keyLoEdge = keyOn && ! keyLoIsOpen (s.scKeyLoHz), keyHiEdge = keyOn && ! keyHiIsOpen (s.scKeyHiHz);
+    const double zKeyLo = keyLoEdge ? erb::hzToCam (s.scKeyLoHz) : z0;
+    const double zKeyHi = keyHiEdge ? std::max (keyLoEdge ? zKeyLo + 0.5 : z0, erb::hzToCam (s.scKeyHiHz)) : z0;
+
     sidePeakDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
@@ -373,6 +379,14 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
             else
                 side = s.scAmount * std::min (6.0f, 0.5f * std::max (0.0f, rel - 3.0f))
                      * clamp01 ((30.0f - rel) / 12.0f) * audible * keyAudible;
+            if (keyLoEdge || keyHiEdge)
+            {
+                const double z = z0 + b * dz;
+                if (keyLoEdge)
+                    side *= smoothstep ((float) ((z - (zKeyLo - 0.25)) / 0.5));
+                if (keyHiEdge)
+                    side *= smoothstep ((float) (((zKeyHi + 0.25) - z) / 0.5));
+            }
         }
 
         // Reference match: like Reveal, nothing is moved where the main is inaudible.

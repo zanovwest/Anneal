@@ -117,6 +117,17 @@ those bands are interpolated rather than independent measurements.
     limit: the largest possible move is Smooth 9 + Make room 9 + Match 6 = 24 dB, so a limit there could
     never act, and from 23.95 dB up (`isNoLimit`) neither clamp runs: bit-identical to 5.3.1. Mid/Side
     components each clamp their own curve; the zero-latency filters apply the clamped curve.
+13. **Key range** (5.3.4; parameters `scKeyLo` 20 Hz – 10 kHz and `scKeyHi` 50 Hz – 20 kHz, crossed
+    automation kept apart like Range: High at least 1.5 × Low). The sidechain's move per band (Make room's
+    duck, Unmask's lift; step 7's target, before the smoothing) is multiplied by a window over the key range
+    with edges like Range's: smoothstep over ±0.25 Cam around each end. So the key counts only there:
+    outside it the sidechain moves nothing (a 300 Hz key with the range at 1–5 kHz: 0.000 dB), inside it
+    exactly as before. An end at 20 Hz or 20 kHz (`keyLoIsOpen` ≤ 20.5 Hz, `keyHiIsOpen` ≥ 19.95 kHz) has no
+    edge, and with both open (the default, and older projects) the window isn't computed: bit-identical to
+    5.3.3. The engine glides both ends in log-frequency like Range (40 ms, per frame) and sets each exactly
+    once within 0.01 %, so a range moved back to the whole key is exact again. It applies in every latency
+    mode, Mid/Side (each component, by the EQ routing as before) and at zero latency (the analysis engine's
+    curve); Learn key (Reference) always learns the whole key.
 
 ### Reference match (4.0)
 

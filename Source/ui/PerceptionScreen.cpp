@@ -195,6 +195,8 @@ void PerceptionScreen::timerCallback()
         dz = f->dz;
         midSide = f->midSide;
         keyActive = f->keyActive;
+        keyLoHz = f->keyLoHz;
+        keyHiHz = f->keyHiHz;
         frozen = f->frozen;
         activity.matchDb = std::abs (f->matchDb) >= std::abs (activity.matchDb) ? f->matchDb
                          : activity.matchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
@@ -272,6 +274,8 @@ void PerceptionScreen::refreshNow()
         std::copy (f->sideGainDb, f->sideGainDb + nb, sideGainDb.begin());
         midSide = f->midSide;
         keyActive = f->keyActive;
+        keyLoHz = f->keyLoHz;
+        keyHiHz = f->keyHiHz;
         frozen = f->frozen;
         std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
         activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid, f->punchDb };
@@ -374,8 +378,19 @@ void PerceptionScreen::paintSpectrum (juce::Graphics& g)
             if (b == 0) keyLine.startNewSubPath (x, y);
             else        keyLine.lineTo (x, y);
         }
+        const juce::PathStrokeType stroke (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        // 5.3.4 Key range: the key counts only inside it, so outside it its line is faint.
+        const bool loEdge = ! keyLoIsOpen (keyLoHz), hiEdge = ! keyHiIsOpen (keyHiHz);
+        if (loEdge || hiEdge)
+        {
+            g.setColour (colour::violet.withAlpha (0.25f));
+            g.strokePath (keyLine, stroke);
+            const float xl = loEdge ? xForCam (erb::hzToCam (keyLoHz)) : lane.getX();
+            const float xh = hiEdge ? xForCam (erb::hzToCam (keyHiHz)) : lane.getRight();
+            g.reduceClipRegion (juce::Rectangle<float> (xl, lane.getY(), std::max (0.0f, xh - xl), lane.getHeight()).toNearestInt());
+        }
         g.setColour (colour::violet.withAlpha (0.85f));
-        g.strokePath (keyLine, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (keyLine, stroke);
     }
 }
 
