@@ -33,7 +33,7 @@ namespace
 }
 
 AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
-    : screen (p.getDisplay(), p.apvts),
+    : screen (p.getDisplay(), p.apvts, &p.displayPeakHold),
       processor (p),
       reveal   (p.apvts, ids::reveal,   "Reveal",   colour::straw,  Size::primary,   false, "lifts masked detail",
                 "Reveal: lifts bands that sit in the masking shadow of louder neighbours"),

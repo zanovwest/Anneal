@@ -56,8 +56,8 @@ namespace
     }
 }
 
-PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::AudioProcessorValueTreeState& state)
-    : source (src)
+PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::AudioProcessorValueTreeState& state, PeakHold* keep)
+    : source (src), peak (keep != nullptr ? keep : &ownPeak)
 {
     inDb.fill (floorDb);
     outDb.fill (floorDb);
@@ -99,6 +99,16 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
             (*attachment)->sendInitialUpdate();
         }
 
+    // 5.3.5 Peak hold: a small pill in the top right corner, above the dB scale.
+    holdButton.setClickingTogglesState (true);
+    holdButton.setColour (juce::TextButton::buttonOnColourId, colour::text);
+    holdButton.setTooltip ("Peak hold: a faint dotted line keeps the output's highest level at each frequency, to show "
+                           "where a mix builds up over a whole song. Click the spectrum to clear it. The sound doesn't change");
+    holdButton.setTitle ("Peak hold");
+    holdButton.setToggleState (peak->on, juce::dontSendNotification);
+    holdButton.onClick = [this] { setPeakHold (holdButton.getToggleState()); };
+    addAndMakeVisible (holdButton);
+
     setPaintMode (false);   // sets the tooltip
     startTimerHz (refreshHz);
 }
@@ -118,6 +128,10 @@ void PerceptionScreen::resized()
     mainLane = plot.withTrimmedBottom (heatH + widthH + 2.0f * gap);
     widthLane = plot.withTop (mainLane.getBottom() + gap).withHeight (widthH);
     heatLane = plot.withTop (widthLane.getBottom() + gap);
+
+    // 5.3.5: in the gutter's top corner, level with the range grips (clear of the High grip at 20 kHz).
+    holdButton.setBounds (juce::Rectangle<float> (plot.getRight() + 7.0f, plot.getY() - 22.0f,
+                                                  r.getRight() - 4.0f - (plot.getRight() + 7.0f), 18.0f).toNearestInt());
 }
 
 float PerceptionScreen::xForCam (double cam) const noexcept
@@ -256,6 +270,7 @@ void PerceptionScreen::timerCallback()
     if (changed)
     {
         updateViews();
+        holdPeaks();
         updateReferenceOffset (false);
         repaint();
     }
@@ -289,9 +304,86 @@ void PerceptionScreen::refreshNow()
             sideRel.fill (-200.0f);
         haveFrame = true;
         updateViews();
+        holdPeaks();
         updateReferenceOffset (true);
         repaint();
     }
+}
+
+//==============================================================================
+// 5.3.5 Peak hold
+
+void PerceptionScreen::setPeakHold (bool on)
+{
+    holdButton.setToggleState (on, juce::dontSendNotification);
+    if (on == peak->on)
+        return;
+    peak->on = on;
+    peak->have = false;   // on starts over; off draws nothing
+    holdPeaks();
+    repaint();
+}
+
+void PerceptionScreen::clearPeakHold()
+{
+    peak->have = false;
+    repaint();
+}
+
+void PerceptionScreen::holdPeaks()
+{
+    // The held line only rises, from the output as drawn; another band grid (a new sample rate) starts it over.
+    if (! peak->on || ! haveFrame || dz <= 0.0f)
+        return;
+    if (peak->have && (peak->z0 != z0 || peak->dz != dz))
+        peak->have = false;
+    if (! peak->have)
+    {
+        std::fill (std::begin (peak->db), std::end (peak->db), floorDb);
+        peak->z0 = z0;
+        peak->dz = dz;
+        peak->have = true;
+    }
+    for (int b = 0; b < nb; ++b)
+        peak->db[b] = juce::jmax (peak->db[b], outView[(size_t) b]);
+}
+
+float PerceptionScreen::heldPeakAtHz (float hz) const noexcept
+{
+    if (! hasHeldPeaks() || peak->dz <= 0.0f)
+        return floorDb;
+    const double u = juce::jlimit (0.0, (double) (nb - 1), (erb::hzToCam (hz) - peak->z0) / peak->dz);
+    const int i = juce::jmin ((int) u, nb - 2);
+    const float f = (float) (u - i);
+    return peak->db[i] + f * (peak->db[i + 1] - peak->db[i]);
+}
+
+void PerceptionScreen::paintPeakHold (juce::Graphics& g)
+{
+    // A faint dotted line over the spectrum, on the spectrum's scale, wherever something was held.
+    if (! hasHeldPeaks())
+        return;
+    juce::Path line;
+    bool open = false;
+    for (int b = 0; b < nb; ++b)
+    {
+        const float db = peak->db[b];
+        if (db <= specBottomDb)
+        {
+            open = false;
+            continue;
+        }
+        const float x = xForCam (peak->z0 + b * peak->dz), y = specY (db);
+        if (! open) { line.startNewSubPath (x, y); open = true; }
+        else        line.lineTo (x, y);
+    }
+    juce::Path dotted;
+    const float dots[] = { 2.0f, 2.5f };
+    juce::PathStrokeType (1.2f).createDashedStroke (dotted, line, dots, 2);
+    juce::Graphics::ScopedSaveState save (g);
+    g.reduceClipRegion (mainLane.toNearestInt());
+    g.setColour (colour::text.withAlpha (0.55f));
+    g.fillPath (dotted);
 }
 
 void PerceptionScreen::setReadoutHz (float hz)
@@ -324,6 +416,7 @@ void PerceptionScreen::paint (juce::Graphics& g)
     g.drawText ("20k Hz", juce::Rectangle<float> (plot.getRight() - 44.0f, plot.getBottom() + 6.0f, 44.0f, 13.0f), juce::Justification::centredRight, false);
 
     paintSpectrum (g);
+    paintPeakHold (g);
     paintReference (g);
     paintEq (g);
     paintAttacks (g);
@@ -800,6 +893,9 @@ void PerceptionScreen::paintReadout (juce::Graphics& g)
     const float sides = sideRelAtHz (hz);     // 5.2.3: the stereo image heard here
     if (sides > -199.0f)
         text << "    sides " << (sides < -40.0f ? juce::String ("mono") : signedDb (sides, 0) + " dB");
+    const float held = heldPeakAtHz (hz);     // 5.3.5: the peak held here
+    if (held > specBottomDb)
+        text << "    peak " << signedDb (held, 1) << " dB";
     if (paintMode || wEq < 0.995f || wHeat < 0.995f || wWidth < 0.995f)
         text << "    paint EQ " << juce::roundToInt (wEq * 100.0f) << " % / heat " << juce::roundToInt (wHeat * 100.0f)
              << " % / width " << juce::roundToInt (wWidth * 100.0f) << " %";
@@ -885,6 +981,10 @@ void PerceptionScreen::mouseDown (const juce::MouseEvent& e)
         dragging = Handle::none;
     if (dragging == Handle::lo) loAttachment->beginGesture();
     if (dragging == Handle::hi) hiAttachment->beginGesture();
+
+    // 5.3.5: outside paint mode, a click on the spectrum (not on a range handle) clears the held peaks.
+    if (! paintMode && dragging == Handle::none && hasHeldPeaks() && laneAt (e.position) == Lane::eq)
+        clearPeakHold();
 
     if (paintMode && dragging == Handle::none)
     {
@@ -981,7 +1081,8 @@ void PerceptionScreen::setPaintMode (bool on)
     setTooltip (on ? "Paint: drag in the EQ, Width or Heat lane to set how much of it acts there (top = 100 %, "
                      "bottom = none). Alt- or right-drag erases back to 100 %, double-click resets the lane"
                    : "AUTO EQ: the live gain over the spectrum (straw lifts, blue cuts); dashed lines are the Limits you "
-                     "set (how far it may lift and cut). WIDTH: the stereo width you "
+                     "set (how far it may lift and cut); the dotted line is the peak hold (HOLD, top right; a click "
+                     "here clears it). WIDTH: the stereo width you "
                      "hear (100 % in the middle); the shading shows how much of the sound is in the sides. HEAT: where "
                      "harmonics are written, against the output there. Drag a range handle to limit where Anneal acts; "
                      "double-click a handle to reset it. Drop an audio file here to use it as the reference. Horizontal "

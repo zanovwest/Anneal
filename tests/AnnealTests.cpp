@@ -13,6 +13,7 @@
 #include "dsp/TruePeakLimiter.h"
 #include "dsp/ErbScale.h"
 #include "ui/PerceptionScreen.h"
+#include "ui/Theme.h"
 #include "TestSignals.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -6179,6 +6180,256 @@ void testKeyRange534()
     }
 }
 
+void testFixes535()
+{
+    section ("54. 5.3.5 bug fixes");
+    // Tooltips were drawn on one line in a box shrunk to the window: the display's own tooltip (about 4000 px
+    // of text) showed only its first third, cut mid-word, and every other tooltip longer than the window was
+    // cut too. Now a long tooltip wraps; check that every tooltip's text, laid out at its box's inner width
+    // (10 px a side, as drawTooltip draws it), fits inside the box, at the full and the smallest window.
+    Rig r;
+    std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+    auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+    if (editor == nullptr)
+    {
+        check (false, "every tooltip fits in its box", "no editor");
+        return;
+    }
+    anneal::AnnealLookAndFeel lf;
+    const auto f = anneal::theme::font (13.0f);
+    juce::String cut;
+    int tips = 0, wrapped = 0, displayLines = 0;
+    for (auto parent : { juce::Rectangle<int> (0, 0, 1464, 640), juce::Rectangle<int> (0, 0, 1098, 480) })
+    {
+        std::function<void (juce::Component&)> visit = [&] (juce::Component& c)
+        {
+            if (auto* t = dynamic_cast<juce::TooltipClient*> (&c); t != nullptr && t->getTooltip().isNotEmpty())
+            {
+                const auto tip = t->getTooltip();
+                const auto box = lf.getTooltipBounds (tip, { parent.getCentreX() - 200, 60 }, parent);
+                juce::GlyphArrangement ga;
+                ga.addJustifiedText (f, tip, 0.0f, f.getAscent(), (float) box.getWidth() - 20.0f + 6.0f, juce::Justification::left);
+                const auto need = ga.getBoundingBox (0, -1, false);
+                const int lines = juce::roundToInt (need.getHeight() / f.getHeight());
+                ++tips;
+                wrapped += lines > 1 ? 1 : 0;
+                if (&c == &editor->getContent().screen)
+                    displayLines = lines;
+                if (need.getBottom() + 8.0f > (float) box.getHeight() + 0.5f || ! parent.contains (box))
+                    cut << "\"" << tip.substring (0, 32) << "...\" in " << box.toString() << " needs "
+                        << juce::roundToInt (need.getBottom()) << " px  ";
+            }
+            for (auto* k : c.getChildren())
+                visit (*k);
+        };
+        visit (*editor);
+    }
+    check (tips > 60 && cut.isEmpty() && displayLines > 1, "every tooltip fits in its box (long ones wrap)",
+           juce::String (tips) + " tooltips at two window sizes, " + juce::String (wrapped) + " of them wrapped, the display's on "
+               + juce::String (displayLines) + " lines" + (cut.isEmpty() ? juce::String() : "; CUT: " + cut));
+}
+
+void testPeakHold535()
+{
+    section ("55. 5.3.5 Peak hold on the display");
+    constexpr int nb = anneal::DisplayFrame::numBands;
+    using Frames = anneal::TripleBuffer<anneal::DisplayFrame>;
+
+    // Two displays fed the same frames by hand: one with the peak hold, one that never had it.
+    {
+        Rig r;
+        auto bufA = std::make_unique<Frames>(), bufB = std::make_unique<Frames>();
+        anneal::PerceptionScreen held (*bufA, r.proc->apvts), plain (*bufB, r.proc->apvts);
+        held.setSize (1440, 356);
+        plain.setSize (1440, 356);
+        const float z0 = (float) anneal::erb::hzToCam (20.0);
+        const float dz = (float) ((anneal::erb::hzToCam (20000.0) - z0) / (nb - 1));
+        const auto camOf = [] (double hz) { return (float) anneal::erb::hzToCam (hz); };
+        // A falling, pink-like slope at levelDb (at 0 Cam), with +12 dB over +-1 Cam around bumpHz.
+        auto push = [&] (float levelDb, double bumpHz)
+        {
+            for (auto* b : { bufA.get(), bufB.get() })
+            {
+                auto& fr = b->beginWrite();
+                fr.z0 = z0;
+                fr.dz = dz;
+                for (int i = 0; i < nb; ++i)
+                {
+                    const float cam = z0 + (float) i * dz;
+                    const float bump = bumpHz > 0.0 && std::abs (cam - camOf (bumpHz)) < 1.0f ? 12.0f : 0.0f;
+                    fr.inDb[i] = fr.outDb[i] = levelDb + bump - 0.5f * cam;
+                    fr.gainDb[i] = fr.sideGainDb[i] = 0.0f;
+                    fr.heatDb[i] = -200.0f;
+                }
+                b->endWrite();
+            }
+            held.refreshNow();
+            plain.refreshNow();
+        };
+        const auto expected = [&camOf] (float levelDb, double hz, bool bump) { return levelDb + (bump ? 12.0f : 0.0f) - 0.5f * camOf (hz); };
+
+        const bool offAtStart = ! held.isPeakHoldOn() && ! held.hasHeldPeaks() && ! held.getPeakHoldButton().getToggleState();
+        held.getPeakHoldButton().setToggleState (true, juce::sendNotificationSync);   // as a click on HOLD
+        const bool onByPill = held.isPeakHoldOn();
+
+        // Loud with a bump moving 200 Hz -> 2 kHz -> 8 kHz, then 40 dB quieter: the line never falls.
+        std::vector<float> was;
+        int frames = 0, fell = 0;
+        float worst = 0.0f;
+        auto watch = [&]
+        {
+            ++frames;
+            for (int i = 0; i < 400; ++i)
+            {
+                const float v = held.heldPeakAtHz (20.0f * std::pow (1000.0f, (float) i / 399.0f));
+                if ((int) was.size() == 400 && v < was[(size_t) i])
+                {
+                    ++fell;
+                    worst = juce::jmin (worst, v - was[(size_t) i]);
+                }
+                if ((int) was.size() < 400) was.push_back (v); else was[(size_t) i] = v;
+            }
+        };
+        for (double hz : { 200.0, 2000.0, 8000.0 })
+            for (int k = 0; k < 6; ++k) { push (-30.0f, hz); watch(); }
+        for (int k = 0; k < 18; ++k) { push (-70.0f, 0.0); watch(); }
+        float bumpErr = 0.0f;
+        for (double hz : { 200.0, 2000.0, 8000.0 })
+            bumpErr = juce::jmax (bumpErr, std::abs (held.heldPeakAtHz ((float) hz) - expected (-30.0f, hz, true)));
+        const float loud1k = held.heldPeakAtHz (1000.0f), loudErr = std::abs (loud1k - expected (-30.0f, 1000.0, false));
+        check (offAtStart && onByPill && fell == 0 && frames == 36 && bumpErr < 0.1f && loudErr < 0.1f,
+               "the held line never falls while playing",
+               juce::String (frames) + " frames (loud, then 40 dB quieter): " + juce::String (fell) + " falls (worst "
+                   + juce::String (worst, 3) + " dB); 1 kHz held at " + juce::String (loud1k, 2) + " dB (loud: "
+                   + juce::String (expected (-30.0f, 1000.0, false), 2) + ", now " + juce::String (expected (-70.0f, 1000.0, false), 2)
+                   + "), the 200 Hz / 2 kHz / 8 kHz bumps within " + juce::String (bumpErr, 3) + " dB"
+                   + (offAtStart ? "; off by default" : "; ON BY DEFAULT"));
+
+        // While on, it draws: only inside the EQ lane (and the HOLD pill), nowhere else.
+        const auto imgHeld = held.createComponentSnapshot (held.getLocalBounds());
+        const auto imgPlain = plain.createComponentSnapshot (plain.getLocalBounds());
+        const auto pill = held.getPeakHoldButton().getBounds();
+        const auto lane = held.getEqLane().toNearestInt();
+        auto diff = [&pill, &lane] (const juce::Image& a, const juce::Image& b, int& outside)
+        {
+            int n = 0;
+            outside = 0;
+            for (int y = 0; y < a.getHeight(); ++y)
+                for (int x = 0; x < a.getWidth(); ++x)
+                    if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                    {
+                        ++n;
+                        outside += lane.contains (x, y) || pill.contains (x, y) ? 0 : 1;
+                    }
+            return n;
+        };
+        int outsideOn = 0;
+        const int drawnOn = diff (imgHeld, imgPlain, outsideOn);
+
+        // A click on a range handle or in the Heat lane keeps it; a click on the spectrum clears it, and it
+        // holds again from there.
+        auto eventAt = [&held] (juce::Point<float> p)
+        {
+            const auto now = juce::Time::getCurrentTime();
+            return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), p,
+                                     juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier),
+                                     1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &held, &held, now, p, now, 1, false);
+        };
+        auto click = [&] (juce::Point<float> p) { held.mouseDown (eventAt (p)); held.mouseUp (eventAt (p)); };
+        const float laneY = held.getEqLane().getCentreY();
+        click ({ held.xForHz (held.getShownRange().x), laneY });
+        click ({ held.xForHz (700.0f), held.getHeatLane().getCentreY() });
+        const bool keptByOthers = held.hasHeldPeaks() && held.heldPeakAtHz (1000.0f) == loud1k;
+        click ({ held.xForHz (700.0f), laneY });
+        const bool cleared = ! held.hasHeldPeaks() && held.heldPeakAtHz (1000.0f) <= -139.0f && held.isPeakHoldOn();
+        push (-70.0f, 0.0);
+        const float again = held.heldPeakAtHz (1000.0f);
+        const bool holdsAgain = std::abs (again - expected (-70.0f, 1000.0, false)) < 0.1f;
+        check (keptByOthers && cleared && holdsAgain, "a click on the spectrum clears it",
+               juce::String (keptByOthers ? "kept by a click on a range handle and in the Heat lane" : "LOST TO ANOTHER CLICK")
+                   + (cleared ? "; cleared by a click on the spectrum" : "; NOT CLEARED") + ", then held from "
+                   + juce::String (again, 2) + " dB at 1 kHz (the quiet output: " + juce::String (expected (-70.0f, 1000.0, false), 2) + ")");
+
+        // Off: nothing held and nothing drawn, pixel for pixel the display that never had it.
+        push (-30.0f, 2000.0);
+        held.getPeakHoldButton().setToggleState (false, juce::sendNotificationSync);
+        int outsideOff = 0;
+        const int drawnOff = diff (held.createComponentSnapshot (held.getLocalBounds()),
+                                   plain.createComponentSnapshot (plain.getLocalBounds()), outsideOff);
+        const bool offEmpty = ! held.isPeakHoldOn() && ! held.hasHeldPeaks() && held.heldPeakAtHz (1000.0f) <= -139.0f;
+        check (drawnOn > 300 && outsideOn == 0 && drawnOff == 0 && offEmpty, "off draws nothing",
+               "on: " + juce::String (drawnOn) + " pixels differ, " + juce::String (outsideOn) + " outside the EQ lane and the pill; off: "
+                   + juce::String (drawnOff) + " pixels differ from a display that never held");
+
+        const auto pillText = anneal::theme::caps (9.5f);
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (pillText, "HOLD", 0.0f, 0.0f);
+        const float textW = ga.getBoundingBox (0, -1, false).getWidth();
+        const bool placed = pill.getX() >= held.xForHz (20000.0f) + 6.0f && pill.getRight() <= held.getWidth()
+                            && pill.getBottom() <= held.getEqLane().getY() && pill.getY() >= 0 && textW <= pill.getWidth() - 6.0f;
+        check (placed && held.getPeakHoldButton().getTooltip().contains ("Click the spectrum"),
+               "the HOLD pill in the display's top right corner",
+               pill.toString() + ", clear of the 20 kHz grip and above the EQ lane; \"HOLD\" " + juce::String (textW, 1) + " px wide");
+    }
+
+    // Through the plug-in: the processor keeps the hold, so closing and opening the window keeps the line, and
+    // the sound is the same with it on.
+    {
+        const double fs = 48000.0;
+        const auto loud = pinkNoise (fs, 0.6, 0.3f, 51), quiet = pinkNoise (fs, 0.6, 0.003f, 52);
+        Rig a, b;
+        a.prepare (fs, 512);
+        b.prepare (fs, 512);
+        float before = 0.0f, after = 0.0f, later = 0.0f;
+        bool reopenedOn = false;
+        Channels outA, outB;
+        auto playWith = [] (Rig& r, const Channels& sig, anneal::PerceptionScreen* screen, Channels& out)
+        {
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            for (int pos = 0; pos + 512 <= (int) sig[0].size(); pos += 512)
+            {
+                for (int c = 0; c < 2; ++c)
+                    buf.copyFrom (c, 0, sig[(size_t) c].data() + pos, 512);
+                r.proc->processBlock (buf, midi);
+                for (int c = 0; c < 2; ++c)
+                    out[(size_t) c].insert (out[(size_t) c].end(), buf.getReadPointer (c), buf.getReadPointer (c) + 512);
+                if (screen != nullptr && (pos / 512) % 8 == 7)
+                    screen->refreshNow();
+            }
+        };
+        outA.resize (2);
+        outB.resize (2);
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (a.proc->createEditor());
+            auto& screen = dynamic_cast<AnnealEditor&> (*ed).getContent().screen;
+            screen.getPeakHoldButton().setToggleState (true, juce::sendNotificationSync);
+            playWith (a, loud, &screen, outA);
+            before = screen.heldPeakAtHz (1000.0f);
+        }
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (a.proc->createEditor());
+            auto& screen = dynamic_cast<AnnealEditor&> (*ed).getContent().screen;
+            reopenedOn = screen.isPeakHoldOn() && screen.getPeakHoldButton().getToggleState();
+            after = screen.heldPeakAtHz (1000.0f);
+            playWith (a, quiet, &screen, outA);
+            later = screen.heldPeakAtHz (1000.0f);
+        }
+        playWith (b, loud, nullptr, outB);
+        playWith (b, quiet, nullptr, outB);
+        double maxDiff = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < outA[(size_t) c].size(); ++i)
+                maxDiff = std::max (maxDiff, (double) std::abs (outA[(size_t) c][i] - outB[(size_t) c][i]));
+        const bool defaultOff = ! Rig().proc->displayPeakHold.on;
+        check (before > -80.0f && reopenedOn && after == before && later == before && maxDiff == 0.0 && defaultOff,
+               "the window keeps it, and the sound doesn't change",
+               "1 kHz held at " + juce::String (before, 2) + " dB; after closing and opening the window "
+                   + juce::String (after, 2) + " dB (" + (reopenedOn ? "HOLD still on" : "HOLD OFF") + "), after 0.6 s 40 dB quieter "
+                   + juce::String (later, 2) + " dB; output with it on vs. off: difference " + juce::String (maxDiff, 12));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -6191,13 +6442,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes532();
+        testFixes535();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testKeyRange534();
+        testPeakHold535();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -6256,6 +6507,8 @@ int main (int argc, char** argv)
     testLimits532();
     testTiltPivot533();
     testKeyRange534();
+    testFixes535();
+    testPeakHold535();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

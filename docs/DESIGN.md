@@ -135,6 +135,15 @@ sections; a From above Up to (or the other way round) opens the other end, so th
 the display the key's violet line stays at its full strength inside the range and drops to 25 % outside it,
 so you see which part of the key counts. What it does is in the pill's tooltip.
 
+**Peak hold (5.3.5).** A display toggle, so it lives on the display, not in the header: a small HOLD pill
+(35 × 18 px, caps at 9.5 px) in the right gutter's top corner, level with the range grips and clear of the
+High grip at 20 kHz, the only free spot that never moves. Off it is a plain raised pill; on, it is neutral
+white like Paint (it is a way of looking, not a process). The held line is a dotted line (1.2 px, dots 2 on
+2.5 off) in the text colour at 55 %, on the spectrum's scale over the spectrum and under the curves, so it
+reads as context and never as the EQ; no tag in the legend (the pill says it is on). A click on the EQ lane
+clears it; the hover read-out adds "peak −37.3 dB". What it does is in the pill's tooltip and one clause of
+the display's. Long tooltips (since 5.3.5) wrap at 520 px instead of running off the window.
+
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
 The display's x-axis is the **ERB-rate (Cam) scale**, not a log-frequency axis:

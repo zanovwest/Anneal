@@ -4,6 +4,49 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.5 — 2026-10-27 10:15
+
+New
+- **Peak hold on the display**: a faint dotted line that keeps the output spectrum's highest level at each
+  frequency, so you can see where a mix builds up over a whole song. Play the song through with it on, then
+  look for the bumps the line leaves: a low-mid build-up in the chorus or a harsh 3 kHz peak in one section
+  shows up even after that part has passed.
+  - Turn it on with the small **HOLD** pill in the display's top right corner (above the dB scale). Off is
+    the default, and then nothing is drawn.
+  - The line only rises. **Click the spectrum** (the EQ lane) to clear it and start again; clicking a range
+    handle or another lane doesn't clear it. Clicking HOLD again turns it off.
+  - Hovering over the display adds "peak −37.3 dB" to the read-out, the level held there.
+  - It collects while Anneal's window is open, and the line is still there when you close and reopen the
+    window. It isn't saved in the project.
+  - Display only: the sound doesn't change.
+
+Fixes
+- **Long tooltips were cut off at the edge of the window.** Tooltips were drawn on one line, so a long one
+  ran past the window and was cut mid-word: the display's own tooltip (what each lane shows) lost about half
+  its text, and at the smallest window size so did those of Latency, Flavour, Limits, Punch and the harmonic
+  bars (11 of 112 tooltips in all). Long tooltips now wrap onto several lines, at most 520 px wide.
+
+Tests: 220/220 acceptance checks, 6 new:
+- the tooltips: every one of the 112 tooltips, laid out the way it is drawn, fits its box at the full and the
+  smallest window (5.3.4: 11 didn't);
+- the held line never falls while playing: 36 frames, loud with a bump moving 200 Hz → 2 kHz → 8 kHz, then
+  40 dB quieter: no band fell, 1 kHz stays at the loud −37.81 dB while the output is at −77.81 dB, and all
+  three bumps are kept (within 0.000 dB);
+- a click on the spectrum clears it (a click on a range handle or in the Heat lane doesn't), and it then
+  holds from the quiet level;
+- off draws nothing: with it off the display is pixel for pixel the same as one that never held (on, 2424
+  pixels differ, all inside the EQ lane and the pill);
+- the HOLD pill sits in the display's top right corner, clear of the 20 kHz range grip and above the EQ lane,
+  its text inside it;
+- through the plug-in: closing and reopening the window keeps the line and HOLD (1 kHz −28.13 dB before and
+  after, and after 0.6 s 40 dB quieter); the output with it on is bit-identical to it off.
+
+28/28 host checks on the built VST3 and 25/25 setup checks pass (nothing host-facing changed: no new
+parameter, nothing new in the saved state). CPU: no change to the audio path; the held line is a max over the
+1024 display bands 30 times a second in the editor. At 48 kHz / 64 samples Stereo Low 2.0 %, Precise 4.7 %,
+Mid/Side Precise 7.9 % (5.3.4: 2.1 / 4.6 / 7.9 %); the slowest 0.1 % of blocks 5 / 14 / 22 % of the deadline,
+within the benchmark's usual spread.
+
 ## 5.3.4 — 2026-10-26 09:55
 
 New

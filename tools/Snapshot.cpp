@@ -255,6 +255,8 @@ int main (int argc, char* argv[])
           }, 700.0f, true },
         { "drop", [] (AnnealAudioProcessor&) {}, -1.0f, true,
           [] (AnnealEditorContent& c) { c.screen.fileDragEnter ({ "reference.wav" }, 300, 150); } },
+        // 5.3.5: the peak hold over the whole test song, the HOLD pill on
+        { "peakhold", [] (AnnealAudioProcessor& p) { p.displayPeakHold.on = true; set (p, ids::reveal, 60); }, 3150.0f, true },
     };
 
     int failures = 0;
@@ -273,7 +275,14 @@ int main (int argc, char* argv[])
 
         if (s.feedAudio)
         {
-            feed (proc, music, block, 0, n - block * 8);
+            // 5.3.5: with the peak hold on, the display takes a frame every 16 blocks of the song, as its timer would.
+            const int step = proc.displayPeakHold.on ? block * 16 : n;
+            for (int from = 0; from < n - block * 8; from += step)
+            {
+                feed (proc, music, block, from, std::min (from + step, n - block * 8));
+                if (proc.displayPeakHold.on)
+                    content.screen.refreshNow();
+            }
             // Let the meters see a few blocks the way the editor timer would.
             for (int i = 0; i < 8; ++i)
             {

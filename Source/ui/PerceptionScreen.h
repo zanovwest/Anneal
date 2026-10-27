@@ -25,7 +25,8 @@ namespace anneal
                              private juce::Timer
     {
     public:
-        PerceptionScreen (TripleBuffer<DisplayFrame>& source, juce::AudioProcessorValueTreeState& state);
+        // keep: where the peak hold lives (the processor's, so it outlives the window); null = the screen's own.
+        PerceptionScreen (TripleBuffer<DisplayFrame>& source, juce::AudioProcessorValueTreeState& state, PeakHold* keep = nullptr);
         ~PerceptionScreen() override;
 
         void paint (juce::Graphics&) override;
@@ -97,6 +98,16 @@ namespace anneal
         // 5.3.4: the key range the key's line is drawn bright in, Hz (20 Hz - 20 kHz = all of it).
         juce::Point<float> getShownKeyRangeHz() const noexcept { return { keyLoHz, keyHiHz }; }
 
+        // 5.3.5 Peak hold: a faint dotted line holding the output spectrum's highest level at each frequency
+        // until a click on the spectrum clears it; the HOLD pill at the top right turns it on and off (off
+        // and on again start it over). Display only.
+        void setPeakHold (bool on);
+        bool isPeakHoldOn() const noexcept { return peak->on; }
+        void clearPeakHold();
+        bool hasHeldPeaks() const noexcept { return peak->on && peak->have; }
+        float heldPeakAtHz (float hz) const noexcept;   // dBFS as drawn; -140 = nothing held
+        juce::Button& getPeakHoldButton() noexcept { return holdButton; }
+
     private:
         enum class Handle { none, lo, hi };
         enum class Lane { none, eq, width, heat };
@@ -126,6 +137,8 @@ namespace anneal
         void paintLegend (juce::Graphics&);
         void paintListen (juce::Graphics&);   // what a Listen solo is playing (top right)
         void paintDrop (juce::Graphics&);     // a file is being dragged over the display
+        void holdPeaks();                     // 5.3.5: raise the held line to the output drawn now
+        void paintPeakHold (juce::Graphics&);
 
         TripleBuffer<DisplayFrame>& source;
 
@@ -178,5 +191,10 @@ namespace anneal
         bool paintMode = false, strokeMerge = false;
         Lane painting = Lane::none;
         juce::Point<float> lastPaint;
+
+        // 5.3.5 Peak hold
+        PeakHold ownPeak;
+        PeakHold* peak = nullptr;
+        juce::TextButton holdButton { "HOLD" };
     };
 }

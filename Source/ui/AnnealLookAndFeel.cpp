@@ -18,6 +18,22 @@ namespace
         p.addCentredArc (c.x, c.y, r, r, 0.0f, from, to, true);
         return p;
     }
+
+    // 5.3.5: a tooltip's text, wrapped at the wrap width when it doesn't fit on one line (first baseline
+    // at the font's ascent, so the glyphs start at y 0).
+    juce::GlyphArrangement tooltipGlyphs (const juce::String& text, bool& wrapped)
+    {
+        const auto f = font (13.0f);
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (f, text, 0.0f, f.getAscent());
+        wrapped = ga.getBoundingBox (0, -1, false).getWidth() > AnnealLookAndFeel::tooltipWrapWidth;
+        if (wrapped)
+        {
+            ga.clear();
+            ga.addJustifiedText (f, text, 0.0f, f.getAscent(), AnnealLookAndFeel::tooltipWrapWidth, juce::Justification::left);
+        }
+        return ga;
+    }
 }
 
 AnnealLookAndFeel::AnnealLookAndFeel()
@@ -240,9 +256,9 @@ void AnnealLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b
     }
 }
 
-juce::Font AnnealLookAndFeel::getTextButtonFont (juce::TextButton&, int)
+juce::Font AnnealLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
 {
-    return caps (11.5f);
+    return caps (buttonHeight < 22 ? 9.5f : 11.5f);   // 5.3.5: the display's small HOLD pill
 }
 
 void AnnealLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, bool highlighted, bool)
@@ -257,10 +273,10 @@ void AnnealLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b, 
 juce::Rectangle<int> AnnealLookAndFeel::getTooltipBounds (const juce::String& tipText, juce::Point<int> screenPos,
                                                           juce::Rectangle<int> parentArea)
 {
-    juce::GlyphArrangement ga;
-    ga.addLineOfText (font (13.0f), tipText, 0.0f, 0.0f);
-    const int w = (int) std::ceil (ga.getBoundingBox (0, -1, false).getWidth()) + 20;
-    const int h = 28;
+    bool wrapped = false;
+    const auto box = tooltipGlyphs (tipText, wrapped).getBoundingBox (0, -1, false);
+    const int w = (int) std::ceil (box.getWidth()) + 20;
+    const int h = wrapped ? (int) std::ceil (box.getBottom()) + 16 : 28;
     return juce::Rectangle<int> (screenPos.x > parentArea.getCentreX() ? screenPos.x - (w + 12) : screenPos.x + 24,
                                  screenPos.y > parentArea.getCentreY() ? screenPos.y - (h + 6) : screenPos.y + 6,
                                  w, h).constrainedWithin (parentArea);
@@ -274,7 +290,15 @@ void AnnealLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text
     g.setColour (colour::divider);
     g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, 1.0f);
     g.setColour (colour::text);
-    g.setFont (font (13.0f));
-    g.drawText (text, r.reduced (10.0f, 0.0f), juce::Justification::centredLeft, false);
+    bool wrapped = false;
+    auto ga = tooltipGlyphs (text, wrapped);
+    if (! wrapped)
+    {
+        g.setFont (font (13.0f));
+        g.drawText (text, r.reduced (10.0f, 0.0f), juce::Justification::centredLeft, false);
+        return;
+    }
+    ga.moveRangeOfGlyphs (0, -1, 10.0f, 8.0f);
+    ga.draw (g);
 }
 }

@@ -18,11 +18,18 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Added by the 5.3.2 run (Next up was empty after item 18); reorder or drop freely:
+Added by the 5.3.5 run (Next up was empty after item 21); reorder or drop freely:
 
-21. **Peak hold on the display**: a faint line holding the output spectrum's peaks until clicked away, to
-    see where a mix builds up over a whole song. A display toggle (its tooltip says how), off by default,
-    no sound change. Tests: the held line never falls while playing, a click clears it, off draws nothing.
+22. **Detail** (how narrow the auto EQ's moves are): a compact row under Response, from broad (smoother,
+    wider moves) to fine (narrower, for single resonances), shown while Reveal or Smooth is above 0. Today's
+    width is the default, bit-identical for older projects. Tests: a single ring is cut over a narrower band
+    at fine, the default is bit-identical, Mid/Side and Zero latency follow.
+23. **Heat limit**: how loud Heat's harmonics may get against the output in any band (off, −6 … −30 dB), as
+    a section in the Flavour menu, so a high Heat never covers the note it grows from. Off by default (as
+    before). Tests: the harmonics stop at the limit band by band, off is bit-identical, every flavour.
+24. **Peak hold for the input too**: a second held line for what comes into Anneal, from the same HOLD pill
+    (its menu: Output / Input and output), to compare where the mix built up before and after. Display only.
+    Tests: as item 21, plus the input's line follows the input.
 
 ## Waiting on the user
 
@@ -58,6 +65,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.5 (2026-10-27, every-minute update): **Peak hold on the display** (item 21): a faint dotted line keeping
+  the output spectrum's highest level at each frequency, from a small HOLD pill in the display's top right
+  corner (off by default, not saved; the processor keeps the line while the window is closed). A click on the
+  spectrum clears it; the hover read-out adds "peak". Off draws nothing, the sound doesn't change. Fixed: long
+  tooltips were cut off at the window's edge (11 of 112); they wrap now.
 - 5.3.4 (2026-10-26, every-minute update): **Key range for the sidechain** (item 20): which part of the key
   counts, from a Key pill beside the Sidechain menu (shown while a mode is on; whole key, three ready ranges,
   From / Up to), two host parameters (Sidechain Key Low / High). With 1–5 kHz a 300 Hz key ducks nothing and

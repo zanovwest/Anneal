@@ -79,6 +79,7 @@ public:
     // 5.2.7 Punch at zero latency: the strongest gain it applied since the last call (dB, signed).
     float takeZeroPunchDb() noexcept { return zeroPunchDb.exchange (0.0f); }
     anneal::TripleBuffer<anneal::DisplayFrame>& getDisplay() noexcept { return display; }
+    anneal::PeakHold displayPeakHold;   // 5.3.5: the display's peak hold (message thread), outlives the editor
     float getMatchGainDb() const noexcept { return matchGainDb.load (std::memory_order_relaxed); }
     float takeOutputPeak (int channel) noexcept;   // linear peak since the last call
 
