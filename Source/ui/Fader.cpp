@@ -11,8 +11,9 @@ namespace
 }
 
 Fader::Fader (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& t,
-              const juce::String& l, const juce::String& r, juce::Colour role, bool bipolar, const juce::String& help)
-    : title (t), leftEnd (l), rightEnd (r)
+              const juce::String& l, const juce::String& r, juce::Colour role, bool bipolar, const juce::String& help,
+              bool isCompact)
+    : title (t), leftEnd (l), rightEnd (r), compact (isCompact)
 {
     slider.setSliderStyle (juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -56,6 +57,13 @@ void Fader::updateValueText()
 void Fader::resized()
 {
     auto r = getLocalBounds();
+    if (compact)
+    {
+        r.removeFromLeft (compactTitleW);
+        value.setBounds (r.removeFromRight (compactValueW));
+        slider.setBounds (r.withSizeKeepingCentre (r.getWidth(), juce::jmin (trackH, r.getHeight())));
+        return;
+    }
     auto top = r.removeFromTop (rowH);
     value.setBounds (top.removeFromRight (juce::jmin (120, top.getWidth() / 2)));
     slider.setBounds (r.removeFromTop (trackH).expanded (2, 0));
@@ -66,6 +74,11 @@ void Fader::paint (juce::Graphics& g)
     auto r = getLocalBounds();
     g.setColour (colour::muted);
     g.setFont (caps (11.0f));
+    if (compact)
+    {
+        g.drawText (title.toUpperCase(), r.removeFromLeft (compactTitleW), juce::Justification::centredLeft, false);
+        return;
+    }
     g.drawText (title.toUpperCase(), r.removeFromTop (rowH), juce::Justification::centredLeft, false);
 
     r.removeFromTop (trackH);

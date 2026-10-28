@@ -38,7 +38,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
-| AUTO EQ | Reveal, Smooth | Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Response, Guard (transients), Tilt and its Pivot (5.3.3, shown while Tilt isn't 0) |
+| AUTO EQ | Reveal, Smooth | Detail (5.3.6: Broad ↔ Fine, one slim row under the two rings, shown while either is on), Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Response, Guard (transients), Tilt and its Pivot (5.3.3, shown while Tilt isn't 0) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Key range (5.3.4: a pill beside the mode), Amount (5.3: a compact row); both shown while a mode is on |
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
@@ -143,6 +143,15 @@ white like Paint (it is a way of looking, not a process). The held line is a dot
 reads as context and never as the EQ; no tag in the legend (the pill says it is on). A click on the EQ lane
 clears it; the hover read-out adds "peak −37.3 dB". What it does is in the pill's tooltip and one clause of
 the display's. Long tooltips (since 5.3.5) wrap at 520 px instead of running off the window.
+
+**Detail (5.3.6).** How narrow Reveal's and Smooth's moves are qualifies both rings, and the stack beside them
+is full (Response, Guard, Tilt, Pivot), so it is one slim row under the two rings, x 36–304 at y 602 (24 px,
+clear of their live lines and above the deck's foot): DETAIL in muted caps, a compact fader (the Color / Focus
+track, bipolar from its centre tick, in the muted colour like Response and Tilt), and the value at the right,
+"Normal", "Fine 40" or "Broad 40". The fader's ends aren't written out (the row has no room for them, and the
+value names the side it leans to); the tooltip says which way is which. The value text is 14 px like Color's
+and Focus's. It shows only while Reveal or Smooth
+is on, like the Pivot under Tilt. Nothing on the display: the curve itself gets narrower or wider.
 
 ## Distinctive functional feature: the ERB-scale "perception screen"
 

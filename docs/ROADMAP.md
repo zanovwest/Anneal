@@ -20,10 +20,6 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
 Added by the 5.3.5 run (Next up was empty after item 21); reorder or drop freely:
 
-22. **Detail** (how narrow the auto EQ's moves are): a compact row under Response, from broad (smoother,
-    wider moves) to fine (narrower, for single resonances), shown while Reveal or Smooth is above 0. Today's
-    width is the default, bit-identical for older projects. Tests: a single ring is cut over a narrower band
-    at fine, the default is bit-identical, Mid/Side and Zero latency follow.
 23. **Heat limit**: how loud Heat's harmonics may get against the output in any band (off, −6 … −30 dB), as
     a section in the Flavour menu, so a high Heat never covers the note it grows from. Off by default (as
     before). Tests: the harmonics stop at the limit band by band, off is bit-identical, every flavour.
@@ -65,6 +61,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.6 (2026-10-28, every-minute update): **Detail** (item 22): how narrow Reveal's and Smooth's moves are,
+  Broad ↔ Fine (2.5 × wider to 2.5 × narrower windows, for the prominence they read and the curve's
+  smoothing), one slim fader row under the two rings (the stack beside them was full, not "under Response" as
+  planned), shown while Reveal or Smooth is on; host parameter "Detail". Normal (the default, and older
+  projects) is bit-identical. Heat's placement and the sidechain's comparison keep the one-ERB measure.
 - 5.3.5 (2026-10-27, every-minute update): **Peak hold on the display** (item 21): a faint dotted line keeping
   the output spectrum's highest level at each frequency, from a small HOLD pill in the display's top right
   corner (off by default, not saved; the processor keeps the line while the window is closed). A click on the

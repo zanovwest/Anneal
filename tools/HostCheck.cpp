@@ -148,7 +148,7 @@ int main (int argc, char* argv[])
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
-                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High" })
+                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High", "Detail" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -1051,6 +1051,51 @@ int main (int argc, char* argv[])
                texts + "; key at 300 Hz / 2 kHz ducks the main: whole key " + juce::String (change[0][0], 2) + " / "
                    + juce::String (change[0][1], 2) + " dB, key range 1-5 kHz " + juce::String (change[1][0], 2) + " / "
                    + juce::String (change[1][1], 2) + " dB");
+    }
+
+    // 13. 5.3.6 Detail through VST3: automatable, "Normal" by default, typed values; with Smooth 100 % a ring at
+    //     3150 Hz in pink noise is cut at Normal and at Fine, and its neighbour 0.6 Cam above far less at Fine.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* detail = inst != nullptr ? findParam (*inst, "Detail") : nullptr;
+        bool ok = detail != nullptr && detail->isAutomatable();
+        juce::String texts;
+        double atRing[2] {}, atNear[2] {};
+        if (ok)
+        {
+            const float fine = detail->getValueForText ("Fine 100");
+            texts << detail->getText (detail->getValue(), 32) << ", " << detail->getText (fine, 32) << ", "
+                  << detail->getText (detail->getValueForText ("broad 40"), 32);
+            ok = detail->getText (detail->getValue(), 32) == "Normal" && detail->getText (fine, 32) == "Fine 100"
+                 && detail->getText (detail->getValueForText ("broad 40"), 32) == "Broad 40";
+
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Heat", 0.0f }, { "Smooth", 1.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            const int n = (int) (4.0 * fs);
+            auto ring = testsig::silence (2, n);
+            testsig::Pink pink (7);
+            for (int i = 0; i < n; ++i)
+                ring[0][(size_t) i] = ring[1][(size_t) i] = 0.03f * pink.next() + 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+            // 0.6 Cam above 3150 Hz on the ERB-rate scale (Glasberg & Moore, as Source/dsp/ErbScale.h).
+            const double nearHz = (std::pow (10.0, (21.4 * std::log10 (1.0 + 0.00437 * 3150.0) + 0.6) / 21.4) - 1.0) / 0.00437;
+            for (int i = 0; i < 2; ++i)
+            {
+                if (i == 1)
+                    detail->setValueNotifyingHost (fine);
+                ok = ok && run (*inst, ring, out, [] { return 512; });
+                const int from = (int) (2.0 * fs), len = (int) (1.5 * fs), lat = inst->getLatencySamples();
+                atRing[i] = testsig::transferDb (ring[0].data() + from, out[0].data() + from + lat, len, 3150.0, fs);
+                atNear[i] = testsig::transferDb (ring[0].data() + from, out[0].data() + from + lat, len, nearHz, fs);
+            }
+            inst->releaseResources();
+            ok = ok && atRing[0] < -3.0 && atRing[1] < -3.0 && atNear[1] > atNear[0] + 1.0;
+        }
+        check (ok, "Detail through VST3",
+               texts + "; ring 3150 Hz " + juce::String (atRing[0], 2) + " / " + juce::String (atRing[1], 2)
+                   + " dB, neighbour " + juce::String (atNear[0], 2) + " / " + juce::String (atNear[1], 2) + " dB (Normal / Fine 100)");
     }
 
     plugin->releaseResources();

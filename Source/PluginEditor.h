@@ -71,6 +71,7 @@ private:
     anneal::LimitMenu limits;   // 5.3.2 Max boost / Max cut, on the AUTO EQ title row
     anneal::Knob tiltPivot;     // 5.3.3, a compact row under Tilt, shown while Tilt isn't 0
     anneal::KeyRangeMenu keyRange;   // 5.3.4, beside the Sidechain menu, shown while a sidechain mode is on
+    anneal::Fader detail;            // 5.3.6, one row under Reveal and Smooth, shown while either is on
 
 public:
     anneal::LoudnessReadout loudness;   // 5.3.1, in the header beside MATCH

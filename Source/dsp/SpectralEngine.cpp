@@ -275,6 +275,10 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.tiltPivotOct, target.tiltPivotOct);
     if (std::abs (current.tiltPivotOct - target.tiltPivotOct) < 1.0e-4f)
         current.tiltPivotOct = target.tiltPivotOct;
+    // 5.3.6: Detail glides too and lands exactly (back at 0 the model's own widths, as before).
+    lin (current.detail, target.detail);
+    if (std::abs (current.detail - target.detail) < 1.0e-4f)
+        current.detail = target.detail;
     lin (current.heat, target.heat);
     lin (current.color, target.color);
     lin (current.focus, target.focus);
@@ -530,6 +534,7 @@ void SpectralEngine::runStage (int s) noexcept
         ms.tiltDbPerOct = current.tiltDbPerOct;
         ms.tiltPivotOct = current.tiltPivotOct;
         ms.responseMs = current.responseMs;
+        ms.detail = current.detail;
         ms.rangeLoHz = current.rangeLoHz;
         ms.rangeHiHz = current.rangeHiHz;
         ms.focus = current.focus;

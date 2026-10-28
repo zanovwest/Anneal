@@ -2,6 +2,7 @@
 
 #include "Reference.h"
 
+#include <cmath>
 #include <vector>
 
 namespace anneal
@@ -21,6 +22,11 @@ namespace anneal
     inline bool keyLoIsOpen (float hz) noexcept { return hz <= keyFullLoHz + 0.5f; }
     inline bool keyHiIsOpen (float hz) noexcept { return hz >= keyFullHiHz - 50.0f; }
 
+    // 5.3.6 Detail: how wide a window Reveal and Smooth look at, and the curve is smoothed over, against the
+    // model's own (one ERB and a quarter Cam). -1 (Broad) is 2.5 x wider, +1 (Fine) 2.5 x narrower; 0 is
+    // exactly 1, and the model then takes its usual path (bit-identical to before).
+    inline double detailWidthScale (float detail) noexcept { return detail == 0.0f ? 1.0 : std::pow (2.5, (double) -detail); }
+
     struct ModelSettings
     {
         float reveal       = 0.0f;     // 0..1, lift bands in a masking shadow
@@ -28,6 +34,7 @@ namespace anneal
         float tiltDbPerOct = 0.0f;     // static tilt around the pivot
         float tiltPivotOct = 0.0f;     // 5.3.3: the pivot, octaves from 1 kHz (0 = 1 kHz, as before)
         float responseMs   = 120.0f;   // gain-curve release (attack = 1/3)
+        float detail       = 0.0f;     // 5.3.6: -1 broad .. +1 fine, how narrow Reveal's and Smooth's moves are (0 = as before)
         float rangeLoHz    = 20.0f;
         float rangeHiHz    = 20000.0f;
         float focus        = 0.0f;     // -1 body .. +1 air (heat placement)
@@ -145,7 +152,10 @@ namespace anneal
 
         void binPowerToSlices (const float* binPower, float* slices) const noexcept;
         void boxSum (const float* in, float* out, int halfWidth, bool mean) noexcept;
-        void contextOf (const float* placeLevel, float* context) noexcept;
+        // Masking context from the place levels at least excl bands away (upM / dnM: the spread over excl bands).
+        void contextOf (const float* placeLevel, float* context, int excl, double upM, double dnM) noexcept;
+        // 5.3.6 Detail: the prominence (dB, before normalising) with a place window of +-half bands, into detailProm.
+        void detailProminence (int half) noexcept;
 
         double sampleRate = 48000.0, binHz = 0.0, z0 = 0.0, dz = 0.0;
         int fftSize = 0, numBins = 0, boxHalf = 12, exclusion = 25, smoothHalf = 6;
@@ -178,6 +188,11 @@ namespace anneal
         std::vector<float> keySlices, keySmoothed, keyPlace;       // sidechain key (3.0)
         std::vector<float> audDb, keyRelDb, keyAudDb;              // 5.1.1: the frame's batched dB values
         bool keyPrimed = false;
+        // 5.3.6 Detail: place, context and prominence at Detail's width; the flat normalisation for detailHalf
+        // (made when the width changes) and its spread factors.
+        std::vector<float> detailPlace, detailContext, detailProm, detailFlatDb;
+        int detailHalf = -1;
+        double detailUpM = 0.0, detailDnM = 0.0;
 
         // Band dB values -> smoothed linear per-bin gain (the band->bin step of analyse()).
         void bandsToBinGain (const float* bandDb, float* binDb, float* linear) noexcept;

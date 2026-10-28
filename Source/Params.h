@@ -43,6 +43,7 @@ namespace anneal::ids
     inline constexpr const char* tiltPivot   = "tiltPivot";   // 5.3.3: where Tilt turns, Hz (1 kHz = as before)
     inline constexpr const char* scKeyLo     = "scKeyLo";     // 5.3.4: the sidechain key counts from here, Hz (20 = as before)
     inline constexpr const char* scKeyHi     = "scKeyHi";     // 5.3.4: ... up to here, Hz (20 kHz = as before)
+    inline constexpr const char* detail      = "detail";      // 5.3.6: how narrow the auto EQ's moves are, -100 broad .. +100 fine (0 = as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -70,6 +71,10 @@ namespace anneal
     // (boost); typed text takes the number's size ("-6", "6 dB") or "none" / "no limit" / "off".
     juce::String formatLimit (float db, bool cut);
     float parseLimit (const juce::String& text);
+    // 5.3.6 Detail: "Normal" at 0, else "Broad 40" / "Fine 40"; typed text takes "broad" / "fine" / "normal"
+    // with or without a number, or a plain number (negative = broad).
+    juce::String formatDetail (float v);
+    float parseDetail (const juce::String& text);
 
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };

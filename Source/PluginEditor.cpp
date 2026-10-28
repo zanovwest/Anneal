@@ -99,13 +99,17 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
       tiltPivot (p.apvts, ids::tiltPivot, "Pivot", colour::muted, Size::secondary, false, {},
                  "Pivot: the frequency Tilt turns around. It stays at 0 dB there; above it Tilt lifts (or cuts) more and "
                  "more, below it the opposite. Shown while Tilt isn't 0. 1 kHz = as before"),
-      keyRange (p.apvts, ids::scKeyLo, ids::scKeyHi)
+      keyRange (p.apvts, ids::scKeyLo, ids::scKeyHi),
+      detail (p.apvts, ids::detail, "Detail", "broad", "fine", colour::muted, true,
+              "Detail: how narrow Reveal's and Smooth's moves are. Toward Broad (left) they are wider and smoother, "
+              "for tone; toward Fine (right) narrower, to catch a single ringing note or resonance without touching "
+              "its neighbours. Shown while Reveal or Smooth is on. Normal = as before", true)
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> {
              &screen, &presets, &reveal, &smooth, &tilt, &response, &guard, &heat, &color, &focus, &harmonics,
              &mix, &output, &match, &delta, &bypass, &meter, &latency, &stereoMode, &eqTarget, &heatTarget, &listen, &flavour,
              &freeze, &scMode, &ceiling, &scAmount, &undoButton, &redoButton, &refMenu, &refAmount, &paintButton,
-             &punch, &width, &monoBass, &loudness, &limits, &tiltPivot, &keyRange })
+             &punch, &width, &monoBass, &loudness, &limits, &tiltPivot, &keyRange, &detail })
         addAndMakeVisible (c);
     undoButton.onClick = [&p] { p.undo(); };
     redoButton.onClick = [&p] { p.redo(); };
@@ -226,6 +230,8 @@ void AnnealEditorContent::resized()
     guard.setBounds (334, 442 + smallH, 140, smallH);
     tilt.setBounds (334, 442 + 2 * smallH, 140, smallH);
     tiltPivot.setBounds (334, 442 + 3 * smallH, 140, smallH);
+    // 5.3.6: Detail qualifies both rings, so it is one slim row under them (the stack beside them is full).
+    detail.setBounds (36, 602, 268, 24);
 
     // HEAT: the largest ring; Color with the harmonics it produces, then Focus.
     flavour.setBounds (562, routingY, 122, 26);
@@ -480,6 +486,9 @@ void AnnealEditorContent::tick (float dt)
     heatTarget.setVisible (ms);
     // 5.3.3: the Pivot only while there is a Tilt to turn (the parameter reads 0.00 dB/oct under 0.005).
     tiltPivot.setVisible (std::abs (processor.apvts.getRawParameterValue (ids::tilt)->load()) >= 0.005f);
+    // 5.3.6: Detail only while Reveal or Smooth moves something (both read "off" under 0.05 %).
+    detail.setVisible (processor.apvts.getRawParameterValue (ids::reveal)->load() >= 0.05f
+                       || processor.apvts.getRawParameterValue (ids::smooth)->load() >= 0.05f);
 
     // A listen solo replaces what Delta would play, so Delta steps back while one is on.
     delta.setAlpha (listen.getChoice() > 0 ? 0.4f : 1.0f);

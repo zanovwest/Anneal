@@ -4,6 +4,57 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.6 — 2026-10-28 10:11
+
+New
+- **Detail**: how narrow Reveal's and Smooth's moves are. Until now they always worked about one critical band
+  wide (roughly a third of an octave in the mids). Now you can make them narrower or wider.
+  - Toward **Fine** the moves get narrower, down to 2.5 times narrower at Fine 100: Smooth can pull down a
+    single ringing note, a snare's ring or a room resonance without taking its neighbours with it. Example, a
+    ring at 3.15 kHz in a noisy mix with Smooth at 100 %: at Normal the cut also takes 3.4 kHz down 3.1 dB; at
+    Fine 100 the 3.4 kHz neighbour is left alone (−0.1 dB) while the ring is still cut.
+  - Toward **Broad** the moves get wider and smoother, up to 2.5 times wider at Broad 100, for gentle tone
+    shaping rather than surgery (the same 3.4 kHz neighbour goes down 8.4 dB with the ring).
+  - It is a slim row under the Reveal and Smooth rings: DETAIL, a small fader (drag right for Fine, left for
+    Broad; double-click for Normal) and its value, "Normal", "Fine 40" or "Broad 40". It shows only while
+    Reveal or Smooth is on. (The column beside the rings was full, so it sits under them: it applies to both.)
+  - The curve's smoothing follows Detail for every auto-EQ move (the sidechain's and the reference's too), but
+    where Heat puts its harmonics and how the sidechain compares the key with your track don't change.
+  - It works in every latency mode, at Zero latency and in Mid/Side. In Low latency the shortest frame softens
+    a very narrow cut a little (the 3.15 kHz ring: −8.9 dB at Normal, −6.5 dB at Fine 100); in Precise both
+    reach the full −9 dB.
+  - Also a host parameter, "Detail", automatable (type `fine 40`, `broad 30`, `-25` or `normal`). Normal, the
+    middle, is the width the auto EQ always had: the default and what older projects open with, so they sound
+    exactly as before. Factory presets leave it alone.
+
+Fixes
+- None found this run. The bug pass looked at the perceptual model (prominence, context, the target smoothing,
+  Max cut / Max boost, the key range), the peak hold's display code, the newest build log, the benchmark and the
+  rendered interface, and found nothing to fix.
+
+Tests: 225/225 acceptance checks, 5 new:
+- the model (Precise, Smooth 100 %, a ring at 3150 Hz in pink noise): the width over which the cut is at least
+  half its depth is 1.12 Cam at Normal, 0.44 Cam at Fine 100 and 2.56 Cam at Broad 100, all −9.0 dB deep, and
+  500 Hz stays within 0.4 dB;
+- Normal is bit-identical to before: the defaults are 0 (a width of exactly the model's own), and a Detail
+  moved to Fine 80 and back plays exactly like one that never moved (music with Reveal, Smooth and Heat on,
+  difference 0.000000000000);
+- through the plug-in in Low, Mid/Side and Zero latency (measured on the audio, noise in and out): the ring −8.9
+  / −6.5 dB (−6.7 dB at Zero) at Normal / Fine 100, its neighbour 0.6 Cam above −3.1 / −0.1 dB, and −8.4 dB at
+  Broad 100;
+- the parameter: "Normal" by default, "Fine 40" / "Broad 40", typed values, older projects open at Normal
+  whatever the instance had, a saved Detail comes back, factory presets leave it alone;
+- the Detail row: under both rings inside AUTO EQ, hidden with Reveal and Smooth both off, shown with either on,
+  nothing overlapping with everything shown (Mid/Side, sidechain, reference, Tilt and its Pivot).
+
+29/29 host checks on the built VST3 (1 new: Detail through VST3, its texts and typed values, and the 3150 Hz
+ring and its neighbour −8.87 / −6.46 and −3.10 / −0.12 dB at Normal / Fine 100) and 25/25 setup checks pass.
+CPU: Normal costs nothing new (the extra pass doesn't run). Away from Normal each model measures once more per
+frame, about +0.2 % of a core in Stereo: on 10 s of music (two runs) Low 1.68 → 1.85 % at Fine 100 and
+1.86–1.89 % at Broad 100, Precise 4.10 → 4.28 / 4.39 % in the quieter run. The benchmark at Normal: 48 kHz / 64 samples Stereo Low 1.7 %, Precise 4.0 %, Mid/Side Precise
+6.9 % (5.3.5: 2.0 / 4.7 / 7.9 %, a quieter machine this time); the slowest 0.1 % of blocks 5 / 11 / 20 % of the
+deadline.
+
 ## 5.3.5 — 2026-10-27 10:15
 
 New

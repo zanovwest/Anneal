@@ -110,6 +110,9 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
         alloc (*v, (size_t) numBands);
     for (auto* v : { &keySlices, &keySmoothed, &keyPlace, &audDb, &keyRelDb, &keyAudDb })
         alloc (*v, (size_t) numBands);
+    for (auto* v : { &detailPlace, &detailContext, &detailProm, &detailFlatDb })
+        alloc (*v, (size_t) numBands);
+    detailHalf = -1;   // the bands may have moved: its normalisation is made again when needed
     for (auto* v : { &refBand, &longPower, &longDb, &mainNorm, &matchRaw, &matchDb, &learnDb, &paintEq, &paintHeat })
         alloc (*v, (size_t) numBands);
     learnSum.assign ((size_t) numBands, 0.0);
@@ -135,7 +138,7 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
     // Normalisation: a flat input must give 0 dB prominence everywhere (also fixes the edges).
     std::fill (tmp.begin(), tmp.end(), 1.0f);
     boxSum (tmp.data(), place.data(), boxHalf, false);
-    contextOf (place.data(), context.data());
+    contextOf (place.data(), context.data(), exclusion, aUpM, aDnM);
     for (int b = 0; b < numBands; ++b)
         flatNormDb[(size_t) b] = powToDb ((double) place[(size_t) b] / context[(size_t) b]);
 
@@ -211,7 +214,7 @@ void PerceptualModel::boxSum (const float* in, float* out, int half, bool mean) 
     }
 }
 
-void PerceptualModel::contextOf (const float* placeLevel, float* ctx) noexcept
+void PerceptualModel::contextOf (const float* placeLevel, float* ctx, int excl, double upM, double dnM) noexcept
 {
     // Exponential spreading in Cam is a first-order recursion along the band axis.
     double acc = 0.0;
@@ -221,14 +224,37 @@ void PerceptualModel::contextOf (const float* placeLevel, float* ctx) noexcept
     for (int b = numBands - 1; b >= 0; --b)
         bwd[(size_t) b] = (float) (acc = placeLevel[b] + aDn * acc);
 
-    // Only maskers at least one ERB away count as "context".
+    // Only maskers at least one place window away count as "context" (one ERB at the model's own width).
     for (int b = 0; b < numBands; ++b)
     {
         double c = 0.0;
-        if (b - exclusion >= 0)       c += aUpM * fwd[(size_t) (b - exclusion)];
-        if (b + exclusion < numBands) c += aDnM * bwd[(size_t) (b + exclusion)];
+        if (b - excl >= 0)       c += upM * fwd[(size_t) (b - excl)];
+        if (b + excl < numBands) c += dnM * bwd[(size_t) (b + excl)];
         ctx[b] = (float) c;
     }
+}
+
+void PerceptualModel::detailProminence (int half) noexcept
+{
+    // The same measure as the model's own, with a place window of +-half bands and the context starting
+    // just outside it. A flat input gives 0 dB at this width too: its normalisation is made once per width.
+    const int excl = 2 * half + 1;
+    if (half != detailHalf)
+    {
+        detailUpM = std::pow (aUp, excl);
+        detailDnM = std::pow (aDn, excl);
+        std::fill (detailProm.begin(), detailProm.end(), 1.0f);
+        boxSum (detailProm.data(), detailPlace.data(), half, false);
+        contextOf (detailPlace.data(), detailContext.data(), excl, detailUpM, detailDnM);
+        for (int b = 0; b < numBands; ++b)
+            detailFlatDb[(size_t) b] = powToDb ((double) detailPlace[(size_t) b] / detailContext[(size_t) b]);
+        detailHalf = half;
+    }
+    boxSum (smoothed.data(), detailPlace.data(), half, false);
+    contextOf (detailPlace.data(), detailContext.data(), excl, detailUpM, detailDnM);
+    for (int b = 0; b < numBands; ++b)
+        detailProm[(size_t) b] = detailPlace[(size_t) b] / (detailContext[(size_t) b] + 1.0e-30f);
+    toDb (detailProm.data(), detailProm.data(), numBands);
 }
 
 void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, float fps, const float* keyPower)
@@ -244,7 +270,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     }
 
     boxSum (smoothed.data(), place.data(), boxHalf, false);
-    contextOf (place.data(), context.data());
+    contextOf (place.data(), context.data(), exclusion, aUpM, aDnM);
 
     // Transient guard detector: the one-ERB level of this frame (no temporal integration)
     // against its own ~150 ms average. A rise of 4 dB starts to count, 12 dB is a full attack.
@@ -347,6 +373,17 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         toDb (keyAudDb.data(), keyAudDb.data(), numBands);
     }
 
+    // 5.3.6 Detail: Reveal and Smooth read the prominence through a narrower (Fine) or wider (Broad) window,
+    // and the target is smoothed over a window scaled alike. Heat's placement, the sidechain's comparison and
+    // audibility keep the one-ERB measure. Where the windows come out as the model's own (the default), the
+    // prominence is the one above: bit-identical to before.
+    const double widthScale = detailWidthScale (s.detail);
+    const int eqBoxHalf = std::max (1, (int) std::lround (0.5 * widthScale / dz));
+    const int eqSmoothHalf = std::max (1, (int) std::lround (0.25 * widthScale / dz));
+    const bool detailed = eqBoxHalf != boxHalf;
+    if (detailed)
+        detailProminence (eqBoxHalf);
+
     // 5.3.4 Key range: only the key inside it ducks or lifts, with edges a quarter Cam either side like
     // Range's; outside it the sidechain moves nothing. The whole key (both ends open): not looked at.
     const bool keyLoEdge = keyOn && ! keyLoIsOpen (s.scKeyLoHz), keyHiEdge = keyOn && ! keyHiIsOpen (s.scKeyHiHz);
@@ -358,12 +395,13 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     {
         const float d = std::clamp (prom[(size_t) b] - flatNormDb[(size_t) b], -40.0f, 40.0f);
         prom[(size_t) b] = d;
+        const float de = detailed ? std::clamp (detailProm[(size_t) b] - detailFlatDb[(size_t) b], -40.0f, 40.0f) : d;
 
         const float audible = clamp01 ((audDb[(size_t) b] - 6.0f) / 12.0f);
 
-        const float cut    = s.smooth * std::min (maxCutDb, 0.5f * std::max (0.0f, d - 2.0f)) * audible;
-        const float shadow = std::max (0.0f, -d - 2.0f);
-        const float fade   = clamp01 ((30.0f + d) / 12.0f);            // empty gaps are not lifted
+        const float cut    = s.smooth * std::min (maxCutDb, 0.5f * std::max (0.0f, de - 2.0f)) * audible;
+        const float shadow = std::max (0.0f, -de - 2.0f);
+        const float fade   = clamp01 ((30.0f + de) / 12.0f);           // empty gaps are not lifted
         const float boost  = s.reveal * std::min (maxBoostDb, 0.6f * shadow) * fade * audible;
 
         // Make room: duck the main where the key is about as loud or louder in the same ERB (up to
@@ -400,7 +438,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
             sidePeakDb = side;
     }
 
-    boxSum (target.data(), targetSmoothed.data(), smoothHalf, true);
+    boxSum (target.data(), targetSmoothed.data(), eqSmoothHalf, true);   // smoothHalf at the default
 
     // 5.3.2 Max cut / Max boost. The target is held inside the limits, so the curve lets go as soon as
     // the music does (no time spent above a limit first); the curve itself is limited again below, for

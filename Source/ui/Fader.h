@@ -9,15 +9,19 @@ namespace anneal
     //   [================|=============]
     //   LEFT END                     RIGHT END
     // Bound to one host parameter; drag, Ctrl-drag fine, double-click reset.
+    // 5.3.6 compact: one row, TITLE  [=======|=======]  value, for a setting that sits under the rings it
+    // qualifies (Detail); the value names the end it leans to ("Broad 40" / "Fine 40"), the tooltip both.
     class Fader : public juce::Component
     {
     public:
         Fader (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& title,
                const juce::String& leftEnd, const juce::String& rightEnd, juce::Colour role, bool bipolar,
-               const juce::String& help);
+               const juce::String& help, bool compact = false);
 
         void paint (juce::Graphics&) override;
         void resized() override;
+
+        static constexpr int compactTitleW = 58, compactValueW = 66;
 
         juce::Slider slider;
 
@@ -25,6 +29,7 @@ namespace anneal
         void updateValueText();
 
         juce::String title, leftEnd, rightEnd;
+        bool compact = false;
         juce::Label value;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     };

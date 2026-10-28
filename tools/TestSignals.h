@@ -132,5 +132,29 @@ namespace testsig
         return 2.0 * std::sqrt (re * re + im * im) / wsum;
     }
 
+    // 5.3.6: the gain from x to y at one frequency, dB, for a broadband x (noise): the cross spectrum over
+    // the auto spectrum, summed over Hann segments (half overlapped). y = H x makes it |H| whatever the
+    // noise does, so a slowly moving EQ can be read at any frequency, not only where a tone is.
+    inline double transferDb (const float* x, const float* y, int n, double freq, double fs, int seg = 4096)
+    {
+        double cre = 0.0, cim = 0.0, xx = 0.0;
+        for (int start = 0; start + seg <= n; start += seg / 2)
+        {
+            double xr = 0.0, xi = 0.0, yr = 0.0, yi = 0.0;
+            for (int i = 0; i < seg; ++i)
+            {
+                const double w = 0.5 - 0.5 * std::cos (2.0 * pi * i / seg);
+                const double ph = 2.0 * pi * freq * (start + i) / fs;
+                const double c = std::cos (ph), s = std::sin (ph);
+                xr += w * x[start + i] * c;  xi -= w * x[start + i] * s;
+                yr += w * y[start + i] * c;  yi -= w * y[start + i] * s;
+            }
+            cre += yr * xr + yi * xi;   // Y X*
+            cim += yi * xr - yr * xi;
+            xx += xr * xr + xi * xi;
+        }
+        return 20.0 * std::log10 (std::max (std::sqrt (cre * cre + cim * cim) / std::max (xx, 1.0e-30), 1.0e-15));
+    }
+
     inline double toDb (double a) { return 20.0 * std::log10 (std::max (a, 1.0e-15)); }
 }

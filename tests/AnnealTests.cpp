@@ -566,7 +566,7 @@ void testStress()
     std::uniform_real_distribution<float> u (0.0f, 1.0f);
     const char* all[] = { ids::reveal, ids::smooth, ids::tilt, ids::response, ids::rangeLo, ids::rangeHi, ids::heat,
                           ids::color, ids::focus, ids::mix, ids::output, ids::match, ids::delta, ids::bypass, ids::guard,
-                          ids::maxCut, ids::maxBoost, ids::tiltPivot };
+                          ids::maxCut, ids::maxBoost, ids::tiltPivot, ids::detail };
 
     const int n = (int) in[0].size();
     Channels out = in;
@@ -6430,6 +6430,254 @@ void testPeakHold535()
     }
 }
 
+// 5.3.6: Detail, how narrow Reveal's and Smooth's moves are. Fine looks through a narrower window (and smooths
+// the curve over less), Broad through a wider one; Normal, the default, is the model's own and bit-identical.
+void testDetail536()
+{
+    section ("56. 5.3.6 Detail");
+    const double fs = 48000.0;
+    const int n = (int) (4 * fs);
+
+    // Pink noise bed + a sustained ring at 3150 Hz (as in section 7), mono in both channels.
+    Channels ringy = testsig::silence (2, n);
+    {
+        testsig::Pink pink (5);
+        for (int i = 0; i < n; ++i)
+            ringy[0][(size_t) i] = ringy[1][(size_t) i] = 0.03f * pink.next() + 0.05f * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+    }
+    const double camRing = anneal::erb::hzToCam (3150.0);
+    const double nearHz = anneal::erb::camToHz (camRing + 0.6);   // a neighbour 0.6 Cam above the ring
+
+    // The model (Precise): Smooth 100 % cuts the ring at every Detail; the width where the cut is at least half
+    // its deepest is narrower at Fine and wider at Broad. 500 Hz stays untouched.
+    {
+        float width[3] {}, deepest[3] {}, at500[3] {};
+        const float details[3] = { 0.0f, 1.0f, -1.0f };
+        for (int i = 0; i < 3; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2);
+            auto p = neutral();
+            p.smooth = 1.0f;
+            p.detail = details[i];
+            e->setParameters (p);
+            runEngine (*e, ringy, fixedBlocks (512));
+            const auto& m = e->getModel();
+            const float* g = m.getBandGainDb();
+            const int ring = m.bandForHz (3150.0);
+            for (int b = ring - 120; b <= ring + 120; ++b)
+                deepest[i] = std::min (deepest[i], g[b]);
+            int count = 0;
+            for (int b = ring - 120; b <= ring + 120; ++b)
+                count += g[b] <= 0.5f * deepest[i] ? 1 : 0;
+            width[i] = (float) count * m.getDz();
+            at500[i] = bandGain (*e, 500.0);
+        }
+        const bool cut = deepest[0] <= -3.0f && deepest[1] <= -3.0f && deepest[2] <= -3.0f;
+        const bool quiet = std::abs (at500[0]) < 1.0f && std::abs (at500[1]) < 1.0f && std::abs (at500[2]) < 1.0f;
+        check (cut && quiet && width[1] < 0.6f * width[0] && width[2] > 1.5f * width[0],
+               "the model: a single ring is cut over a narrower band at Fine, a wider one at Broad",
+               "half-depth width Normal " + juce::String (width[0], 2) + " Cam (" + db (deepest[0]) + "), Fine 100 "
+                   + juce::String (width[1], 2) + " Cam (" + db (deepest[1]) + "), Broad 100 " + juce::String (width[2], 2)
+                   + " Cam (" + db (deepest[2]) + "); 500 Hz " + db (at500[0], 2) + " / " + db (at500[1], 2) + " / " + db (at500[2], 2));
+    }
+
+    // Normal is bit-identical to before: the defaults are 0 (a width scale of exactly 1, the model's own windows),
+    // and a Detail moved to Fine 80 and back plays exactly like one that never moved (music, Reveal, Smooth and
+    // Heat on, Low latency) once the curve it held then has settled.
+    {
+        const auto in = testsig::musicLike (fs, 8.0, 12);
+        const int split = (int) (1.5 * fs);
+        Channels first = in, second = in;
+        for (int c = 0; c < 2; ++c)
+        {
+            first[(size_t) c].resize ((size_t) split);
+            second[(size_t) c].erase (second[(size_t) c].begin(), second[(size_t) c].begin() + split);
+        }
+        Channels outs[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            Rig r;
+            r.set (ids::reveal, 60.0f); r.set (ids::smooth, 60.0f); r.set (ids::heat, 30.0f);
+            if (i == 1)
+                r.set (ids::detail, 80.0f);
+            r.prepare (fs, 512);
+            r.run (first, fixedBlocks (512));
+            if (i == 1)
+                r.set (ids::detail, 0.0f);
+            outs[i] = r.run (second, fixedBlocks (512));
+        }
+        double worst = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = (size_t) (4 * fs); k < outs[0][(size_t) c].size(); ++k)
+                worst = std::max (worst, (double) std::abs (outs[0][(size_t) c][k] - outs[1][(size_t) c][k]));
+        Rig d;
+        const anneal::EngineParams ep;
+        const anneal::ModelSettings ms;
+        const bool zero = ep.detail == 0.0f && ms.detail == 0.0f && anneal::detailWidthScale (0.0f) == 1.0
+                          && d.proc->apvts.getRawParameterValue (ids::detail)->load() == 0.0f;
+        check (worst == 0.0 && zero, "Normal bit-identical to before (also back from Fine 80)",
+               "max diff after returning to Normal " + juce::String (worst, 12) + (zero ? ", defaults 0" : ", DEFAULT NOT 0"));
+    }
+
+    // Through the plug-in, in Low, Mid/Side and Zero latency: the ring is cut at Normal and at Fine 100, and its
+    // neighbour 0.6 Cam above (about 3.37 kHz) far less at Fine than at Normal, far more at Broad 100.
+    {
+        juce::String log;
+        bool ok = true;
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            double atRing[3] {}, atNear[3] {};
+            for (int i = 0; i < 3; ++i)
+            {
+                Rig r;
+                r.setNeutral();
+                r.set (ids::smooth, 100.0f);
+                r.set (ids::detail, i == 0 ? 0.0f : i == 1 ? 100.0f : -100.0f);
+                if (mode == 1)
+                    r.set (ids::stereoMode, 1.0f);
+                if (mode == 2)
+                    r.set (ids::zeroLatency, 1.0f);
+                r.prepare (fs, 512);
+                const auto out = r.run (ringy, fixedBlocks (512));
+                const int lat = r.proc->getLatencySamples(), from = 2 * (int) fs, len = (int) (1.5 * fs);
+                atRing[i] = testsig::transferDb (ringy[0].data() + from, out[0].data() + from + lat, len, 3150.0, fs);
+                atNear[i] = testsig::transferDb (ringy[0].data() + from, out[0].data() + from + lat, len, nearHz, fs);
+            }
+            ok = ok && atRing[0] < -3.0 && atRing[1] < -3.0 && atNear[1] > atNear[0] + 1.0 && atNear[2] < atNear[0] - 1.0;
+            log << (mode == 0 ? "Low" : mode == 1 ? "Mid/Side" : "Zero") << ": ring " << db (atRing[0]) << " / " << db (atRing[1])
+                << ", neighbour " << db (atNear[0]) << " / " << db (atNear[1]) << " / broad " << db (atNear[2]) << "  ";
+        }
+        check (ok, "through the plug-in: Low, Mid/Side, Zero latency", "Normal / Fine 100: " + log);
+    }
+
+    // What it costs (informational): the engine on 10 s of music, Precise and Low, Normal against Fine 100 and
+    // Broad 100 (the extra place / context pass runs only while the window differs from the model's own).
+    {
+        const auto music = testsig::musicLike (fs, 10.0, 13);
+        juce::String line = "CPU, % of one core (Normal / Fine 100 / Broad 100):";
+        for (auto mode : { anneal::SpectralEngine::low, anneal::SpectralEngine::precise })
+        {
+            double pct[3] {};
+            for (int i = 0; i < 3; ++i)
+            {
+                auto e = std::make_unique<anneal::SpectralEngine>();
+                e->prepare (fs, 2, mode);
+                auto p = neutral();
+                p.reveal = 0.6f; p.smooth = 0.6f; p.heat = 0.3f;
+                p.detail = i == 0 ? 0.0f : i == 1 ? 1.0f : -1.0f;
+                e->setParameters (p);
+                double best = 1.0e9;
+                for (int rep = 0; rep < 3; ++rep)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    runEngine (*e, music, fixedBlocks (512));
+                    best = std::min (best, std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count());
+                }
+                pct[i] = 100.0 * best / 10.0;
+            }
+            line << (mode == anneal::SpectralEngine::low ? " Low " : ", Precise ") << juce::String (pct[0], 2) << " / "
+                 << juce::String (pct[1], 2) << " / " << juce::String (pct[2], 2);
+        }
+        info (line);
+    }
+
+    // The parameter: "Normal" by default, "Fine 40" / "Broad 40", typed values; older projects open at Normal
+    // (whatever this instance had), a project keeps its Detail, factory presets leave it alone.
+    {
+        Rig r;
+        auto* dp = r.proc->apvts.getParameter (ids::detail);
+        auto raw = [] (Rig& x) { return x.proc->apvts.getRawParameterValue (ids::detail)->load(); };
+        auto typed = [dp] (const char* t) { return dp->convertFrom0to1 (dp->getValueForText (t)); };
+        const bool texts = dp->getCurrentValueAsText() == "Normal" && dp->getText (dp->convertTo0to1 (40.0f), 32) == "Fine 40"
+                           && dp->getText (dp->convertTo0to1 (-40.0f), 32) == "Broad 40"
+                           && std::abs (typed ("fine 30") - 30.0f) < 0.1f && std::abs (typed ("Broad 25") + 25.0f) < 0.1f
+                           && std::abs (typed ("-60") + 60.0f) < 0.1f && typed ("fine") == 100.0f && typed ("broad") == -100.0f
+                           && std::abs (typed ("normal")) < 0.1f && dp->getName (32) == "Detail" && dp->isAutomatable();
+
+        auto old = r.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::detail), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::detail, 70.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        const bool oldOpen = raw (b) == 0.0f;
+
+        Rig c;
+        c.set (ids::detail, -35.0f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = std::abs (raw (d) + 35.0f) < 0.1f;
+        d.proc->setCurrentProgram (2);
+        const bool presetKeeps = std::abs (raw (d) + 35.0f) < 0.1f && d.proc->getPresetDisplayName() == "Mix bus glue";
+        check (texts && oldOpen && kept && presetKeeps, "Detail: texts, older projects, saved, presets",
+               "default " + dp->getCurrentValueAsText() + ", 40 -> " + dp->getText (dp->convertTo0to1 (40.0f), 32)
+                   + ", older project -> " + juce::String (raw (b), 1) + ", saved -> " + juce::String (raw (d), 1)
+                   + ", after a preset " + d.proc->getPresetDisplayName());
+    }
+
+    // The Detail row: one slim row under Reveal and Smooth, inside AUTO EQ, shown while either is on and hidden
+    // while both are off (5.3 calmer deck); nothing overlapping with everything shown.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::Fader* detail = nullptr;
+        anneal::Knob* reveal = nullptr;
+        anneal::Knob* smooth = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+            {
+                if (auto* f = dynamic_cast<anneal::Fader*> (c); f != nullptr && f->slider.getTooltip().startsWith ("Detail:"))
+                    detail = f;
+                if (auto* k = dynamic_cast<anneal::Knob*> (c))
+                {
+                    if (k->slider.getTooltip().startsWith ("Reveal:")) reveal = k;
+                    if (k->slider.getTooltip().startsWith ("Smooth:")) smooth = k;
+                }
+            }
+        if (detail == nullptr || reveal == nullptr || smooth == nullptr)
+        {
+            check (false, "the Detail row under Reveal and Smooth", "missing");
+            return;
+        }
+        auto& content = editor->getContent();
+        content.tick (0.0f);
+        const bool shownAtDefault = detail->isVisible();   // Reveal and Smooth are 40 % by default
+        r.set (ids::reveal, 0.0f);
+        r.set (ids::smooth, 0.0f);
+        content.tick (0.0f);
+        const bool hiddenWhenOff = ! detail->isVisible();
+        r.set (ids::smooth, 30.0f);
+        r.set (ids::tilt, -0.6f);
+        r.set (ids::stereoMode, 1.0f);
+        r.set (ids::scMode, 1.0f);
+        r.set (ids::refMode, 2.0f);
+        content.tick (0.0f);
+        const bool shownWithSmooth = detail->isVisible();
+        juce::String overlaps;
+        auto kids = content.getChildren();
+        for (int i = 0; i < kids.size(); ++i)
+            for (int j = i + 1; j < kids.size(); ++j)
+                if (kids[i]->isVisible() && kids[j]->isVisible() && kids[i]->getBounds().intersects (kids[j]->getBounds()))
+                    overlaps << kids[i]->getBounds().toString() << " x " << kids[j]->getBounds().toString() << "  ";
+        const bool placed = detail->getY() >= std::max (reveal->getBottom(), smooth->getBottom()) && detail->getBottom() <= 628
+                            && detail->getX() >= reveal->getX() && detail->getRight() <= smooth->getRight() && detail->getRight() < 490
+                            && detail->getHeight() <= 26;
+        r.set (ids::detail, 40.0f);
+        const auto shownText = detail->slider.getTextFromValue (detail->slider.getValue());
+        check (shownAtDefault && hiddenWhenOff && shownWithSmooth && placed && overlaps.isEmpty() && shownText == "Fine 40",
+               "the Detail row under Reveal and Smooth, only while either is on",
+               detail->getBounds().toString() + " under " + reveal->getBounds().toString() + " / " + smooth->getBounds().toString()
+                   + "; default " + (shownAtDefault ? "shown" : "HIDDEN") + ", both off " + (hiddenWhenOff ? "hidden" : "SHOWN")
+                   + ", Smooth 30 " + (shownWithSmooth ? "shown" : "HIDDEN") + ", reads \"" + shownText + "\""
+                   + (overlaps.isEmpty() ? juce::String (", no overlaps") : ", overlaps " + overlaps));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -6448,7 +6696,7 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testPeakHold535();
+        testDetail536();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -6509,6 +6757,7 @@ int main (int argc, char** argv)
     testKeyRange534();
     testFixes535();
     testPeakHold535();
+    testDetail536();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

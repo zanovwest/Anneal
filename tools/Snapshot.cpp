@@ -205,6 +205,10 @@ int main (int argc, char* argv[])
               enableSidechain (p);
               set (p, ids::scMode, 1); set (p, ids::scAmount, 80); set (p, ids::scKeyLo, 2000.0f); set (p, ids::scKeyHi, 5000.0f);
           }, 3000.0f, true },
+        { "detail", [] (AnnealAudioProcessor& p)   // 5.3.6: Detail at Fine 70 (narrower moves), its row under the rings
+          {
+              set (p, ids::smooth, 80); set (p, ids::detail, 70.0f);
+          }, 3150.0f, true },
         { "preset", [] (AnnealAudioProcessor& p) { p.setCurrentProgram (4); set (p, ids::heat, 45); }, 9000.0f, true },
         { "zero", [] (AnnealAudioProcessor& p)    // 5.1: Zero latency (Heat rests, the tag says so; 5.2.7 Punch works)
           {

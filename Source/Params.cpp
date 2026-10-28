@@ -89,6 +89,26 @@ float parseLimit (const juce::String& text)
     return std::min (noLimitDb, std::abs (leadingNumber (l.replace (juce::String::fromUTF8 ("\xe2\x88\x92"), "-"))));
 }
 
+juce::String formatDetail (float v)
+{
+    const int a = juce::roundToInt (std::abs (v));
+    if (a == 0)
+        return "Normal";
+    return (v < 0.0f ? "Broad " : "Fine ") + juce::String (a);
+}
+
+float parseDetail (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim().replace (juce::String::fromUTF8 ("\xe2\x88\x92"), "-");
+    const bool hasNumber = l.containsAnyOf ("0123456789");
+    const float n = std::abs (leadingNumber (l));
+    if (l.contains ("broad") || l.contains ("wide"))
+        return -(hasNumber ? n : 100.0f);
+    if (l.contains ("fine") || l.contains ("narrow"))
+        return hasNumber ? n : 100.0f;
+    return hasNumber ? leadingNumber (l) : 0.0f;   // "normal", "default"
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -363,6 +383,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         r.setSkewForCentre (1000.0f);
         layout.add (keyEnd (ids::scKeyHi, "Sidechain Key High", r, keyFullHiHz));
     }
+
+    // 5.3.6 Detail: how narrow Reveal's and Smooth's moves are, from Broad (-100, 2.5 x wider) to Fine (+100,
+    // 2.5 x narrower). Normal, the middle, is the width they always had: the default, and what older projects
+    // load with.
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::detail, 1 }, "Detail",
+        juce::NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f,
+        Attr().withStringFromValueFunction ([] (float v, int) { return formatDetail (v); })
+              .withValueFromStringFunction ([] (const juce::String& t) { return parseDetail (t); })));
 
     return layout;
 }

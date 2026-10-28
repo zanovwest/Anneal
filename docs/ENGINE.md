@@ -128,6 +128,18 @@ those bands are interpolated rather than independent measurements.
     once within 0.01 %, so a range moved back to the whole key is exact again. It applies in every latency
     mode, Mid/Side (each component, by the EQ routing as before) and at zero latency (the analysis engine's
     curve); Learn key (Reference) always learns the whole key.
+14. **Detail** (5.3.6; parameter `detail`, −100 Broad … +100 Fine, engine −1…+1). A width scale
+    `w = 2.5^(−detail)` (`detailWidthScale`, exactly 1 at 0) sets the place window Reveal and Smooth read,
+    ±0.5·w Cam (step 4; the context starts just outside it, step 5, with the spread over that distance), and the
+    target smoothing, ±0.25·w Cam (step 8; it smooths the whole target, the sidechain and the match included).
+    Both in whole bands, `max (1, round (half / dz))`, so Fine 100 is ±5 / ±3 bands (±0.2 / ±0.1 Cam) and
+    Broad 100 ±31 / ±16 (±1.25 / ±0.63 Cam) at 48 kHz, against ±13 / ±6. A flat input gives 0 dB at every
+    width: the normalisation for a width is made when the width changes (1024 log10 once, not per frame).
+    Heat's placement (`promSlow`), audibility, the sidechain's key-against-main comparison and the transient
+    detector keep the one-ERB measure. Wherever the place window comes out as the model's own (at 48 kHz from
+    Broad 8 to Normal) the prominence is the usual one and the extra pass doesn't run; at Normal the smoothing
+    is the usual one too: bit-identical to 5.3.5. The engine glides Detail like the others (40 ms) and lands it
+    exactly within 0.0001. Cost while the window differs: one more place / context / dB pass per model per frame.
 
 ### Reference match (4.0)
 
