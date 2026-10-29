@@ -6678,6 +6678,405 @@ void testDetail536()
     }
 }
 
+// 5.3.7 bug pass. At Zero latency the Listen solos rest (the engine plays the full result), but prepareToPlay
+// started the Listen crossfade at "solo" whenever a solo was chosen, while every block aims it at "off". So after
+// each prepare (a new buffer size, the start of an export) the dry share of a Mix under 100 % faded back in over
+// 30 ms. A resting solo must sound exactly like Listen off, from the first sample, after every prepare.
+void testFixes537()
+{
+    section ("57. 5.3.7 bug fixes");
+    const double fs = 48000.0;
+    Channels in = testsig::silence (2, (int) (0.25 * fs));
+    for (int i = 0; i < (int) in[0].size(); ++i)
+        in[0][(size_t) i] = in[1][(size_t) i] = 0.25f * (float) std::sin (2.0 * testsig::pi * 440.0 * i / fs);
+    Channels outs[2][2];
+    for (int i = 0; i < 2; ++i)
+    {
+        Rig r;
+        r.set (ids::zeroLatency, 1.0f);
+        r.set (ids::mix, 50.0f);
+        r.set (ids::heat, 40.0f);
+        r.set (ids::listen, i == 0 ? 0.0f : 3.0f);   // Off / Heat only (resting at zero latency)
+        r.prepare (fs, 512);
+        outs[i][0] = r.run (in, fixedBlocks (512));
+        r.prepare (fs, 256);                           // the host prepares again (another buffer size, an export)
+        outs[i][1] = r.run (in, fixedBlocks (256));
+    }
+    double worst = 0.0;
+    int firstDiff = -1;
+    for (int pass = 0; pass < 2; ++pass)
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = 0; k < outs[0][pass][(size_t) c].size(); ++k)
+            {
+                const double d = std::abs (outs[0][pass][(size_t) c][k] - outs[1][pass][(size_t) c][k]);
+                if (d > 0.0 && firstDiff < 0)
+                    firstDiff = (int) k;
+                worst = std::max (worst, d);
+            }
+    check (worst == 0.0, "a solo resting at zero latency sounds like Listen off",
+           "Mix 50 %, Heat only chosen vs. Listen off, after two prepares: max difference " + juce::String (worst, 6)
+               + (firstDiff >= 0 ? " (from sample " + juce::String (firstDiff) + ")" : juce::String()));
+}
+
+// 5.3.7 Heat limit (roadmap item 23): in every band (one ERB around each bin) Heat's harmonics stay at least the
+// limit under the music there (the main path after the EQ). Off, the default, is bit-identical to before.
+namespace heatlimit
+{
+    // Three partials at -18 dBFS (220 Hz, 1 kHz, 3.5 kHz, so every flavour has something to grow from) over quiet
+    // pink noise; with 'wide' the noise differs between left and right, so the sides carry something (Mid/Side).
+    // Without 'thousand' there is no 1 kHz partial, whose skirt in Low latency's 21 ms frame (47 Hz bins) covers
+    // 220 Hz's 5th harmonic at 1.1 kHz: Low can't tell them apart and counts the skirt as music there.
+    Channels signal (double fs, double seconds, bool wide, bool thousand = true)
+    {
+        const int n = (int) (seconds * fs);
+        Channels x = testsig::silence (2, n);
+        testsig::Pink pl (21), pr (wide ? 22u : 21u);
+        for (int i = 0; i < n; ++i)
+        {
+            const double t = i / fs;
+            const float tones = 0.125f * (float) (std::sin (2.0 * testsig::pi * 220.0 * t) + std::sin (2.0 * testsig::pi * 3500.0 * t)
+                                                  + (thousand ? std::sin (2.0 * testsig::pi * 1000.0 * t) : 0.0));
+            x[0][(size_t) i] = tones + 0.003f * pl.next();
+            x[1][(size_t) i] = tones + 0.003f * pr.next();
+        }
+        return x;
+    }
+
+    // Power per bin (left and right together): Hann frames of 8192, hop 4096, averaged over [from, from + len).
+    std::vector<double> powerOf (const Channels& x, int from, int len)
+    {
+        constexpr int order = 13, n = 1 << order;
+        juce::dsp::FFT fft (order);
+        std::vector<float> buf (2 * n);
+        std::vector<double> p (n / 2 + 1, 0.0);
+        int frames = 0;
+        for (int start = from; start + n <= from + len; start += n / 2, ++frames)
+            for (const auto& ch : x)
+            {
+                for (int i = 0; i < n; ++i)
+                    buf[(size_t) i] = ch[(size_t) (start + i)] * (float) (0.5 - 0.5 * std::cos (2.0 * testsig::pi * i / n));
+                std::fill (buf.begin() + n, buf.end(), 0.0f);
+                fft.performRealOnlyForwardTransform (buf.data());
+                for (int k = 0; k <= n / 2; ++k)
+                    p[(size_t) k] += (double) buf[(size_t) 2 * k] * buf[(size_t) 2 * k] + (double) buf[(size_t) 2 * k + 1] * buf[(size_t) 2 * k + 1];
+            }
+        for (auto& v : p)
+            v /= std::max (1, frames);
+        return p;
+    }
+
+    struct Ratio { double worstDb = -200.0, atHz = 0.0; int bands = 0; };
+
+    // The harmonics against the main path in one-ERB bands every 0.1 Cam from 100 Hz to 15 kHz, where the
+    // harmonics are above -110 dB of a full-scale sine's frame power: the largest ratio and where it is. A band is
+    // never narrower than minHz, the engine's own resolution (4 bins of its frame: 47 Hz in Precise, 188 Hz in Low).
+    Ratio worstRatio (const std::vector<double>& harm, const std::vector<double>& main, double fs, double minHz)
+    {
+        const int n = 2 * ((int) harm.size() - 1);
+        const double binHz = fs / n, fullScale = (double) n * n / 16.0;   // a 0 dBFS sine's peak bin under Hann
+        Ratio r;
+        for (double z = anneal::erb::hzToCam (100.0); z <= anneal::erb::hzToCam (15000.0); z += 0.1)
+        {
+            const double centre = anneal::erb::camToHz (z);
+            const double loHz = std::min (anneal::erb::camToHz (z - 0.5), centre - 0.5 * minHz);
+            const double hiHz = std::max (anneal::erb::camToHz (z + 0.5), centre + 0.5 * minHz);
+            const int lo = (int) std::ceil (loHz / binHz);
+            const int hi = (int) std::floor (hiHz / binHz);
+            double h = 0.0, m = 0.0;
+            for (int k = lo; k <= hi; ++k)
+            {
+                h += harm[(size_t) k];
+                m += main[(size_t) k];
+            }
+            if (h < fullScale * 1.0e-11)
+                continue;
+            ++r.bands;
+            const double d = 10.0 * std::log10 (h / std::max (m, 1.0e-30));
+            if (d > r.worstDb)
+            {
+                r.worstDb = d;
+                r.atHz = anneal::erb::camToHz (z);
+            }
+        }
+        return r;
+    }
+
+    // The engine twice on the same input, once normally and once with Listen Heat only: the harmonics are the
+    // solo, the main path the difference (normal - Heat solo = the main path exactly, section on Listen).
+    Ratio measure (anneal::EngineParams p, int mode, const Channels& in, double fs)
+    {
+        Channels outs[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, mode);
+            p.listen = i == 0 ? anneal::listenOff : anneal::listenHarmonics;
+            e->setParameters (p);
+            outs[i] = runEngine (*e, in, fixedBlocks (512));
+        }
+        Channels main = outs[0];
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = 0; k < main[(size_t) c].size(); ++k)
+                main[(size_t) c][k] -= outs[1][(size_t) c][k];
+        const int from = (int) (2.0 * fs), len = (int) (2.0 * fs);
+        return worstRatio (powerOf (outs[1], from, len), powerOf (main, from, len), fs,
+                           4.0 * fs / anneal::SpectralEngine::fftSizeFor (fs, mode));
+    }
+
+    juce::String show (const Ratio& r)
+    {
+        return db (r.worstDb) + " at " + anneal::formatHz ((float) r.atHz);
+    }
+}
+
+void testHeatLimit537()
+{
+    section ("58. 5.3.7 Heat limit");
+    const double fs = 48000.0;
+    constexpr double tolerance = 1.5;   // dB over the limit: the engine's frames and bands against this measurement's
+    const auto in = heatlimit::signal (fs, 4.5, false);
+    const auto minus = juce::String::fromUTF8 ("\xe2\x88\x92");
+
+    // Off, every flavour grows harmonics far louder than the noise between the partials; with the limit at -12 dB
+    // the harmonics in every band stay at least 12 dB under the music there.
+    {
+        juce::String log;
+        bool ok = true;
+        for (int f = 0; f < anneal::HarmonicSynth::numFlavours; ++f)
+        {
+            auto p = neutral();
+            p.heat = 1.0f;
+            p.flavour = f;
+            const auto off = heatlimit::measure (p, anneal::SpectralEngine::precise, in, fs);
+            p.heatLimitDb = -12.0f;
+            const auto at12 = heatlimit::measure (p, anneal::SpectralEngine::precise, in, fs);
+            ok = ok && off.worstDb > -12.0 + 10.0 && at12.bands > 10 && at12.worstDb <= -12.0 + tolerance;
+            log << juce::StringArray { "Clean", "Tape", "Tube", "Transformer", "Exciter" }[f] << " " << heatlimit::show (off)
+                << " -> " << heatlimit::show (at12) << "  ";
+        }
+        check (ok, "the harmonics stop at the limit, band by band, every flavour",
+               "worst band, harmonics against the music (Off -> " + minus + "12 dB): " + log);
+    }
+
+    // Each limit holds where it is set (Clean, -6 / -18 / -30 dB).
+    {
+        juce::String log;
+        bool ok = true;
+        for (float limit : { -6.0f, -18.0f, -30.0f })
+        {
+            auto p = neutral();
+            p.heat = 1.0f;
+            p.heatLimitDb = limit;
+            const auto r = heatlimit::measure (p, anneal::SpectralEngine::precise, in, fs);
+            ok = ok && r.bands > 10 && r.worstDb <= limit + tolerance;
+            log << minus << juce::String (juce::roundToInt (-limit)) << ": " << heatlimit::show (r) << "  ";
+        }
+        check (ok, "every limit holds (-6, -18, -30 dB)", log);
+    }
+
+    // Low latency (partials farther apart than its 47 Hz bins can blur; with the 1 kHz partial next to 220 Hz's 5th
+    // harmonic, shown for the record), Mid/Side (the sides carrying something), and Spread load: the same output
+    // one hop later.
+    {
+        auto p = neutral();
+        p.heat = 1.0f;
+        p.heatLimitDb = -12.0f;
+        const auto low = heatlimit::measure (p, anneal::SpectralEngine::low, heatlimit::signal (fs, 4.5, false, false), fs);
+        const auto lowClose = heatlimit::measure (p, anneal::SpectralEngine::low, in, fs);
+        auto pm = p;
+        pm.midSide = 1.0f;
+        const auto ms = heatlimit::measure (pm, anneal::SpectralEngine::precise, heatlimit::signal (fs, 4.5, true), fs);
+
+        Channels outs[2];
+        int hop = 0;
+        for (int i = 0; i < 2; ++i)
+        {
+            auto e = std::make_unique<anneal::SpectralEngine>();
+            e->prepare (fs, 2, anneal::SpectralEngine::normal);
+            e->setSpread (i == 1);
+            e->reset();
+            e->setParameters (p);
+            hop = e->getHopSize();
+            outs[i] = runEngine (*e, in, randomBlocks (1, 700, 58));
+        }
+        double worst = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = 0; k + (size_t) hop < outs[0][(size_t) c].size(); ++k)
+                worst = std::max (worst, (double) std::abs (outs[1][(size_t) c][k + (size_t) hop] - outs[0][(size_t) c][k]));
+        check (low.worstDb <= -12.0 + tolerance && ms.worstDb <= -12.0 + tolerance && worst < 1.0e-6,
+               "Low latency, Mid/Side, Spread load",
+               minus + "12 dB: Low " + heatlimit::show (low) + " (with the 1 kHz partial " + heatlimit::show (lowClose)
+                   + "), Mid/Side " + heatlimit::show (ms)
+                   + "; Spread vs. one hop later: largest difference " + juce::String (worst, 9));
+    }
+
+    // Off is bit-identical: the defaults are Off, and a limit moved to -12 dB and back plays exactly like one that
+    // never moved (music, Reveal, Smooth, Heat 50 % Tape) once its overlap-add tail has passed. At Zero latency, where
+    // Heat rests, the limit changes nothing either.
+    {
+        const auto music = testsig::musicLike (fs, 6.0, 31);
+        const int split = (int) (1.5 * fs);
+        Channels first = music, second = music;
+        for (int c = 0; c < 2; ++c)
+        {
+            first[(size_t) c].resize ((size_t) split);
+            second[(size_t) c].erase (second[(size_t) c].begin(), second[(size_t) c].begin() + split);
+        }
+        Channels outs[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            Rig r;
+            r.set (ids::reveal, 60.0f); r.set (ids::smooth, 60.0f); r.set (ids::heat, 50.0f); r.set (ids::flavour, 1.0f);
+            if (i == 1)
+                r.set (ids::heatLimit, -12.0f);
+            r.prepare (fs, 512);
+            r.run (first, fixedBlocks (512));
+            if (i == 1)
+                r.set (ids::heatLimit, 0.0f);
+            outs[i] = r.run (second, fixedBlocks (512));
+        }
+        double worst = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = (size_t) fs; k < outs[0][(size_t) c].size(); ++k)
+                worst = std::max (worst, (double) std::abs (outs[0][(size_t) c][k] - outs[1][(size_t) c][k]));
+
+        Channels zeroOuts[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            Rig r;
+            r.set (ids::zeroLatency, 1.0f);
+            r.set (ids::heat, 80.0f);
+            r.set (ids::heatLimit, i == 0 ? 0.0f : -24.0f);
+            r.prepare (fs, 512);
+            zeroOuts[i] = r.run (in, fixedBlocks (512));
+        }
+        double zeroDiff = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t k = 0; k < zeroOuts[0][(size_t) c].size(); ++k)
+                zeroDiff = std::max (zeroDiff, (double) std::abs (zeroOuts[0][(size_t) c][k] - zeroOuts[1][(size_t) c][k]));
+
+        Rig d;
+        const bool defaults = anneal::EngineParams().heatLimitDb == anneal::heatLimitOffDb && anneal::heatLimitIsOff (0.0f)
+                              && ! anneal::heatLimitIsOff (-0.1f) && d.proc->apvts.getRawParameterValue (ids::heatLimit)->load() == 0.0f;
+        check (worst == 0.0 && zeroDiff == 0.0 && defaults, "Off bit-identical to before (also back from -12 dB)",
+               "max diff after returning to Off " + juce::String (worst, 12) + "; Zero latency with " + minus + "24 dB vs. Off "
+                   + juce::String (zeroDiff, 12) + (defaults ? "; defaults Off" : "; DEFAULT NOT OFF"));
+    }
+
+    // What it costs (informational): the engine on 10 s of music with Heat 60 %, Precise and Low, Off against -12 dB.
+    {
+        const auto music = testsig::musicLike (fs, 10.0, 32);
+        juce::String line = "CPU, % of one core (Off / " + minus + "12 dB):";
+        for (auto mode : { anneal::SpectralEngine::low, anneal::SpectralEngine::precise })
+        {
+            double pct[2] {};
+            for (int i = 0; i < 2; ++i)
+            {
+                auto e = std::make_unique<anneal::SpectralEngine>();
+                e->prepare (fs, 2, mode);
+                auto p = neutral();
+                p.reveal = 0.6f; p.smooth = 0.6f; p.heat = 0.6f;
+                p.heatLimitDb = i == 0 ? 0.0f : -12.0f;
+                e->setParameters (p);
+                double best = 1.0e9;
+                for (int rep = 0; rep < 3; ++rep)
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    runEngine (*e, music, fixedBlocks (512));
+                    best = std::min (best, std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count());
+                }
+                pct[i] = 100.0 * best / 10.0;
+            }
+            line << (mode == anneal::SpectralEngine::low ? " Low " : ", Precise ") << juce::String (pct[0], 2) << " / " << juce::String (pct[1], 2);
+        }
+        info (line);
+    }
+
+    // The parameter: "Off" by default, "−12 dB", typed values; older projects open with Off (whatever this instance
+    // had), a project keeps its limit, factory presets leave it alone.
+    {
+        Rig r;
+        auto* hp = r.proc->apvts.getParameter (ids::heatLimit);
+        auto raw = [] (Rig& x) { return x.proc->apvts.getRawParameterValue (ids::heatLimit)->load(); };
+        auto typed = [hp] (const juce::String& t) { return hp->convertFrom0to1 (hp->getValueForText (t)); };
+        const bool texts = hp->getCurrentValueAsText() == "Off" && hp->getText (hp->convertTo0to1 (-12.0f), 32) == minus + "12 dB"
+                           && hp->getText (hp->convertTo0to1 (-4.5f), 32) == minus + "4.5 dB"
+                           && std::abs (typed ("-18") + 18.0f) < 0.1f && std::abs (typed ("9 dB") + 9.0f) < 0.1f
+                           && std::abs (typed (minus + "24 dB") + 24.0f) < 0.1f && typed ("off") == 0.0f
+                           && typed ("none") == 0.0f && std::abs (typed ("45") + 30.0f) < 0.1f
+                           && hp->getName (32) == "Heat Limit" && hp->isAutomatable();
+
+        auto old = r.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::heatLimit), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::heatLimit, -18.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        const bool oldOpen = raw (b) == 0.0f;
+
+        Rig c;
+        c.set (ids::heatLimit, -9.0f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = std::abs (raw (d) + 9.0f) < 0.1f;
+        d.proc->setCurrentProgram (2);
+        const bool presetKeeps = std::abs (raw (d) + 9.0f) < 0.1f && d.proc->getPresetDisplayName() == "Mix bus glue";
+        check (texts && oldOpen && kept && presetKeeps, "Heat limit: texts, older projects, saved, presets",
+               "default " + hp->getCurrentValueAsText() + ", -12 -> " + hp->getText (hp->convertTo0to1 (-12.0f), 32)
+                   + ", typed 45 -> " + juce::String (typed ("45"), 1) + ", older project -> " + juce::String (raw (b), 1)
+                   + ", saved -> " + juce::String (raw (d), 1) + ", after a preset " + d.proc->getPresetDisplayName());
+    }
+
+    // The Flavour menu: its Heat limit section sets the parameter, the pill adds the limit ("Tape · −12 dB") and
+    // its text fits the pill for every flavour and every step; Off reads as before. No new control on the deck.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::FlavourMenu* menu = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+                if (auto* f = dynamic_cast<anneal::FlavourMenu*> (c))
+                    menu = f;
+        if (menu == nullptr)
+        {
+            check (false, "the Heat limit in the Flavour menu", "no Flavour menu");
+            return;
+        }
+        const float width = menu->textArea().getWidth();
+        const auto offText = anneal::FlavourMenu::shown (0, 0.0f, width);
+        const bool offAsBefore = offText.name == "Flavour: clean" && offText.limit.isEmpty() && offText.fontSize == 12.0f;
+        juce::String tooWide;
+        float widest = 0.0f;
+        for (int f = 0; f < anneal::FlavourMenu::numChoices; ++f)
+            for (float step : { 4.5f, 6.0f, 9.0f, 12.0f, 18.0f, 24.0f, 30.0f })
+            {
+                const auto s = anneal::FlavourMenu::shown (f, -step, width);
+                const float w = anneal::FlavourMenu::textWidth (s.name + s.limit, s.fontSize);
+                widest = std::max (widest, w);
+                if (w > width || s.limit.isEmpty())
+                    tooWide << s.name << s.limit << " (" << juce::String (w, 1) << " px)  ";
+            }
+        menu->choose (102 + 2);   // the third step, -12 dB
+        const float chosen = r.proc->apvts.getRawParameterValue (ids::heatLimit)->load();
+        menu->choose (2);         // Tape
+        const auto tape = anneal::FlavourMenu::shown (menu->getChoice(), menu->getLimitDb(), width);
+        const juce::String tapeText = tape.name + tape.limit;
+        menu->choose (101);       // Off
+        const bool backOff = r.proc->apvts.getRawParameterValue (ids::heatLimit)->load() == 0.0f;
+        const bool tip = menu->getTooltip().contains ("Heat limit");
+        check (offAsBefore && tooWide.isEmpty() && chosen == -12.0f && tapeText == juce::String::fromUTF8 ("Tape \xc2\xb7 ") + minus + "12 dB"
+                   && backOff && tip,
+               "the Heat limit in the Flavour menu",
+               "pill text area " + juce::String (width, 1) + " px, widest text " + juce::String (widest, 1) + " px; menu -12 dB -> "
+                   + juce::String (chosen, 1) + ", reads \"" + tapeText + "\", Off -> " + (backOff ? "off" : "NOT OFF")
+                   + (tooWide.isEmpty() ? juce::String() : "; TOO WIDE: " + tooWide));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -6690,13 +7089,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes535();
+        testFixes537();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testDetail536();
+        testHeatLimit537();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -6758,6 +7157,8 @@ int main (int argc, char** argv)
     testFixes535();
     testPeakHold535();
     testDetail536();
+    testFixes537();
+    testHeatLimit537();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

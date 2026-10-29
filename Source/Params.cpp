@@ -1,5 +1,6 @@
 #include "Params.h"
 #include "dsp/PerceptualModel.h"   // noLimitDb, keyFullLoHz / keyFullHiHz
+#include "dsp/HarmonicSynth.h"     // heatLimitOffDb / heatLimitMinDb
 
 namespace anneal
 {
@@ -107,6 +108,23 @@ float parseDetail (const juce::String& text)
     if (l.contains ("fine") || l.contains ("narrow"))
         return hasNumber ? n : 100.0f;
     return hasNumber ? leadingNumber (l) : 0.0f;   // "normal", "default"
+}
+
+juce::String formatHeatLimit (float db)
+{
+    if (heatLimitIsOff (db))
+        return "Off";
+    const float r = std::round (std::abs (db) * 10.0f) / 10.0f;
+    const auto number = std::abs (r - std::round (r)) < 0.05f ? juce::String (juce::roundToInt (r)) : juce::String (r, 1);
+    return juce::String::fromUTF8 ("\xe2\x88\x92") + number + " dB";
+}
+
+float parseHeatLimit (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim().replace (juce::String::fromUTF8 ("\xe2\x88\x92"), "-");
+    if (! l.containsAnyOf ("0123456789"))
+        return heatLimitOffDb;   // "Off", "none", "no limit"
+    return -std::min (-heatLimitMinDb, std::abs (leadingNumber (l)));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -391,6 +409,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         juce::NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f,
         Attr().withStringFromValueFunction ([] (float v, int) { return formatDetail (v); })
               .withValueFromStringFunction ([] (const juce::String& t) { return parseDetail (t); })));
+
+    // 5.3.7 Heat limit: in every band the harmonics stay at least this far under the music, -30 .. 0 dB. The
+    // top, 0 dB, is Off (nothing limited): the default, and what older projects load with.
+    layout.add (std::make_unique<Float> (juce::ParameterID { ids::heatLimit, 1 }, "Heat Limit",
+        juce::NormalisableRange<float> (heatLimitMinDb, heatLimitOffDb, 0.1f), heatLimitOffDb,
+        Attr().withLabel ("dB")
+              .withStringFromValueFunction ([] (float v, int) { return formatHeatLimit (v); })
+              .withValueFromStringFunction ([] (const juce::String& t) { return parseHeatLimit (t); })));
 
     return layout;
 }

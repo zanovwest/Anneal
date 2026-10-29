@@ -37,6 +37,7 @@ namespace anneal
         float heatMid      = 1.0f, heatSide = 1.0f;
         int listen         = listenOff;   // Listen enum; switches per frame (overlap-add crossfades it)
         int flavour        = flavourClean;   // Flavour enum (HarmonicSynth.h); switches per frame like listen
+        float heatLimitDb  = heatLimitOffDb; // 5.3.7: the harmonics at most this far under the music per band (0 = off)
         bool freeze        = false;          // hold the auto-EQ curve
         int scMode         = 0;              // sidechain: 0 off, 1 make room, 2 unmask
         float scAmount     = 0.5f;
@@ -145,6 +146,7 @@ namespace anneal
         void blendMidSide (float blend) noexcept;
         void applyListen (float msBlend) noexcept;
         void applyWidth (bool harmonics) noexcept;   // 5.0 Width and Mono bass
+        void applyHeatLimit (float powScale) noexcept;   // 5.3.7
 
         double sampleRate = 48000.0;
         int fftSize = 4096, hop = 512, numBins = 2049, channels = 2, pos = 0;
@@ -193,6 +195,11 @@ namespace anneal
         PaintCurves paintCopy;                     // 5.2.2: its width curve, kept across prepare() and reset()
         std::vector<float> binCam, widthShare;      // per bin: its Cam, and the painted share of Width
         bool widthPainted = false;
+        // 5.3.7 Heat limit: each bin's band (one ERB around it) as bin indices, running sums over the bins of the
+        // main path's and the harmonics' power, each band's gain, and the sliding minimum's queue.
+        std::vector<int> limitLo, limitHi, limitQueue;
+        std::vector<double> limitMain, limitHarm;
+        std::vector<float> limitGain;
         TripleBuffer<ReferenceCurve>* learnOut = nullptr;
         ReferenceCurve learnScratch;
         bool learnFresh = true, learnHeld = false;

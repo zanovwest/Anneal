@@ -4,6 +4,63 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.7 — 2026-10-29 10:13
+
+New
+- **Heat limit**: how loud Heat's harmonics may get against the music, band by band. Until now a high Heat could
+  grow harmonics that stood out on their own, louder than anything else in their band: a 1 kHz note at full Heat
+  put its 2nd harmonic at 2 kHz some 40 dB over the quiet mix around it. Now you can keep them under the music.
+  - At **−12 dB**, say, the harmonics in every band stay at least 12 dB under what is already playing there. They
+    still thicken and brighten the sound where it has something (that is where Heat colours), but they no longer
+    poke out of the gaps between notes. Lower limits (−18, −24, −30 dB) keep them subtler still; −6 dB lets them come
+    close.
+  - It is a second section in the **Flavour menu**, *Heat limit (under the music)*: Off, −6, −9, −12, −18, −24 or
+    −30 dB. With a limit set the pill shows it after the flavour, "Tape · −12 dB" (or "Clean · −12 dB"), so the deck
+    gains no control.
+  - "A band" is one critical band (about a third of an octave in the mids) around each frequency. In Low latency
+    the short frame can't resolve bands narrower than about 190 Hz, so there it is at least that wide, and a harmonic
+    within about 100 Hz of a loud note counts that note as its music.
+  - It works with every flavour, in every latency mode and in Mid/Side (on what you hear, left and right together).
+    At Zero latency Heat rests, and so does the limit. The display's HEAT lane shows the limited harmonics.
+  - Also a host parameter, "Heat Limit", automatable (type `-12`, `18 dB` or `off`). Off is the default and what
+    older projects open with, so they sound exactly as before. Factory presets leave it alone.
+
+Fixes
+- **At Zero latency a Listen solo faded the dry signal in after every prepare.** At Zero latency the Listen solos
+  rest (you hear the full result), but if one was still chosen, each time the host prepared Anneal (a new buffer
+  size, the start of every export) the first 30 ms played without the dry part of the Mix: with Mix at 50 % the
+  output started about 6 dB low and faded up. Now a resting solo sounds exactly like Listen off from the first
+  sample.
+
+Tests: 232/232 acceptance checks, 7 new:
+- the bug fix: Mix 50 %, Heat only chosen at Zero latency against Listen off, after two prepares: difference 0 (it was
+  0.12 from the first sample, on a 0.25 sine);
+- the limit holds band by band, every flavour (Precise; three −18 dBFS partials at 220 Hz, 1 kHz and 3.5 kHz over
+  pink noise, Heat 100 %; the harmonics' power against the music in one-ERB bands, measured on the audio): Off the
+  worst band is +35 … +48 dB, at −12 dB it is −11.9 dB for Clean, Tape, Tube and Transformer and −12.5 dB for
+  Exciter;
+- every limit holds: −6 / −18 / −30 dB give −5.9 / −17.9 / −29.9 dB;
+- Low latency −10.6 dB (−3.1 dB where a harmonic sits 100 Hz from a loud partial, inside Low's resolution),
+  Mid/Side −11.8 dB, and with Spread load the output is the same one hop later (difference 0.000000000);
+- Off is bit-identical: the defaults are Off, a limit moved to −12 dB and back plays exactly like one that never
+  moved (music with Reveal, Smooth and Heat 50 % Tape, difference 0.000000000000), and at Zero latency −24 dB changes
+  nothing;
+- the parameter: "Off" by default, "−12 dB", typed `-18`, `9 dB`, `−24 dB`, `off`, `none`, `45` (→ −30 dB); older
+  projects open Off whatever the instance had, a saved limit comes back, factory presets leave it alone;
+- the Flavour menu: its Heat limit section sets the parameter and Off clears it; the pill reads "Tape · −12 dB" and its
+  text fits the pill (94 px) for every flavour and every step (widest 88.6 px, "Transformer · −12 dB" at 11 px); Off
+  reads as before.
+
+30/30 host checks on the built VST3 (1 new: Heat Limit through VST3, its texts and typed values, and a 1 kHz tone
+over quiet pink noise at Heat 100 %: its 2nd harmonic at 2 kHz −24.9 dB with Off, −85.4 dB at −18 dB, the tone
+−18.06 dB both times) and 25/25 setup checks pass.
+CPU: Off costs nothing (the limit isn't looked at). With a limit set, three light passes over the bins per frame: on
+10 s of music with Heat 60 %, Low 1.94 → 2.06 %, Precise 4.65 → 4.97 % of a core. The benchmark (default settings,
+limit off) read about 15 % higher than 5.3.6's on every case, Zero latency included, which this update doesn't
+touch: the machine was busier (a browser and audio playing). The same unchanged code path measured 1.68 / 4.10 %
+yesterday and 1.93 / 4.57 % today. At 48 kHz / 64 samples Stereo Low 2.0 %, Precise 4.6 %, Mid/Side Precise 8.0 %; the
+slowest 0.1 % of blocks 5 / 12 / 23 % of the deadline (5.3.6: 5 / 11 / 20 %), within the usual spread.
+
 ## 5.3.6 — 2026-10-28 10:11
 
 New

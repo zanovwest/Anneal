@@ -148,7 +148,7 @@ int main (int argc, char* argv[])
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
-                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High", "Detail" })
+                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High", "Detail", "Heat Limit" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -1096,6 +1096,54 @@ int main (int argc, char* argv[])
         check (ok, "Detail through VST3",
                texts + "; ring 3150 Hz " + juce::String (atRing[0], 2) + " / " + juce::String (atRing[1], 2)
                    + " dB, neighbour " + juce::String (atNear[0], 2) + " / " + juce::String (atNear[1], 2) + " dB (Normal / Fine 100)");
+    }
+
+    // 14. 5.3.7 Heat limit through VST3: automatable, "Off" by default, typed values; with Heat 100 % a 1 kHz tone
+    //     over quiet pink noise grows a 2nd harmonic far above the noise at 2 kHz, which the limit takes down to the
+    //     noise's level there; the tone itself stays.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* limit = inst != nullptr ? findParam (*inst, "Heat Limit") : nullptr;
+        bool ok = limit != nullptr && limit->isAutomatable();
+        juce::String texts;
+        double second[2] {}, tone[2] {};
+        if (ok)
+        {
+            const auto minus = juce::String::fromUTF8 ("\xe2\x88\x92");
+            const float at18 = limit->getValueForText ("-18");
+            texts << limit->getText (limit->getValue(), 32) << ", " << limit->getText (at18, 32) << ", "
+                  << limit->getText (limit->getValueForText ("12 dB"), 32) << ", " << limit->getText (limit->getValueForText ("off"), 32);
+            ok = limit->getText (limit->getValue(), 32) == "Off" && limit->getText (at18, 32) == minus + "18 dB"
+                 && limit->getText (limit->getValueForText ("12 dB"), 32) == minus + "12 dB"
+                 && limit->getText (limit->getValueForText ("off"), 32) == "Off";
+
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Smooth", 0.0f }, { "Heat", 1.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            const int n = (int) (3.0 * fs);
+            auto sig = testsig::silence (2, n);
+            testsig::Pink pink (9);
+            for (int i = 0; i < n; ++i)
+                sig[0][(size_t) i] = sig[1][(size_t) i] = 0.002f * pink.next() + 0.125f * (float) std::sin (2.0 * testsig::pi * 1000.0 * i / fs);
+            for (int i = 0; i < 2; ++i)
+            {
+                if (i == 1)
+                    limit->setValueNotifyingHost (at18);
+                inst->reset();
+                ok = ok && run (*inst, sig, out, [] { return 512; });
+                const int from = (int) (1.5 * fs), len = (int) fs;
+                second[i] = testsig::toDb (testsig::toneAmplitude (out[0].data() + from, len, 2000.0, fs));
+                tone[i] = testsig::toDb (testsig::toneAmplitude (out[0].data() + from, len, 1000.0, fs));
+            }
+            inst->releaseResources();
+            ok = ok && second[1] < second[0] - 10.0 && std::abs (tone[1] - tone[0]) < 0.1;
+        }
+        check (ok, "Heat Limit through VST3",
+               texts + "; 2nd harmonic at 2 kHz " + juce::String (second[0], 1) + " dB (Off) -> " + juce::String (second[1], 1)
+                   + " dB (" + juce::String::fromUTF8 ("\xe2\x88\x92") + "18 dB), the 1 kHz tone " + juce::String (tone[0], 2) + " / "
+                   + juce::String (tone[1], 2) + " dB");
     }
 
     plugin->releaseResources();

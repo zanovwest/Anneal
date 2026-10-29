@@ -219,6 +219,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pScKeyLo    = apvts.getRawParameterValue (ids::scKeyLo);
     pScKeyHi    = apvts.getRawParameterValue (ids::scKeyHi);
     pDetail     = apvts.getRawParameterValue (ids::detail);
+    pHeatLimit  = apvts.getRawParameterValue (ids::heatLimit);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -386,7 +387,8 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     outputSmoothed.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (pOutput->load()));
     deltaSmoothed.setCurrentAndTargetValue (pDelta->load() > 0.5f ? 1.0f : 0.0f);
     bypassSmoothed.setCurrentAndTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
-    listenSmoothed.setCurrentAndTargetValue (pListen->load() > 0.5f ? 1.0f : 0.0f);
+    // 5.3.7 fix: as processBlock aims it, so a solo resting at zero latency doesn't fade the dry share in.
+    listenSmoothed.setCurrentAndTargetValue (pListen->load() > 0.5f && ! zero ? 1.0f : 0.0f);
     matchHold = 0;
     matchSmoothed.reset (sampleRate, 0.5);
     matchSmoothed.setCurrentAndTargetValue (pMatch->load() > 0.5f ? match.getGain() : 1.0f);
@@ -465,6 +467,7 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.heatSide = ht == 1 ? 0.0f : 1.0f;
     p.listen = juce::jlimit (0, 3, juce::roundToInt (pListen->load()));
     p.flavour = juce::jlimit (0, anneal::HarmonicSynth::numFlavours - 1, juce::roundToInt (pFlavour->load()));
+    p.heatLimitDb = pHeatLimit->load();
     p.freeze = pFreeze->load() > 0.5f;
     p.punch = pPunch->load() / 100.0f;
     p.width = pWidth->load() / 100.0f;
@@ -1084,6 +1087,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasScKeyLo = tree.getChildWithProperty ("id", anneal::ids::scKeyLo).isValid();
             const bool hasScKeyHi = tree.getChildWithProperty ("id", anneal::ids::scKeyHi).isValid();
             const bool hasDetail = tree.getChildWithProperty ("id", anneal::ids::detail).isValid();
+            const bool hasHeatLimit = tree.getChildWithProperty ("id", anneal::ids::heatLimit).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1193,6 +1197,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasDetail)
                 if (auto* dp = apvts.getParameter (anneal::ids::detail))
                     dp->setValueNotifyingHost (dp->getDefaultValue());
+
+            // Projects saved before 5.3.7: Heat's harmonics without a limit, as they were then, whatever this
+            // instance had.
+            if (! hasHeatLimit)
+                if (auto* hp = apvts.getParameter (anneal::ids::heatLimit))
+                    hp->setValueNotifyingHost (hp->getDefaultValue());
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

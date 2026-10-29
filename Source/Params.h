@@ -44,6 +44,7 @@ namespace anneal::ids
     inline constexpr const char* scKeyLo     = "scKeyLo";     // 5.3.4: the sidechain key counts from here, Hz (20 = as before)
     inline constexpr const char* scKeyHi     = "scKeyHi";     // 5.3.4: ... up to here, Hz (20 kHz = as before)
     inline constexpr const char* detail      = "detail";      // 5.3.6: how narrow the auto EQ's moves are, -100 broad .. +100 fine (0 = as before)
+    inline constexpr const char* heatLimit   = "heatLimit";   // 5.3.7: the harmonics at most this far under the music per band, dB (0 = off, as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -75,6 +76,10 @@ namespace anneal
     // with or without a number, or a plain number (negative = broad).
     juce::String formatDetail (float v);
     float parseDetail (const juce::String& text);
+    // 5.3.7 Heat limit: "Off" at the top of the range (0 dB), else "−12 dB"; typed text takes the number's size
+    // as dB under ("-12", "12 dB", up to 30) or "off" / "none".
+    juce::String formatHeatLimit (float db);
+    float parseHeatLimit (const juce::String& text);
 
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };

@@ -236,6 +236,10 @@ int main (int argc, char* argv[])
           {
               set (p, ids::heat, 70); set (p, ids::flavour, 3);   // Transformer: the longest pill text
           }, 220.0f, true },
+        { "heatlimit", [] (AnnealAudioProcessor& p)   // 5.3.7: Heat high with the Heat limit at -12 dB, on the pill
+          {
+              set (p, ids::heat, 90); set (p, ids::flavour, 3); set (p, ids::heatLimit, -12.0f);
+          }, 2000.0f, true },
         // 4.0
         { "reference", [] (AnnealAudioProcessor& p)
           {

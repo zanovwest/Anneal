@@ -230,6 +230,30 @@ interpolated peak position. Tape's `d` is a per-bin table built in `prepare()`; 
 multiply per peak. The flavour switches per frame and the harmonic stream's overlap-add crossfades it.
 `HarmonicSynth::harmonicLevel` evaluates the same law for the editor's bars.
 
+### Heat limit (5.3.7)
+
+Parameter `heatLimit`, −30 … 0 dB; 0 dB (from −0.05 up, `heatLimitIsOff`) is Off, the default and what older
+projects load with. After the harmonics are written and the main path has its EQ (in Mid/Side after the blend,
+so on what is heard, left and right together), per frame in stage 2 (`SpectralEngine::applyHeatLimit`):
+
+1. Running sums over the bins of the main path's power `M` and the harmonics' power `H` (both channels, double).
+2. Each bin `j` has a band: the bins within ±0.5 Cam (one ERB) of it, never fewer than ±2 bins (a partial's whole
+   Hann main lobe; in Low latency one ERB is narrower than a bin up to about 1.5 kHz). Tables built in `prepare()`.
+   The band's gain `g_j = min (1, √(10^(L/10) · M_j / H_j))`.
+3. Each bin takes the smallest gain of the bands it lies in, a sliding minimum over the same windows (both ends
+   only move up; O(n) with a monotone queue). The bands are symmetric (j in k's band ⇔ k in j's), so every band
+   ends up at or under the limit, also one whose bins reach a loud partial next door. Same gain in both channels.
+4. The display's harmonic and output powers are recomputed from the scaled spectra.
+
+If no band is over the limit nothing is scaled. The limit glides like the other settings (40 ms, per frame) and
+lands exactly within 0.01 dB, so Off after a limit is bit-identical once the overlap-add tail has passed. Heat
+rests at zero latency, and so does the limit. Measured on three −18 dBFS partials over pink noise with Heat 100 %
+(the harmonics' power against the main path in one-ERB bands, never narrower than 4 bins of the engine's frame):
+Off +35 … +48 dB; at −12 dB −11.9 dB in Precise for every flavour, −11.8 dB in Mid/Side, −10.6 dB in Low. In Low a
+harmonic within about 100 Hz of a loud partial is inside that partial's skirt in the 21 ms frame, so it counts the
+partial as its music (220 Hz's 5th next to a 1 kHz partial: −3.1 dB). Cost with a limit set: three passes over the
+bins per frame, about +0.1 % of a core in Low and +0.3 % in Precise (Heat 60 %); Off costs nothing.
+
 Properties: no intermodulation products and no aliasing (writes above the top bin are
 dropped). Expected weakness: like any STFT process, harmonics are smeared over the
 frame (pre-echo up to ~N/2 before sharp onsets). Measured in the tests.

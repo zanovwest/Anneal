@@ -8,6 +8,12 @@ namespace anneal
     // law, unchanged; the others reshape it like the hardware they are named after.
     enum Flavour { flavourClean = 0, flavourTape = 1, flavourTube = 2, flavourTransformer = 3, flavourExciter = 4 };
 
+    // 5.3.7 Heat limit: how loud the harmonics may get against the rest of the sound in each band (one ERB
+    // around every bin), dB, from -30 to the top of the range, 0 dB, which is Off: from -0.05 dB up nothing is
+    // limited (as before, and what older projects load with).
+    inline constexpr float heatLimitOffDb = 0.0f, heatLimitMinDb = -30.0f;
+    inline bool heatLimitIsOff (float db) noexcept { return db >= heatLimitOffDb - 0.05f; }
+
     struct HeatSettings
     {
         float heat  = 0.0f;   // 0..1 drive

@@ -187,7 +187,10 @@ routing menu (the Heat ring sits at y 432, level with Reveal and Smooth, to leav
 plain raised pill ("Flavour: clean"); any other flavour shows its name tinted bronze, the Heat role
 colour, like Listen's solos. The harmonic bars under Color are drawn with the synth's own flavour law,
 for a 120 Hz partial (Transformer's drive depends on the note) or a 4 kHz one for Exciter, and the
-tooltip says so.
+tooltip says so. 5.3.7: the same menu has a second section, *Heat limit (under the music)*, Off and
+−6 … −30 dB, so the deck gains no control; with a limit set the pill is tinted bronze and adds it after the
+flavour in bronze, "Tape · −12 dB" (12 px, then 11 px, then "Transformer −12" where the longer text doesn't
+fit its 94 px).
 
 **Sidechain, Freeze, Ceiling (3.0).** The key's spectrum is a thin violet line on the EQ lane, drawn
 only while a key is arriving, with a KEY legend under AUTO EQ. Freeze is a pill on the AUTO EQ title

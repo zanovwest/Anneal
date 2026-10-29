@@ -91,6 +91,26 @@ void SpectralEngine::prepare (double newSampleRate, int numChannels, int mode, b
         binCam[(size_t) k] = (float) erb::hzToCam (k * sampleRate / fftSize);
     updateWidthShare();
 
+    // 5.3.7 Heat limit: each bin's band, the bins within +-0.5 Cam (one ERB) of it, and never less than +-2 bins
+    // (a partial's whole main lobe, the frame's own resolution: in Low latency one ERB is narrower than a bin up
+    // to about 1.5 kHz). Both ends only move up with the bin, and the bands are symmetric (bin j is in bin k's
+    // band when k is in j's).
+    limitLo.resize ((size_t) numBins);
+    limitHi.resize ((size_t) numBins);
+    limitMain.assign ((size_t) numBins + 1, 0.0);
+    limitHarm.assign ((size_t) numBins + 1, 0.0);
+    limitGain.assign ((size_t) numBins, 1.0f);
+    limitQueue.assign ((size_t) numBins, 0);
+    {
+        const double binHz = sampleRate / fftSize;
+        for (int k = 0; k < numBins; ++k)
+        {
+            const double cam = erb::hzToCam (k * binHz);
+            limitLo[(size_t) k] = std::clamp (std::min ((int) std::ceil (erb::camToHz (cam - 0.5) / binHz), k - 2), 0, k);
+            limitHi[(size_t) k] = std::clamp (std::max ((int) std::floor (erb::camToHz (cam + 0.5) / binHz), k + 2), k, numBins - 1);
+        }
+    }
+
     model.prepare (sampleRate, fftSize, keepCurve);
     synth.prepare (fftSize, sampleRate);
     reset (keepCurve);
@@ -295,6 +315,10 @@ void SpectralEngine::smoothParameters() noexcept
     lin (current.monoHz, target.monoHz);
     lin (current.maxCutDb, target.maxCutDb);
     lin (current.maxBoostDb, target.maxBoostDb);
+    // 5.3.7: the Heat limit glides and lands exactly (back at Off, nothing is limited, as before).
+    lin (current.heatLimitDb, target.heatLimitDb);
+    if (std::abs (current.heatLimitDb - target.heatLimitDb) < 0.01f)
+        current.heatLimitDb = target.heatLimitDb;
     current.freeze = target.freeze;
     current.scMode = target.scMode;
     current.refMode = target.refMode;
@@ -636,6 +660,10 @@ void SpectralEngine::runStage (int s) noexcept
                 blendMidSide (fw.msBlend);
                 fw.harmonicsWritten = fw.harmonicsWritten || lastPeakCount > 0;
             }
+
+            // 5.3.7 Heat limit, on what is heard (after the Mid/Side blend). Off: not looked at, as before.
+            if (fw.harmonicsWritten && ! heatLimitIsOff (current.heatLimitDb))
+                applyHeatLimit (powScale);
         }
 
         DisplayFrame& f = displayOut->beginWrite();
@@ -877,6 +905,73 @@ void SpectralEngine::applyWidth (bool harmonics) noexcept
     apply (spec[0].data(), spec[1].data());
     if (harmonics)
         apply (harmSpec[0].data(), harmSpec[1].data());
+}
+
+void SpectralEngine::applyHeatLimit (float powScale) noexcept
+{
+    // In the band around each bin (one ERB) the harmonics' power may be at most the limit under the main
+    // path's there (the music after the EQ, left and right together). Each band where they are louder gets
+    // the gain that brings them down to the limit, and each bin takes the smallest gain of the bands it lies
+    // in (the windows are symmetric in Cam), so no band ends up over the limit, not even one whose bins also
+    // reach a loud partial next door. The same gain in both channels (the image stays); the display's powers
+    // then follow.
+    const double ratio = std::pow (10.0, (double) current.heatLimitDb / 10.0);
+    limitMain[0] = limitHarm[0] = 0.0;
+    for (int k = 0; k < numBins; ++k)
+    {
+        double m = 0.0, h = 0.0;
+        for (int c = 0; c < channels; ++c)
+        {
+            const float* sp = spec[c].data();
+            const float* hs = harmSpec[c].data();
+            m += (double) sp[2 * k] * sp[2 * k] + (double) sp[2 * k + 1] * sp[2 * k + 1];
+            h += (double) hs[2 * k] * hs[2 * k] + (double) hs[2 * k + 1] * hs[2 * k + 1];
+        }
+        limitMain[(size_t) k + 1] = limitMain[(size_t) k] + m;
+        limitHarm[(size_t) k + 1] = limitHarm[(size_t) k] + h;
+    }
+    bool limited = false;
+    for (int k = 0; k < numBins; ++k)
+    {
+        const auto lo = (size_t) limitLo[(size_t) k], hi = (size_t) limitHi[(size_t) k] + 1;
+        const double h = std::max (0.0, limitHarm[hi] - limitHarm[lo]);
+        const double allowed = ratio * std::max (0.0, limitMain[hi] - limitMain[lo]);
+        limitGain[(size_t) k] = h > allowed ? (float) std::sqrt (allowed / h) : 1.0f;
+        limited = limited || h > allowed;
+    }
+    if (! limited)
+        return;
+
+    // The smallest band gain over each bin's window: a sliding minimum (both window ends only move up).
+    int head = 0, tail = 0, next = 0;
+    for (int k = 0; k < numBins; ++k)
+    {
+        for (; next <= limitHi[(size_t) k]; ++next)
+        {
+            while (tail > head && limitGain[(size_t) limitQueue[(size_t) tail - 1]] >= limitGain[(size_t) next])
+                --tail;
+            limitQueue[(size_t) tail++] = next;
+        }
+        while (limitQueue[(size_t) head] < limitLo[(size_t) k])
+            ++head;
+        const float g = limitGain[(size_t) limitQueue[(size_t) head]];
+        float hp = 0.0f, op = 0.0f;
+        for (int c = 0; c < channels; ++c)
+        {
+            float* hs = harmSpec[c].data();
+            const float* sp = spec[c].data();
+            if (g < 1.0f)
+            {
+                hs[2 * k] *= g;
+                hs[2 * k + 1] *= g;
+            }
+            const float yr = sp[2 * k] + hs[2 * k], yi = sp[2 * k + 1] + hs[2 * k + 1];
+            hp += hs[2 * k] * hs[2 * k] + hs[2 * k + 1] * hs[2 * k + 1];
+            op += yr * yr + yi * yi;
+        }
+        harmPower[(size_t) k] = hp * powScale;
+        outPower[(size_t) k] = op * powScale;
+    }
 }
 
 void SpectralEngine::applyListen (float msBlend) noexcept

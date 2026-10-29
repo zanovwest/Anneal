@@ -20,9 +20,6 @@ the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
 Added by the 5.3.5 run (Next up was empty after item 21); reorder or drop freely:
 
-23. **Heat limit**: how loud Heat's harmonics may get against the output in any band (off, −6 … −30 dB), as
-    a section in the Flavour menu, so a high Heat never covers the note it grows from. Off by default (as
-    before). Tests: the harmonics stop at the limit band by band, off is bit-identical, every flavour.
 24. **Peak hold for the input too**: a second held line for what comes into Anneal, from the same HOLD pill
     (its menu: Output / Input and output), to compare where the mix built up before and after. Display only.
     Tests: as item 21, plus the input's line follows the input.
@@ -61,6 +58,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.7 (2026-10-29, every-minute update): **Heat limit** (item 23): in every band (one ERB, never narrower than
+  the frame can resolve) Heat's harmonics stay at least the limit under the music there (−6 … −30 dB), from a
+  "Heat limit" section in the Flavour menu; the pill adds it ("Tape · −12 dB"); host parameter "Heat Limit". Each
+  bin takes the smallest gain of the bands it lies in, so no band ends up over. Off (the default, and older
+  projects) is bit-identical. Fixed: at Zero latency a Listen solo (resting there) faded the dry share of a Mix
+  under 100 % back in over 30 ms after every prepare.
 - 5.3.6 (2026-10-28, every-minute update): **Detail** (item 22): how narrow Reveal's and Smooth's moves are,
   Broad ↔ Fine (2.5 × wider to 2.5 × narrower windows, for the prominence they read and the curve's
   smoothing), one slim fader row under the two rings (the stack beside them was full, not "under Response" as
