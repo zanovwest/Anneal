@@ -6269,8 +6269,8 @@ void testPeakHold535()
         const auto expected = [&camOf] (float levelDb, double hz, bool bump) { return levelDb + (bump ? 12.0f : 0.0f) - 0.5f * camOf (hz); };
 
         const bool offAtStart = ! held.isPeakHoldOn() && ! held.hasHeldPeaks() && ! held.getPeakHoldButton().getToggleState();
-        held.getPeakHoldButton().setToggleState (true, juce::sendNotificationSync);   // as a click on HOLD
-        const bool onByPill = held.isPeakHoldOn();
+        held.choosePeakHold (2);   // as HOLD's menu, Output (5.3.8; 5.3.5: a click on the pill)
+        const bool onByPill = held.isPeakHoldOn() && held.getPeakHoldButton().getToggleState();
 
         // Loud with a bump moving 200 Hz -> 2 kHz -> 8 kHz, then 40 dB quieter: the line never falls.
         std::vector<float> was;
@@ -6352,7 +6352,7 @@ void testPeakHold535()
 
         // Off: nothing held and nothing drawn, pixel for pixel the display that never had it.
         push (-30.0f, 2000.0);
-        held.getPeakHoldButton().setToggleState (false, juce::sendNotificationSync);
+        held.choosePeakHold (1);   // Off
         int outsideOff = 0;
         const int drawnOff = diff (held.createComponentSnapshot (held.getLocalBounds()),
                                    plain.createComponentSnapshot (plain.getLocalBounds()), outsideOff);
@@ -6403,7 +6403,7 @@ void testPeakHold535()
         {
             std::unique_ptr<juce::AudioProcessorEditor> ed (a.proc->createEditor());
             auto& screen = dynamic_cast<AnnealEditor&> (*ed).getContent().screen;
-            screen.getPeakHoldButton().setToggleState (true, juce::sendNotificationSync);
+            screen.choosePeakHold (2);
             playWith (a, loud, &screen, outA);
             before = screen.heldPeakAtHz (1000.0f);
         }
@@ -7077,6 +7077,253 @@ void testHeatLimit537()
     }
 }
 
+// 5.3.8: Peak hold for the input too. HOLD's menu: Off / Output / Input and output / Clear. The input is held
+// beside the output all along; Input and output draws it too, as a fainter dotted line.
+void testPeakHoldInput538()
+{
+    section ("59. 5.3.8 Peak hold for the input too");
+    constexpr int nb = anneal::DisplayFrame::numBands;
+    using Frames = anneal::TripleBuffer<anneal::DisplayFrame>;
+    const auto minus = juce::String::fromUTF8 ("\xe2\x88\x92");
+
+    // Two displays fed the same frames by hand: one showing the input's line too, one the output's only.
+    {
+        Rig r;
+        auto bufA = std::make_unique<Frames>(), bufB = std::make_unique<Frames>();
+        anneal::PerceptionScreen both (*bufA, r.proc->apvts), outOnly (*bufB, r.proc->apvts);
+        both.setSize (1440, 356);
+        outOnly.setSize (1440, 356);
+        const float z0 = (float) anneal::erb::hzToCam (20.0);
+        const float dz = (float) ((anneal::erb::hzToCam (20000.0) - z0) / (nb - 1));
+        const auto camOf = [] (double hz) { return (float) anneal::erb::hzToCam (hz); };
+        // A falling, pink-like slope: the input at levelDb (at 0 Cam) with +12 dB over +-1 Cam around inHz, the
+        // output 6 dB lower with its +12 dB around outHz, so the two lines have their bumps in different places.
+        auto push = [&] (float levelDb, double inHz, double outHz)
+        {
+            for (auto* b : { bufA.get(), bufB.get() })
+            {
+                auto& fr = b->beginWrite();
+                fr.z0 = z0;
+                fr.dz = dz;
+                for (int i = 0; i < nb; ++i)
+                {
+                    const float cam = z0 + (float) i * dz;
+                    auto bump = [&] (double hz) { return hz > 0.0 && std::abs (cam - camOf (hz)) < 1.0f ? 12.0f : 0.0f; };
+                    fr.inDb[i] = levelDb + bump (inHz) - 0.5f * cam;
+                    fr.outDb[i] = levelDb - 6.0f + bump (outHz) - 0.5f * cam;
+                    fr.gainDb[i] = fr.sideGainDb[i] = 0.0f;
+                    fr.heatDb[i] = -200.0f;
+                }
+                b->endWrite();
+            }
+            both.refreshNow();
+            outOnly.refreshNow();
+        };
+        const auto expectedIn = [&camOf] (float levelDb, double hz, bool bump) { return levelDb + (bump ? 12.0f : 0.0f) - 0.5f * camOf (hz); };
+
+        const bool offAtStart = ! both.isPeakHoldOn() && ! both.isPeakHoldInputOn() && ! Rig().proc->displayPeakHold.input;
+        both.choosePeakHold (3);      // Input and output
+        outOnly.choosePeakHold (2);   // Output
+        const bool menuOn = both.isPeakHoldOn() && both.isPeakHoldInputOn() && both.getPeakHoldButton().getToggleState()
+                            && outOnly.isPeakHoldOn() && ! outOnly.isPeakHoldInputOn();
+
+        // Loud, the input's bump at 200 Hz -> 2 kHz -> 8 kHz and the output's at 500 Hz -> 5 kHz -> 500 Hz, then 40 dB
+        // quieter: neither line falls; the input's has the input's bumps only, the output's the output's only.
+        std::vector<float> was;
+        int frames = 0, fell = 0;
+        auto watch = [&]
+        {
+            ++frames;
+            for (int i = 0; i < 400; ++i)
+            {
+                const float hz = 20.0f * std::pow (1000.0f, (float) i / 399.0f);
+                for (int line = 0; line < 2; ++line)
+                {
+                    const float v = line == 0 ? both.heldInputPeakAtHz (hz) : both.heldPeakAtHz (hz);
+                    const size_t at = (size_t) (2 * i + line);
+                    if (was.size() == 800 && v < was[at])
+                        ++fell;
+                    if (was.size() < 800) was.push_back (v); else was[at] = v;
+                }
+            }
+        };
+        const std::pair<double, double> bumps[] = { { 200.0, 500.0 }, { 2000.0, 5000.0 }, { 8000.0, 500.0 } };
+        for (auto [inHz, outHz] : bumps)
+            for (int k = 0; k < 6; ++k) { push (-30.0f, inHz, outHz); watch(); }
+        for (int k = 0; k < 12; ++k) { push (-70.0f, 0.0, 0.0); watch(); }
+
+        float inErr = 0.0f, outErr = 0.0f;
+        for (double hz : { 200.0, 2000.0, 8000.0 })   // the input's bumps: in the input's line, not in the output's
+        {
+            inErr = juce::jmax (inErr, std::abs (both.heldInputPeakAtHz ((float) hz) - expectedIn (-30.0f, hz, true)));
+            outErr = juce::jmax (outErr, std::abs (both.heldPeakAtHz ((float) hz) - (expectedIn (-30.0f, hz, false) - 6.0f)));
+        }
+        for (double hz : { 500.0, 5000.0 })           // the output's bumps: the other way round
+        {
+            inErr = juce::jmax (inErr, std::abs (both.heldInputPeakAtHz ((float) hz) - expectedIn (-30.0f, hz, false)));
+            outErr = juce::jmax (outErr, std::abs (both.heldPeakAtHz ((float) hz) - (expectedIn (-30.0f, hz, true) - 6.0f)));
+        }
+        float sameOut = 0.0f;
+        for (int i = 0; i < 400; ++i)
+        {
+            const float hz = 20.0f * std::pow (1000.0f, (float) i / 399.0f);
+            sameOut = juce::jmax (sameOut, std::abs (both.heldPeakAtHz (hz) - outOnly.heldPeakAtHz (hz)));
+        }
+        const bool noInputShown = outOnly.heldInputPeakAtHz (1000.0f) <= -139.0f;
+        check (offAtStart && menuOn && fell == 0 && frames == 30 && inErr < 0.1f && outErr < 0.1f && sameOut == 0.0f && noInputShown,
+               "the input's held line follows the input",
+               juce::String (frames) + " frames, " + juce::String (fell) + " falls in either line; input's line within "
+                   + juce::String (inErr, 3) + " dB of the input's peaks (its bumps at 200 Hz / 2 kHz / 8 kHz, none at 500 Hz / "
+                   "5 kHz), output's within " + juce::String (outErr, 3) + " dB of the output's; the output's line the same as with "
+                   "Output alone (" + juce::String (sameOut, 3) + " dB); "
+                   + (offAtStart ? "off by default" : "ON BY DEFAULT") + (menuOn ? "" : "; MENU DIDN'T SET IT")
+                   + (noInputShown ? "" : "; OUTPUT SHOWS AN INPUT LINE"));
+
+        // Drawing: Input and output adds a line inside the EQ lane only; back on Output the display is pixel for
+        // pixel the one that only ever held the output, and the output's line goes on (no new start). Input and
+        // output again shows the input held all along.
+        auto diff = [] (const juce::Image& a, const juce::Image& b, const juce::Rectangle<int>& lane, int& outside)
+        {
+            int n = 0;
+            outside = 0;
+            for (int y = 0; y < a.getHeight(); ++y)
+                for (int x = 0; x < a.getWidth(); ++x)
+                    if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                    {
+                        ++n;
+                        outside += lane.contains (x, y) ? 0 : 1;
+                    }
+            return n;
+        };
+        const auto lane = both.getEqLane().toNearestInt();
+        int outsideBoth = 0, outsideBack = 0;
+        const int drawnBoth = diff (both.createComponentSnapshot (both.getLocalBounds()),
+                                    outOnly.createComponentSnapshot (outOnly.getLocalBounds()), lane, outsideBoth);
+        const float in2k = both.heldInputPeakAtHz (2000.0f), out1k = both.heldPeakAtHz (1000.0f);
+        both.choosePeakHold (2);
+        const int drawnBack = diff (both.createComponentSnapshot (both.getLocalBounds()),
+                                    outOnly.createComponentSnapshot (outOnly.getLocalBounds()), lane, outsideBack);
+        const bool keptOut = both.heldPeakAtHz (1000.0f) == out1k && both.heldInputPeakAtHz (2000.0f) <= -139.0f;
+        push (-70.0f, 0.0, 0.0);
+        both.choosePeakHold (3);
+        const bool inAgain = both.heldInputPeakAtHz (2000.0f) == in2k;
+        check (drawnBoth > 300 && outsideBoth == 0 && drawnBack == 0 && keptOut && inAgain,
+               "Input and output draws a second line; Output as before",
+               "Input and output: " + juce::String (drawnBoth) + " pixels more, " + juce::String (outsideBoth)
+                   + " outside the EQ lane; Output: " + juce::String (drawnBack) + " pixels differ from a display that only "
+                   "held the output" + (keptOut ? ", its line kept" : ", ITS LINE STARTED OVER") + "; the input's 2 kHz peak "
+                   + (inAgain ? "back as held" : "LOST") + " (" + juce::String (in2k, 2) + " dB)");
+
+        // The read-out: "peak in -x / out -y dB" with the input, "peak -y dB" without (as in 5.3.5).
+        const float hIn = both.heldInputPeakAtHz (2000.0f), hOut = both.heldPeakAtHz (2000.0f);
+        const auto withIn = both.getReadoutText (2000.0f);
+        const juce::String wantIn = "peak in " + minus + juce::String (std::abs (hIn), 1) + " / out " + minus + juce::String (std::abs (hOut), 1) + " dB";
+        both.choosePeakHold (2);
+        const auto outText = both.getReadoutText (2000.0f);
+        const juce::String wantOut = "    peak " + minus + juce::String (std::abs (hOut), 1) + " dB";
+        // Clear empties both lines, and the read-out loses the peak.
+        both.choosePeakHold (3);
+        both.choosePeakHold (4);
+        const bool cleared = ! both.hasHeldPeaks() && both.heldInputPeakAtHz (2000.0f) <= -139.0f && both.heldPeakAtHz (2000.0f) <= -139.0f
+                             && both.isPeakHoldOn() && both.isPeakHoldInputOn() && ! both.getReadoutText (2000.0f).contains ("peak");
+        check (withIn.contains (wantIn) && outText.endsWith (wantOut) && ! outText.contains ("peak in") && cleared,
+               "the read-out names both peaks; Clear empties both",
+               "\"" + withIn.fromFirstOccurrenceOf ("peak", true, false) + "\"; Output: \"" + outText.fromFirstOccurrenceOf ("peak", true, false)
+                   + "\"" + (cleared ? "; cleared" : "; NOT CLEARED"));
+
+        // The longest read-out (Mid/Side, heat, width, sides, both peaks, paint mode) still fits the display.
+        r.set (ids::width, 150.0f);
+        auto pushLevels = [&] (float levelDb)   // a flat frame at levelDb, Mid/Side, with heat, the stereo image
+        {
+            auto& fr = bufA->beginWrite();
+            fr.z0 = z0;
+            fr.dz = dz;
+            fr.midSide = true;
+            fr.stereo = true;
+            for (int i = 0; i < nb; ++i)
+            {
+                fr.inDb[i] = fr.outDb[i] = levelDb;
+                fr.gainDb[i] = fr.sideGainDb[i] = -10.5f;
+                fr.heatDb[i] = levelDb - 4.0f;
+                fr.sideRelDb[i] = -10.0f;
+            }
+            bufA->endWrite();
+            both.refreshNow();
+        };
+        pushLevels (-19.5f);    // the peaks held
+        pushLevels (-100.5f);   // what is drawn now (three-digit levels)
+        both.setPaintMode (true);
+        auto longest = both.getReadoutText (2000.0f);
+        both.setPaintMode (false);
+        const auto fnt = anneal::theme::font (anneal::theme::size::caption + 0.5f);
+        const float w = anneal::theme::tabularWidths (fnt, longest) + 20.0f, room = both.getEqLane().getWidth();
+        check (longest.contains ("peak in") && longest.contains ("paint") && longest.contains ("sides") && w <= room,
+               "the longest read-out fits the display",
+               juce::String (w, 1) + " px of " + juce::String (room, 1) + ": \"" + longest + "\"");
+    }
+
+    // Through the plug-in: a ring Smooth cuts shows as the input's line over the output's there; the window keeps the
+    // choice and the lines; the sound doesn't change.
+    {
+        const double fs = 48000.0;
+        auto sig = pinkNoise (fs, 1.2, 0.03f, 61);
+        for (auto& ch : sig)
+            for (size_t i = 0; i < ch.size(); ++i)
+                ch[i] += 0.1f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 3150.0 * (double) i / fs);
+        Rig a, b;
+        for (auto* rig : { &a, &b })
+        {
+            rig->set (ids::reveal, 0.0f);
+            rig->set (ids::smooth, 100.0f);
+            rig->prepare (fs, 512);
+        }
+        auto playWith = [] (Rig& r, const Channels& in, anneal::PerceptionScreen* screen, Channels& out)
+        {
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            for (int pos = 0; pos + 512 <= (int) in[0].size(); pos += 512)
+            {
+                for (int c = 0; c < 2; ++c)
+                    buf.copyFrom (c, 0, in[(size_t) c].data() + pos, 512);
+                r.proc->processBlock (buf, midi);
+                for (int c = 0; c < 2; ++c)
+                    out[(size_t) c].insert (out[(size_t) c].end(), buf.getReadPointer (c), buf.getReadPointer (c) + 512);
+                if (screen != nullptr && (pos / 512) % 8 == 7)
+                    screen->refreshNow();
+            }
+        };
+        Channels outA (2), outB (2);
+        float ringIn = 0.0f, ringOut = 0.0f, lowIn = 0.0f, lowOut = 0.0f, ringInAfter = 0.0f;
+        bool reopened = false;
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (a.proc->createEditor());
+            auto& screen = dynamic_cast<AnnealEditor&> (*ed).getContent().screen;
+            screen.choosePeakHold (3);
+            playWith (a, sig, &screen, outA);
+            ringIn = screen.heldInputPeakAtHz (3150.0f);
+            ringOut = screen.heldPeakAtHz (3150.0f);
+            lowIn = screen.heldInputPeakAtHz (500.0f);
+            lowOut = screen.heldPeakAtHz (500.0f);
+        }
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (a.proc->createEditor());
+            auto& screen = dynamic_cast<AnnealEditor&> (*ed).getContent().screen;
+            reopened = screen.isPeakHoldOn() && screen.isPeakHoldInputOn();
+            ringInAfter = screen.heldInputPeakAtHz (3150.0f);
+        }
+        playWith (b, sig, nullptr, outB);
+        double maxDiff = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < outA[(size_t) c].size(); ++i)
+                maxDiff = std::max (maxDiff, (double) std::abs (outA[(size_t) c][i] - outB[(size_t) c][i]));
+        check (ringIn - ringOut >= 3.0f && std::abs (lowIn - lowOut) < 1.5f && reopened && ringInAfter == ringIn && maxDiff == 0.0,
+               "through the plug-in: the input's line shows what Smooth took",
+               "3150 Hz ring held in " + db (ringIn, 1) + " / out " + db (ringOut, 1) + ", 500 Hz in " + db (lowIn, 1) + " / out "
+                   + db (lowOut, 1) + "; after closing and opening the window " + (reopened ? "Input and output still on" : "MODE LOST")
+                   + ", ring in " + db (ringInAfter, 1) + "; output with it on vs. off: difference " + juce::String (maxDiff, 12));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -7095,7 +7342,7 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testHeatLimit537();
+        testPeakHoldInput538();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -7159,6 +7406,7 @@ int main (int argc, char** argv)
     testDetail536();
     testFixes537();
     testHeatLimit537();
+    testPeakHoldInput538();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

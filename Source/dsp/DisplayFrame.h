@@ -51,10 +51,13 @@ namespace anneal
     // 5.3.5 Peak hold: the display's held line, the output's highest level per ERB since the last clear
     // (as drawn, dBFS). Display only and message thread only; the processor keeps it so that closing and
     // reopening the window keeps the line.
+    // 5.3.8: the input's highest level is held beside it all along; input = it is drawn too (the HOLD
+    // menu's "Input and output"; off by default, as in 5.3.5).
     struct PeakHold
     {
-        bool on = false, have = false;
+        bool on = false, have = false, input = false;
         float z0 = 0.0f, dz = 0.0f;   // the band grid it was held on
         float db[DisplayFrame::numBands] {};
+        float inDb[DisplayFrame::numBands] {};
     };
 }

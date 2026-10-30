@@ -265,6 +265,12 @@ int main (int argc, char* argv[])
           [] (AnnealEditorContent& c) { c.screen.fileDragEnter ({ "reference.wav" }, 300, 150); } },
         // 5.3.5: the peak hold over the whole test song, the HOLD pill on
         { "peakhold", [] (AnnealAudioProcessor& p) { p.displayPeakHold.on = true; set (p, ids::reveal, 60); }, 3150.0f, true },
+        // 5.3.8: the input's held line too (Input and output), Smooth cutting so the two lines part
+        { "peakhold_in", [] (AnnealAudioProcessor& p)
+          {
+              p.displayPeakHold.on = p.displayPeakHold.input = true;
+              set (p, ids::reveal, 60); set (p, ids::smooth, 90);
+          }, 3150.0f, true },
     };
 
     int failures = 0;

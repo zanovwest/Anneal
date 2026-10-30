@@ -144,6 +144,13 @@ reads as context and never as the EQ; no tag in the legend (the pill says it is 
 clears it; the hover read-out adds "peak −37.3 dB". What it does is in the pill's tooltip and one clause of
 the display's. Long tooltips (since 5.3.5) wrap at 520 px instead of running off the window.
 
+**Peak hold for the input (5.3.8).** HOLD stays the only control: a click opens its menu (Off, Output, Input
+and output, Clear), as the Limits and Flavour pills do, instead of toggling; it is lit while the hold is on.
+The input's held line sits under the output's, finer and fainter (1.0 px, dots 1.5 on 3.5 off, the text colour
+at 32 %), the way the live input line sits under the live output; still no tag in the legend. The hover
+read-out says "peak in −40.1 / out −37.3 dB". The input is held all along, so choosing Input and output shows
+what came in since the last clear. With Output alone the display is pixel for pixel 5.3.5's.
+
 **Detail (5.3.6).** How narrow Reveal's and Smooth's moves are qualifies both rings, and the stack beside them
 is full (Response, Guard, Tilt, Pivot), so it is one slim row under the two rings, x 36–304 at y 602 (24 px,
 clear of their live lines and above the deck's foot): DETAIL in muted caps, a compact fader (the Color / Focus

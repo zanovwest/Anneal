@@ -100,13 +100,22 @@ namespace anneal
 
         // 5.3.5 Peak hold: a faint dotted line holding the output spectrum's highest level at each frequency
         // until a click on the spectrum clears it; the HOLD pill at the top right turns it on and off (off
-        // and on again start it over). Display only.
+        // and on again start it over; since 5.3.8 through its menu). Display only.
         void setPeakHold (bool on);
         bool isPeakHoldOn() const noexcept { return peak->on; }
         void clearPeakHold();
         bool hasHeldPeaks() const noexcept { return peak->on && peak->have; }
         float heldPeakAtHz (float hz) const noexcept;   // dBFS as drawn; -140 = nothing held
         juce::Button& getPeakHoldButton() noexcept { return holdButton; }
+        // 5.3.8: the input's held line too (a fainter dotted line), from the HOLD pill's menu. The input is
+        // held all along, so showing it draws what came in since the last clear.
+        void setPeakHoldInput (bool shown);
+        bool isPeakHoldInputOn() const noexcept { return peak->input; }
+        float heldInputPeakAtHz (float hz) const noexcept;   // dBFS as drawn; -140 = not shown or nothing held
+        // What a HOLD menu item does (also for the tests): 1 Off, 2 Output, 3 Input and output, 4 Clear.
+        void choosePeakHold (int item);
+        // The hover read-out's text at a frequency (also for the tests).
+        juce::String getReadoutText (float hz) const;
 
     private:
         enum class Handle { none, lo, hi };
@@ -137,8 +146,9 @@ namespace anneal
         void paintLegend (juce::Graphics&);
         void paintListen (juce::Graphics&);   // what a Listen solo is playing (top right)
         void paintDrop (juce::Graphics&);     // a file is being dragged over the display
-        void holdPeaks();                     // 5.3.5: raise the held line to the output drawn now
+        void holdPeaks();                     // 5.3.5: raise the held lines to the output (and input) drawn now
         void paintPeakHold (juce::Graphics&);
+        void showPeakHoldMenu();              // 5.3.8
 
         TripleBuffer<DisplayFrame>& source;
 

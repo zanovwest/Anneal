@@ -4,6 +4,48 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.8 — 2026-10-30 10:07
+
+New
+- **Peak hold for the input too**: the display's peak hold can now keep a second line for what comes *into*
+  Anneal, so you can compare where the mix built up before and after Anneal worked on it. Play the song through,
+  then look where the two lines part: a bump on the input's line that the output's doesn't have is a build-up or
+  a ring Anneal smoothed out (a 3150 Hz ring that Smooth cuts: held at −23.2 dB coming in, −31.3 dB going out),
+  and where the output's line sits above the input's, Anneal lifted or added something there.
+  - The **HOLD** pill (top right of the display) now opens a small menu: **Off**, **Output** (the one line, as
+    before), **Input and output**, and **Clear**. HOLD is lit while the hold is on.
+  - The input's line is a fainter, finer dotted line under the output's, the way the live input line sits under
+    the live output.
+  - The hover read-out says "peak in −40.1 / out −37.3 dB" with both lines on ("peak −37.3 dB" with Output alone).
+  - The input is held all along while HOLD is on, so switching from Output to Input and output shows what came in
+    since the last clear; nothing starts over. Clicking the spectrum (or Clear) empties both lines.
+  - With Output chosen the display looks exactly as in 5.3.5. Display only: the sound doesn't change, and it isn't
+    saved in the project (closing and reopening the window keeps the lines and the choice).
+
+Fixes
+- None found this run. The bug pass looked at the Heat limit (its band windows, the sliding minimum, Mid/Side,
+  the glide to and from Off), loading older projects, the newest build log, the benchmark and the rendered
+  interface, and found nothing to fix.
+
+Tests: 237/237 acceptance checks, 5 new:
+- the input's held line follows the input (two displays fed the same frames by hand, the input's bumps at
+  200 Hz / 2 kHz / 8 kHz and the output's at 500 Hz / 5 kHz, then 40 dB quieter): no line falls in 30 frames, each
+  holds its own peaks within 0.000 dB and none of the other's, and the output's line is the same as with Output
+  alone;
+- drawing: Input and output adds 1136 pixels, all inside the EQ lane; back on Output the display is pixel for pixel
+  the one that only held the output, its line kept, and the input's line comes back as held;
+- the read-out: "peak in −28.6 / out −46.6 dB" with the input, "peak −46.6 dB" without; Clear empties both;
+- the longest read-out (Mid/Side, heat, width, sides, both peaks, paint) fits the display: 716 of 1376 px;
+- through the plug-in (pink noise with a 3150 Hz ring, Smooth 100 %): the ring held at −23.2 dB in and −31.3 dB out,
+  500 Hz −47.8 / −47.8 dB; after closing and opening the window Input and output is still on with the same lines;
+  the output with it on is bit-identical to it off.
+The 5.3.5 peak-hold checks now turn HOLD on and off through its menu and pass as before.
+
+30/30 host checks on the built VST3 and 25/25 setup checks pass (nothing host-facing changed).
+CPU: unchanged, the peak hold is display only (one more maximum per band on the window's timer). At 48 kHz /
+64 samples Stereo Low 2.0 %, Precise 4.6 %, Mid/Side Precise 7.9 % of a core; the slowest 0.1 % of blocks 6 / 12 /
+21 % of the deadline (5.3.7: 5 / 12 / 23 %).
+
 ## 5.3.7 — 2026-10-29 10:13
 
 New

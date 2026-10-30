@@ -18,11 +18,8 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Added by the 5.3.5 run (Next up was empty after item 21); reorder or drop freely:
-
-24. **Peak hold for the input too**: a second held line for what comes into Anneal, from the same HOLD pill
-    (its menu: Output / Input and output), to compare where the mix built up before and after. Display only.
-    Tests: as item 21, plus the input's line follows the input.
+Item 24, the last of the ideas the 5.3.5 run added, was done in 5.3.8. Next up is empty: the next run adds
+three ideas here first (reorder or drop them freely).
 
 ## Waiting on the user
 
@@ -58,6 +55,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.8 (2026-10-30, every-minute update): **Peak hold for the input too** (item 24): HOLD opens a menu now
+  (Off / Output / Input and output / Clear); Input and output adds a fainter dotted line holding what came into
+  Anneal, under the output's, so the two show where the mix built up before and after; the hover read-out says
+  "peak in −40.1 / out −37.3 dB". The input is held all along, so switching shows it since the last clear. Output
+  alone draws exactly as 5.3.5 did. Display only; the sound doesn't change.
 - 5.3.7 (2026-10-29, every-minute update): **Heat limit** (item 23): in every band (one ERB, never narrower than
   the frame can resolve) Heat's harmonics stay at least the limit under the music there (−6 … −30 dB), from a
   "Heat limit" section in the Flavour menu; the pill adds it ("Tape · −12 dB"); host parameter "Heat Limit". Each
