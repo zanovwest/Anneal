@@ -127,6 +127,16 @@ float parseHeatLimit (const juce::String& text)
     return -std::min (-heatLimitMinDb, std::abs (leadingNumber (l)));
 }
 
+int parseListenCheck (const juce::String& text)
+{
+    const auto l = text.toLowerCase().trim();
+    if (l.containsAnyOf ("0123456789"))
+        return juce::jlimit (0, 2, l.getIntValue());
+    if (l.contains ("side") || l == "s")                                  return checkSides;
+    if (l.contains ("mono") || l.contains ("sum") || l == "m")            return checkMono;
+    return checkStereo;   // "stereo", "off", "as is"
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -417,6 +427,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         Attr().withLabel ("dB")
               .withStringFromValueFunction ([] (float v, int) { return formatHeatLimit (v); })
               .withValueFromStringFunction ([] (const juce::String& t) { return parseHeatLimit (t); })));
+
+    // 5.3.9 Listen check: hear the output summed to mono, or only its sides (what mono loses), to check a mix
+    // translates. Stereo, the output as it is, is the default and what older projects load with.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::listenCheck, 1 }, "Listen Check",
+        juce::StringArray { "Stereo", "Mono", "Sides only" }, checkStereo,
+        juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
+        {
+            return parseListenCheck (t);
+        })));
 
     return layout;
 }

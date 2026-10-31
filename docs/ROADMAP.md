@@ -18,8 +18,16 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Item 24, the last of the ideas the 5.3.5 run added, was done in 5.3.8. Next up is empty: the next run adds
-three ideas here first (reorder or drop them freely).
+Added by the 5.3.9 run (Next up was empty after item 24; item 25 was done in 5.3.9); reorder or drop freely:
+
+26. **Note names**: the hover read-out names the nearest note ("3.15 kHz · G7 −14 ct"), and the frequency
+    fields take a note as well as hertz (`E1`, `A#4`): Mono bass, the Pivot, the key range, the Range handles'
+    typed values. Display and typing only, nothing on the deck. Tests: A4 = 440 Hz and back, typed notes land
+    on their frequency, the widest read-out still fits the display.
+27. **Freeze the average**: the FREEZE pill opens a small menu, *Hold now* (as today) or *Hold the average of
+    the last 10 s*, so the static EQ comes from a whole passage instead of the last moment. Off and Hold now
+    as before (bit-identical), older projects unchanged. Tests: the held curve is the mean of the live curves
+    over the window, Hold now is unchanged, Mid/Side and Zero latency follow.
 
 ## Waiting on the user
 
@@ -55,6 +63,11 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.9 (2026-10-31, every-minute update): **Mono and Sides check** (item 25, added by this run with 26 and 27):
+  a second section in the Listen menu, *Check the output*: Stereo (as is), Mono (left and right summed) or Sides
+  only (what mono loses, on both speakers), after the Ceiling and before Bypass. The pill reads "Mono" alone or
+  "Heat only · mono" with a solo, neutral white for the check; the display names it. Host parameter "Listen
+  Check"; Stereo (the default, and older projects) is bit-identical; factory presets leave it alone.
 - 5.3.8 (2026-10-30, every-minute update): **Peak hold for the input too** (item 24): HOLD opens a menu now
   (Off / Output / Input and output / Clear); Input and output adds a fainter dotted line holding what came into
   Anneal, under the output's, so the two show where the mix built up before and after; the hover read-out says

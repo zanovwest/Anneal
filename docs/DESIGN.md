@@ -43,7 +43,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 | SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Key range (5.3.4: a pill beside the mode), Amount (5.3: a compact row); both shown while a mode is on |
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
 | SHAPE (5.0) | — | Punch, Width, Mono bass (compact rows, like Tilt / Response / Guard) |
-| OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only), Ceiling (3.0), Mix, Output |
+| OUTPUT | — | Listen (0.2.5: Off / Reveal only / Smooth only / Heat only; 5.3.9: its Check section, Stereo / Mono / Sides only), Ceiling (3.0), Mix, Output |
 | Header | Preset, Latency (Low / Normal / Precise) | Undo / Redo (3.0; Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y since 4.0), Paint (4.0), the loudness readout (5.3.1), Match (loudness), Δ (delta listen), Bypass |
 | Routing (0.2.4) | Stereo / Mid-Side in the header | EQ target and Heat target (Both / Mid / Side) in their group title rows |
 | On the display | Range low / high handles (limits where Anneal acts) | Drop an audio file (4.0 reference); in paint mode, draw the EQ and Heat weights (4.0) and Width's (5.2.2) |
@@ -188,6 +188,15 @@ blue = Smooth only, bronze = Heat only), Delta dims (the solo overrides it), and
 a matching pill at the top right of the EQ lane ("REVEAL ONLY · hearing what Reveal lifts"). The
 curves and the knobs' live lines keep showing the full processing, so you can see the whole
 picture while hearing one part of it.
+
+**Listen check (5.3.9).** Mono and Sides only are a second section of the same Listen menu, *Check the output*
+(Stereo: as is / Mono: left and right summed / Sides only: what mono loses), so the deck gains no control. A
+check is a way of listening, not a process, so on its own it lights the pill neutral white like Paint and HOLD
+("Mono", "Sides only"); with a solo the pill stays in the solo's colour and adds the check in the text colour,
+"Heat only · mono" (12 px, then 11 px, then "Heat only + M" where that doesn't fit). The display's pill at the top
+right says it too: "MONO · hearing left and right summed", "SIDES ONLY · hearing what mono loses" in white, or the
+solo's note with ", in mono" / ", sides only". It acts after the Ceiling and before Bypass (Bypass stays the input
+as it is); Sides plays (L − R) / 2 on both speakers in phase, so it sounds centred and doesn't cancel.
 
 **Flavour (0.2.6).** A pill menu on the HEAT title row, between the group title and the Heat
 routing menu (the Heat ring sits at y 432, level with Reveal and Smooth, to leave it room). Clean is a

@@ -220,6 +220,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pScKeyHi    = apvts.getRawParameterValue (ids::scKeyHi);
     pDetail     = apvts.getRawParameterValue (ids::detail);
     pHeatLimit  = apvts.getRawParameterValue (ids::heatLimit);
+    pListenCheck = apvts.getRawParameterValue (ids::listenCheck);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -389,6 +390,13 @@ void AnnealAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     bypassSmoothed.setCurrentAndTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
     // 5.3.7 fix: as processBlock aims it, so a solo resting at zero latency doesn't fade the dry share in.
     listenSmoothed.setCurrentAndTargetValue (pListen->load() > 0.5f && ! zero ? 1.0f : 0.0f);
+    {
+        const int check = juce::roundToInt (pListenCheck->load());
+        for (auto* s : { &checkMono, &checkSides })
+            s->reset (sampleRate, 0.03);
+        checkMono.setCurrentAndTargetValue (check == anneal::checkMono ? 1.0f : 0.0f);
+        checkSides.setCurrentAndTargetValue (check == anneal::checkSides ? 1.0f : 0.0f);
+    }
     matchHold = 0;
     matchSmoothed.reset (sampleRate, 0.5);
     matchSmoothed.setCurrentAndTargetValue (pMatch->load() > 0.5f ? match.getGain() : 1.0f);
@@ -414,7 +422,7 @@ void AnnealAudioProcessor::reset()
     dryRing.clear();
     dryBlock.clear();
     dryPos = 0;
-    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed, &listenSmoothed })
+    for (auto* s : { &mixSmoothed, &outputSmoothed, &deltaSmoothed, &bypassSmoothed, &listenSmoothed, &checkMono, &checkSides })
         s->setCurrentAndTargetValue (s->getTargetValue());
     matchHold = 0;
     outputPeak[0] = outputPeak[1] = 0.0f;
@@ -549,6 +557,11 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     listenSmoothed.setTargetValue (listenOn ? 1.0f : 0.0f);
     if (listenOn)
         matchHold = 2 * getEngine().getFftSize();
+    {
+        const int check = juce::roundToInt (pListenCheck->load());
+        checkMono.setTargetValue (check == anneal::checkMono ? 1.0f : 0.0f);
+        checkSides.setTargetValue (check == anneal::checkSides ? 1.0f : 0.0f);
+    }
 
     float peak[2] = { 0.0f, 0.0f };
     if (loudnessResetPending.exchange (false))   // 5.3.1: a click on the readout
@@ -633,13 +646,14 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             bypassRamp[(size_t) i] = bp;
         }
 
-        // 5. True-peak ceiling (3.0), then Bypass. The limiter delays by its look-ahead even when
-        //    off, and Bypass crossfades to the dry signal delayed by the same amount, so the whole
-        //    plug-in always has one constant latency and Bypass stays exactly the dry signal.
+        // 5. True-peak ceiling (3.0), the Listen check (5.3.9), then Bypass. The limiter delays by its
+        //    look-ahead even when off, and Bypass crossfades to the dry signal delayed by the same amount,
+        //    so the whole plug-in always has one constant latency and Bypass stays exactly the dry signal.
         if (zero)
         {
             // 5.1 Zero latency: no look-ahead (sample peaks only) and Bypass against the input itself.
             limiter.processInstant (wet, nch, len);
+            applyListenCheck (wet, nch, len);
             for (int c = 0; c < nch; ++c)
             {
                 const float* dry = dryBlock.getReadPointer (c);
@@ -653,6 +667,7 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             continue;
         }
         limiter.process (wet, nch, len);
+        applyListenCheck (wet, nch, len);
         const int L = bypassRing.getNumSamples();
         int bpAfter = bypassPos;
         for (int c = 0; c < nch; ++c)
@@ -695,6 +710,38 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     loudness[1].store (loudOut.getShortTerm(), std::memory_order_relaxed);
     loudness[2].store (loudIn.getIntegrated(), std::memory_order_relaxed);
     loudness[3].store (loudOut.getIntegrated(), std::memory_order_relaxed);
+}
+
+void AnnealAudioProcessor::applyListenCheck (float* const* out, int nch, int len) noexcept
+{
+    // 5.3.9: the output summed to mono, (L + R) / 2, or only its sides, (L - R) / 2, on both speakers (in
+    // phase, so the sides sound centred and don't cancel). A mono track is its own mono and has no sides.
+    // Stereo, the default, leaves the output untouched. Switching fades over 30 ms.
+    if (! checkMono.isSmoothing() && ! checkSides.isSmoothing())
+    {
+        const float m = checkMono.getCurrentValue(), s = checkSides.getCurrentValue();
+        if (m == 0.0f && s == 0.0f)
+            return;
+        const float sign = s > m ? -1.0f : 1.0f;
+        for (int i = 0; i < len; ++i)
+        {
+            const float l = out[0][i], r = nch > 1 ? out[1][i] : l;
+            const float v = 0.5f * (l + sign * r);
+            out[0][i] = v;
+            if (nch > 1)
+                out[1][i] = v;
+        }
+        return;
+    }
+    for (int i = 0; i < len; ++i)
+    {
+        const float m = checkMono.getNextValue(), s = checkSides.getNextValue();
+        const float l = out[0][i], r = nch > 1 ? out[1][i] : l;
+        const float mid = 0.5f * (l + r), side = 0.5f * (l - r);
+        out[0][i] = l + m * (mid - l) + s * (side - l);
+        if (nch > 1)
+            out[1][i] = r + m * (mid - r) + s * (side - r);
+    }
 }
 
 float AnnealAudioProcessor::takeOutputPeak (int channel) noexcept
@@ -1088,6 +1135,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasScKeyHi = tree.getChildWithProperty ("id", anneal::ids::scKeyHi).isValid();
             const bool hasDetail = tree.getChildWithProperty ("id", anneal::ids::detail).isValid();
             const bool hasHeatLimit = tree.getChildWithProperty ("id", anneal::ids::heatLimit).isValid();
+            const bool hasListenCheck = tree.getChildWithProperty ("id", anneal::ids::listenCheck).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1203,6 +1251,11 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasHeatLimit)
                 if (auto* hp = apvts.getParameter (anneal::ids::heatLimit))
                     hp->setValueNotifyingHost (hp->getDefaultValue());
+
+            // Projects saved before 5.3.9: heard in stereo, as they were then, whatever this instance had.
+            if (! hasListenCheck)
+                if (auto* cp = apvts.getParameter (anneal::ids::listenCheck))
+                    cp->setValueNotifyingHost (cp->getDefaultValue());
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

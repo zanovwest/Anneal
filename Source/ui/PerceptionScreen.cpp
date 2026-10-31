@@ -75,6 +75,12 @@ PerceptionScreen::PerceptionScreen (TripleBuffer<DisplayFrame>& src, juce::Audio
     listenAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::listen),
         [this] (float v) { listenMode = juce::jlimit (0, 3, juce::roundToInt (v)); repaint(); }, state.undoManager);
     listenAttachment->sendInitialUpdate();
+    if (auto* cp = state.getParameter (ids::listenCheck))   // 5.3.9
+    {
+        listenCheckAttachment = std::make_unique<juce::ParameterAttachment> (*cp,
+            [this] (float v) { listenCheck = juce::jlimit (0, 2, juce::roundToInt (v)); repaint(); }, state.undoManager);
+        listenCheckAttachment->sendInitialUpdate();
+    }
     refModeAttachment = std::make_unique<juce::ParameterAttachment> (*state.getParameter (ids::refMode),
         [this] (float v) { refMode = juce::jlimit (0, 2, juce::roundToInt (v)); repaint(); }, state.undoManager);
     refModeAttachment->sendInitialUpdate();
@@ -895,17 +901,33 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     legendBottom = y + 14.0f;
 }
 
-void PerceptionScreen::paintListen (juce::Graphics& g)
+std::pair<juce::String, juce::String> PerceptionScreen::getListenTag() const
 {
+    // 5.3.9: the Listen check names itself when no solo is on, and is added to a solo's note otherwise.
+    const juce::String check = listenCheck == checkMono ? "in mono" : listenCheck == checkSides ? "sides only" : "";
     if (listenMode == 0)
-        return;
-
-    // A pill in the solo's role colour: the curve still shows the full processing, the pill says
-    // that only one part of it is being heard.
-    const juce::Colour role = listenMode == 1 ? colour::straw : listenMode == 2 ? colour::blue : colour::bronze;
+    {
+        if (check.isEmpty())
+            return {};
+        return { listenCheck == checkMono ? "MONO" : "SIDES ONLY",
+                 listenCheck == checkMono ? "hearing left and right summed" : "hearing what mono loses" };
+    }
     const juce::String title = listenMode == 1 ? "REVEAL ONLY" : listenMode == 2 ? "SMOOTH ONLY" : "HEAT ONLY";
     const juce::String sub = listenMode == 1 ? "hearing what Reveal lifts"
                            : listenMode == 2 ? "hearing what Smooth cuts" : "hearing only the harmonics";
+    return { title, check.isEmpty() ? sub : sub + ", " + check };
+}
+
+void PerceptionScreen::paintListen (juce::Graphics& g)
+{
+    const auto [title, sub] = getListenTag();
+    if (title.isEmpty())
+        return;
+
+    // A pill in the solo's role colour: the curve still shows the full processing, the pill says
+    // that only one part of it is being heard. 5.3.9: the Listen check alone is neutral white.
+    const juce::Colour role = listenMode == 1 ? colour::straw : listenMode == 2 ? colour::blue
+                            : listenMode == 3 ? colour::bronze : colour::text;
     const auto tf = caps (11.0f), sf = font (11.0f);
     const float tw = textWidth (tf, title), sw = textWidth (sf, sub);
     const float w = tw + sw + 30.0f, h = 20.0f;

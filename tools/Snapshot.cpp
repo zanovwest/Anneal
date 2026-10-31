@@ -271,6 +271,12 @@ int main (int argc, char* argv[])
               p.displayPeakHold.on = p.displayPeakHold.input = true;
               set (p, ids::reveal, 60); set (p, ids::smooth, 90);
           }, 3150.0f, true },
+        // 5.3.9: the Listen check alone (Mono, a neutral pill), and with a solo (the longest pill text)
+        { "check_mono", [] (AnnealAudioProcessor& p) { set (p, ids::listenCheck, 1); }, -1.0f, true },
+        { "check_sides_solo", [] (AnnealAudioProcessor& p)
+          {
+              set (p, ids::smooth, 80); set (p, ids::listen, 2); set (p, ids::listenCheck, 2);
+          }, -1.0f, true },
     };
 
     int failures = 0;

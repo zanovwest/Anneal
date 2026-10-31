@@ -4,6 +4,54 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.9 — 2026-10-31 10:05
+
+New
+- **Mono and Sides check**: hear your mix the way a mono speaker plays it, or hear only what mono throws away, without
+  leaving Anneal. Phones, Bluetooth speakers and many club systems play in mono; a wide pad, a stereo reverb or a Width
+  pushed too far can thin out or vanish there. Now you can check it on the spot.
+  - It is a second section in the **Listen menu** (OUTPUT), *Check the output*: **Stereo** (as is), **Mono** (left and
+    right summed) and **Sides only** (left minus right: everything that disappears in mono). Both play on both speakers;
+    Sides comes out in phase, so it sounds centred instead of hollow.
+  - With a check on, the Listen pill reads "Mono" or "Sides only" in white, and the display says it at the top right
+    ("MONO · hearing left and right summed"). It works on top of a Listen solo too: "Heat only · mono" plays just the
+    harmonics, in mono. So the deck gains no control.
+  - It acts at the very end, after the Ceiling, on everything you hear (Delta and the solos included). Bypass still plays
+    the input as it is. The output meter and loudness readout show what you hear; Match keeps measuring the stereo
+    result, so its gain doesn't move while you check. Switching fades over 30 ms, no clicks.
+  - A mono track is its own mono (unchanged) and has no sides (silence). Works in every latency mode and at Zero latency.
+  - Also a host parameter, "Listen Check", automatable (type `mono`, `sides` or `stereo`). Stereo is the default and what
+    older projects open with, so they sound exactly as before. Factory presets leave it alone.
+- The roadmap has three new ideas (the list was empty): this one, **note names** (the hover read-out names the note,
+  frequency fields take `E1` or `A#4`) and **Freeze the average** (hold the average curve of the last 10 s).
+
+Fixes
+- None found this run. The bug pass looked at the newest build log and benchmark (5.3.8's: nothing over budget, the
+  slowest 0.1 % of blocks where they were), the rendered interface, the undo history, loading older projects, the
+  output stage (Mix, Listen, the Ceiling, Bypass) and the peak hold's menu, and found nothing to fix.
+
+Tests: 244/244 acceptance checks, 7 new:
+- Mono and Sides are exactly the sum and the difference of what Stereo plays, the same on both speakers (difference
+  0.000000000), in Low, in Precise Mid/Side with Heat, Width 150 % and the Ceiling, and at Zero latency with Punch;
+- a 1 kHz tone upside down in the right channel (all side) is −300 dB in Mono and 0.000 dB in Sides; the same tone in
+  both channels (all centre) the other way round;
+- a mono track: Mono bit-identical, Sides silent;
+- Stereo is bit-identical: the default, and moved to Mono and Sides and back (difference 0.000000000000 once the fade is
+  over); Bypass with Mono on is the input (0.000000007, as with Stereo);
+- switching every 0.2 s (Stereo, Mono, Sides and straight from Mono to Sides) on two loud tones: the largest step
+  0.01815 against 0.01814 for the tones themselves; Match's gain the same in Sides as in Stereo (−0.022 dB);
+- the parameter: "Stereo" by default, its texts, typed values (`mono`, `sum`, `sides`, `S`, `stereo`, `off`, `2`);
+  older projects open in Stereo whatever the instance had, a saved check comes back, factory presets leave it alone;
+- the Listen menu: its Check section sets the parameter as one undo step, the pill reads "Mono" or "Heat only · mono"
+  and every combination fits (widest 83.4 of 120 px), the display names it ("SIDES ONLY", "…, sides only").
+
+31/31 host checks on the built VST3 (1 new: Listen Check through VST3, its texts and typed values, and a side tone /
+a centred tone: Stereo 0.00 / 0.00 dB, Mono −300 / 0.00 dB, Sides 0.00 / −300 dB, left and right identical) and 25/25
+setup checks pass.
+CPU: Stereo costs nothing (the check isn't looked at); Mono or Sides is one add and one multiply per sample pair. At
+48 kHz / 64 samples Stereo Low 2.1 %, Precise 4.7 %, Mid/Side Precise 8.0 % of a core; the slowest 0.1 % of blocks
+6 / 12 / 21 % of the deadline (5.3.8: 6 / 12 / 21 %).
+
 ## 5.3.8 — 2026-10-30 10:07
 
 New

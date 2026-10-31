@@ -7324,6 +7324,311 @@ void testPeakHoldInput538()
     }
 }
 
+// 5.3.9 Listen check (roadmap item 25): hear the output in Stereo (as is), summed to Mono, (L + R) / 2, or its Sides
+// only, (L - R) / 2, on both speakers; after the Ceiling, before Bypass. Stereo, the default, is bit-identical.
+void testListenCheck539()
+{
+    section ("60. 5.3.9 Listen check: Mono / Sides only");
+    const double fs = 48000.0;
+    const auto music = testsig::musicLike (fs, 1.0, 41);
+
+    // Plays `in` through a fresh instance with the check set before prepare (so nothing fades in).
+    auto play = [&] (int check, const std::function<void (Rig&)>& setup, const Channels& in, int channels = 2)
+    {
+        Rig r (channels);
+        setup (r);
+        r.set (ids::listenCheck, (float) check);
+        r.prepare (fs, 512);
+        return r.run (in, fixedBlocks (512));
+    };
+
+    // Mono and Sides are exactly the sum and the difference of what Stereo plays, the same on both speakers, in
+    // Low (the defaults), Precise Mid/Side with Heat, Width and the Ceiling, and at Zero latency with Punch.
+    {
+        const std::pair<const char*, std::function<void (Rig&)>> setups[] = {
+            { "Low", [] (Rig&) {} },
+            { "Precise Mid/Side", [] (Rig& r)
+              {
+                  r.set (ids::latency, 2.0f); r.set (ids::stereoMode, 1.0f); r.set (ids::heat, 60.0f);
+                  r.set (ids::width, 150.0f); r.set (ids::ceiling, 2.0f);
+              } },
+            { "Zero latency", [] (Rig& r) { r.set (ids::zeroLatency, 1.0f); r.set (ids::punch, 50.0f); } },
+        };
+        juce::String line;
+        bool ok = true;
+        for (const auto& [name, setup] : setups)
+        {
+            const auto st = play (anneal::checkStereo, setup, music);
+            const auto mo = play (anneal::checkMono, setup, music);
+            const auto si = play (anneal::checkSides, setup, music);
+            double monoErr = 0.0, sidesErr = 0.0, lr = 0.0, sideLevel = 0.0;
+            for (size_t i = 0; i < st[0].size(); ++i)
+            {
+                monoErr = std::max (monoErr, (double) std::abs (mo[0][i] - 0.5f * (st[0][i] + st[1][i])));
+                sidesErr = std::max (sidesErr, (double) std::abs (si[0][i] - 0.5f * (st[0][i] - st[1][i])));
+                lr = std::max ({ lr, (double) std::abs (mo[0][i] - mo[1][i]), (double) std::abs (si[0][i] - si[1][i]) });
+                sideLevel = std::max (sideLevel, (double) std::abs (si[0][i]));
+            }
+            ok = ok && monoErr == 0.0 && sidesErr == 0.0 && lr == 0.0 && sideLevel > 0.01 && allFinite (mo) && allFinite (si);
+            line << name << ": mono " << juce::String (monoErr, 9) << ", sides " << juce::String (sidesErr, 9) << ", L-R "
+                 << juce::String (lr, 9) << ", sides peak " << db (toDb (sideLevel)) << ";  ";
+        }
+        check (ok, "Mono = (L+R)/2, Sides = (L-R)/2 of Stereo's output", line);
+    }
+
+    // What you hear: a tone upside down in the right channel (all side) vanishes in Mono and plays at its level in Sides
+    // only; a tone alike in both (all centre) the other way round.
+    {
+        const int n = (int) fs;
+        Channels side = testsig::silence (2, n), centre = testsig::silence (2, n);
+        for (int i = 0; i < n; ++i)
+        {
+            const float s = 0.25f * (float) std::sin (2.0 * testsig::pi * 1000.0 * i / fs);
+            side[0][(size_t) i] = s;
+            side[1][(size_t) i] = -s;
+            centre[0][(size_t) i] = centre[1][(size_t) i] = s;
+        }
+        auto neutralSetup = [] (Rig& r) { r.setNeutral(); };
+        auto level = [&] (int check, const Channels& in)
+        {
+            const auto out = play (check, neutralSetup, in);
+            return toDb (testsig::toneAmplitude (out[0].data() + n / 2, n / 3, 1000.0, fs) / 0.25);
+        };
+        const double sideMono = level (anneal::checkMono, side), sideSides = level (anneal::checkSides, side);
+        const double centreMono = level (anneal::checkMono, centre), centreSides = level (anneal::checkSides, centre);
+        check (sideMono < -100.0 && std::abs (sideSides) < 0.01 && std::abs (centreMono) < 0.01 && centreSides < -100.0,
+               "a side tone vanishes in Mono, a centred one in Sides",
+               "side tone: Mono " + db (sideMono) + ", Sides " + db (sideSides, 3) + "; centred tone: Mono " + db (centreMono, 3)
+                   + ", Sides " + db (centreSides));
+    }
+
+    // A mono track is its own mono (bit for bit) and has no sides (silence).
+    {
+        const Channels in1 { music[0] };
+        const auto st = play (anneal::checkStereo, [] (Rig&) {}, in1, 1);
+        const auto mo = play (anneal::checkMono, [] (Rig&) {}, in1, 1);
+        const auto si = play (anneal::checkSides, [] (Rig&) {}, in1, 1);
+        double d = 0.0;
+        for (size_t i = 0; i < st[0].size(); ++i)
+            d = std::max (d, (double) std::abs (mo[0][i] - st[0][i]));
+        check (d == 0.0 && maxAbs (si) == 0.0 && maxAbs (st) > 0.05, "a mono track: Mono as is, Sides silent",
+               "Mono vs. Stereo " + juce::String (d, 12) + ", Sides peak " + juce::String (maxAbs (si), 12));
+    }
+
+    // Stereo is bit-identical: the default, and a check moved to Mono and Sides and back (once its 30 ms fade is over)
+    // plays exactly like one that never moved; Bypass plays the input as it is whatever the check.
+    {
+        Rig a, b;
+        for (auto* r : { &a, &b })
+            r->prepare (fs, 512);
+        const bool defaultStereo = a.proc->apvts.getRawParameterValue (ids::listenCheck)->load() == 0.0f;
+        const auto outA = a.run (music, fixedBlocks (512));
+        Channels outB = music;
+        const int seg = (int) (0.25 * fs);
+        for (int part = 0; part < 4; ++part)
+        {
+            b.set (ids::listenCheck, part == 1 ? 1.0f : part == 2 ? 2.0f : 0.0f);   // Stereo, Mono, Sides, Stereo
+            const int from = part * seg, len = part == 3 ? (int) music[0].size() - from : seg;
+            Channels piece { std::vector<float> (music[0].begin() + from, music[0].begin() + from + len),
+                             std::vector<float> (music[1].begin() + from, music[1].begin() + from + len) };
+            const auto o = b.run (piece, fixedBlocks (512));
+            for (int c = 0; c < 2; ++c)
+                std::copy (o[(size_t) c].begin(), o[(size_t) c].end(), outB[(size_t) c].begin() + from);
+        }
+        double before = 0.0, after = 0.0, during = 0.0;
+        const int settled = 3 * seg + (int) (0.04 * fs);
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < outA[(size_t) c].size(); ++i)
+            {
+                const double d = std::abs (outA[(size_t) c][i] - outB[(size_t) c][i]);
+                if ((int) i < seg)            before = std::max (before, d);
+                else if ((int) i >= settled)  after = std::max (after, d);
+                else                          during = std::max (during, d);
+            }
+
+        Rig s, m;
+        for (auto* r : { &s, &m })
+        {
+            r->set (ids::bypass, 1.0f);
+            r->prepare (fs, 512);
+        }
+        m.set (ids::listenCheck, 1.0f);
+        const auto bs = s.run (music, fixedBlocks (512)), bm = m.run (music, fixedBlocks (512));
+        double bypassDiff = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < bs[(size_t) c].size(); ++i)
+                bypassDiff = std::max (bypassDiff, (double) std::abs (bs[(size_t) c][i] - bm[(size_t) c][i]));
+        const double bypassDry = delayedError (bm, music, s.proc->getLatencySamples());
+        // Bypass crossfades (wet + 1 x (dry - wet)), so it is the input to float rounding (section 12), whatever the wet.
+        check (defaultStereo && before == 0.0 && after == 0.0 && during > 0.01 && bypassDiff < 1.0e-7 && bypassDry < 1.0e-6,
+               "Stereo bit-identical (also back from Mono and Sides)",
+               juce::String (defaultStereo ? "Stereo by default" : "NOT STEREO BY DEFAULT") + "; vs. never moved: before "
+                   + juce::String (before, 12) + ", while checking " + juce::String (during, 3) + ", back on Stereo "
+                   + juce::String (after, 12) + "; Bypass with Mono vs. Stereo " + juce::String (bypassDiff, 12)
+                   + ", vs. the input " + juce::String (bypassDry, 9));
+    }
+
+    // Switching while playing fades (30 ms): no step bigger than the tones' own; the loudness match measures the
+    // signal before the check, so its gain is the same whatever you hear.
+    {
+        const int n = (int) (1.2 * fs);
+        Channels tones = testsig::silence (2, n);
+        for (int i = 0; i < n; ++i)
+        {
+            tones[0][(size_t) i] = 0.25f * (float) std::sin (2.0 * testsig::pi * 440.0 * i / fs);
+            tones[1][(size_t) i] = 0.25f * (float) std::sin (2.0 * testsig::pi * 554.37 * i / fs + 1.0);
+        }
+        auto maxStep = [] (const Channels& x, int from)
+        {
+            double m = 0.0;
+            for (auto& ch : x)
+                for (size_t i = (size_t) from + 1; i < ch.size(); ++i)
+                    m = std::max (m, (double) std::abs (ch[i] - ch[i - 1]));
+            return m;
+        };
+        Rig steady, sw;
+        for (auto* r : { &steady, &sw })
+        {
+            r->setNeutral();
+            r->prepare (fs, 256);
+        }
+        const auto still = steady.run (tones, fixedBlocks (256));
+        int k = 0;
+        Channels moved = tones;
+        juce::AudioBuffer<float> buf (2, 256);
+        juce::MidiBuffer midi;
+        for (int pos = 0; pos + 256 <= n; pos += 256, ++k)
+        {
+            if (k % 40 == 20)   // every ~0.2 s: Mono, Sides, Stereo, Sides, Mono ... (Sides <-> Mono directly too)
+                sw.set (ids::listenCheck, (float) ((k / 40) % 3 == 0 ? 1 : (k / 40) % 3 == 1 ? 2 : 0));
+            for (int c = 0; c < 2; ++c)
+                buf.copyFrom (c, 0, tones[(size_t) c].data() + pos, 256);
+            sw.proc->processBlock (buf, midi);
+            for (int c = 0; c < 2; ++c)
+                std::copy (buf.getReadPointer (c), buf.getReadPointer (c) + 256, moved[(size_t) c].data() + pos);
+        }
+        const int lat = steady.proc->getLatencySamples() + 64;
+        const double stepStill = maxStep (still, lat), stepMoved = maxStep (moved, lat);
+
+        // The match gain, read from two instances that played the same 1 s, one heard in Sides only.
+        double gain[2] {};
+        Rig ms, mm;
+        for (auto* r : { &ms, &mm })
+        {
+            r->set (ids::match, 1.0f);
+            r->set (ids::reveal, 80.0f);
+            r->prepare (fs, 512);
+        }
+        mm.set (ids::listenCheck, 2.0f);
+        ms.run (music, fixedBlocks (512));
+        mm.run (music, fixedBlocks (512));
+        gain[0] = ms.proc->getMatchGainDb();
+        gain[1] = mm.proc->getMatchGainDb();
+        check (stepMoved <= stepStill * 1.05 + 1.0e-4 && gain[0] == gain[1] && std::abs (gain[0]) > 0.001,
+               "switching fades; Match measures before the check",
+               "largest step switching every 0.2 s " + juce::String (stepMoved, 5) + " vs. " + juce::String (stepStill, 5)
+                   + " steady; match gain Stereo " + db (gain[0], 3) + ", Sides " + db (gain[1], 3));
+    }
+
+    // The parameter: "Stereo" by default, its texts and typed values; older projects open in Stereo (whatever this
+    // instance had), a saved check comes back, factory presets leave it alone.
+    {
+        Rig r;
+        auto* cp = r.proc->apvts.getParameter (ids::listenCheck);
+        auto raw = [] (Rig& x) { return x.proc->apvts.getRawParameterValue (ids::listenCheck)->load(); };
+        auto typed = [cp] (const juce::String& t) { return juce::roundToInt (cp->convertFrom0to1 (cp->getValueForText (t))); };
+        const bool texts = cp->getCurrentValueAsText() == "Stereo" && cp->getText (cp->convertTo0to1 (1.0f), 32) == "Mono"
+                           && cp->getText (cp->convertTo0to1 (2.0f), 32) == "Sides only"
+                           && typed ("mono") == 1 && typed ("Sum") == 1 && typed ("sides") == 2 && typed ("Side only") == 2
+                           && typed ("S") == 2 && typed ("stereo") == 0 && typed ("off") == 0 && typed ("2") == 2
+                           && cp->getName (32) == "Listen Check" && cp->isAutomatable();
+
+        auto old = r.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::listenCheck), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::listenCheck, 1.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        const bool oldOpen = raw (b) == 0.0f;
+
+        Rig c;
+        c.set (ids::listenCheck, 2.0f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = raw (d) == 2.0f;
+        d.proc->setCurrentProgram (3);
+        const bool presetKeeps = raw (d) == 2.0f;
+        check (texts && oldOpen && kept && presetKeeps, "Listen check: texts, older projects, saved, presets",
+               "default " + cp->getCurrentValueAsText() + ", 1 -> " + cp->getText (cp->convertTo0to1 (1.0f), 32) + ", typed S -> "
+                   + juce::String (typed ("S")) + ", older project -> " + juce::String (raw (b), 0) + ", saved -> "
+                   + juce::String (raw (d), 0) + ", after a preset " + juce::String (raw (d), 0));
+    }
+
+    // The Listen menu: its Check section sets the parameter (one undo step); the pill reads "Mono" alone, "Heat only ·
+    // mono" with a solo, and every text fits; the display names it ("MONO", "... , sides only"); no new control.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::ListenMenu* menu = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+                if (auto* l = dynamic_cast<anneal::ListenMenu*> (c))
+                    menu = l;
+        if (menu == nullptr)
+        {
+            check (false, "the Listen check in the Listen menu", "no Listen menu");
+            return;
+        }
+        auto& screen = editor->getContent().screen;
+        const float width = menu->textArea().getWidth();
+        juce::String tooWide;
+        float widest = 0.0f;
+        for (int c = 0; c < anneal::ListenMenu::numChoices; ++c)
+            for (int k = 0; k < anneal::ListenMenu::numChecks; ++k)
+            {
+                const auto s = anneal::ListenMenu::shown (c, k, width);
+                const float w = anneal::ListenMenu::textWidth (s.name + s.check, s.fontSize);
+                widest = std::max (widest, w);
+                if (w > width || (k > 0 && s.check.isEmpty()))
+                    tooWide << s.name << s.check << " (" << juce::String (w, 1) << " px)  ";
+            }
+        const auto offText = anneal::ListenMenu::shown (0, 0, width);
+        const bool offAsBefore = offText.name == "Listen: off" && offText.check.isEmpty() && screen.getListenTag().first.isEmpty();
+
+        menu->choose (102);   // Mono
+        const float chosen = r.proc->apvts.getRawParameterValue (ids::listenCheck)->load();
+        const auto monoShown = anneal::ListenMenu::shown (menu->getChoice(), menu->getCheck(), width);
+        const auto monoTag = screen.getListenTag();
+        r.proc->undo();
+        const bool undone = r.proc->apvts.getRawParameterValue (ids::listenCheck)->load() == 0.0f;
+        r.proc->redo();
+        menu->choose (4);     // Heat only
+        const auto both = anneal::ListenMenu::shown (menu->getChoice(), menu->getCheck(), width);
+        menu->choose (103);   // Sides only
+        const auto sidesTag = screen.getListenTag();
+        const float tagW = anneal::theme::tabularWidths (anneal::theme::caps (11.0f), sidesTag.first)
+                           + anneal::theme::tabularWidths (anneal::theme::font (11.0f), sidesTag.second) + 30.0f;
+        menu->choose (101);   // Stereo
+        menu->choose (1);     // Listen off
+        const bool backOff = r.proc->apvts.getRawParameterValue (ids::listenCheck)->load() == 0.0f
+                             && screen.getListenTag().first.isEmpty();
+        const auto dotText = juce::String::fromUTF8 ("Heat only \xc2\xb7 mono");
+        check (offAsBefore && tooWide.isEmpty() && chosen == 1.0f && monoShown.check == "Mono" && monoTag.first == "MONO" && undone
+                   && both.name + both.check == dotText && sidesTag.first == "HEAT ONLY" && sidesTag.second.endsWith ("sides only")
+                   && tagW < screen.getEqLane().getWidth() * 0.5f && backOff && menu->getTooltip().contains ("Mono"),
+               "the Listen check in the Listen menu",
+               "pill text area " + juce::String (width, 1) + " px, widest text " + juce::String (widest, 1) + " px; menu Mono -> "
+                   + juce::String (chosen, 0) + " (\"" + monoShown.check + "\", display \"" + monoTag.first + " " + monoTag.second
+                   + "\"), undo -> " + (undone ? "Stereo" : "NOT UNDONE") + "; with Heat only \"" + both.name + both.check
+                   + "\", Sides: \"" + sidesTag.first + " " + sidesTag.second + "\" (" + juce::String (tagW, 0) + " px)"
+                   + (tooWide.isEmpty() ? juce::String() : "; TOO WIDE: " + tooWide));
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -7342,7 +7647,7 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testPeakHoldInput538();
+        testListenCheck539();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -7407,6 +7712,7 @@ int main (int argc, char** argv)
     testFixes537();
     testHeatLimit537();
     testPeakHoldInput538();
+    testListenCheck539();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

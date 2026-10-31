@@ -69,7 +69,7 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                 "to both components, the centre (Mid), or the sides (Side)."),
       heatTarget (p.apvts, ids::heatTarget, "Heat: ", { "Both", "Mid", "Side" },
                   "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
-      listen (p.apvts, ids::listen),
+      listen (p.apvts, ids::listen, ids::listenCheck),
       flavour (p.apvts, ids::flavour, ids::heatLimit),
       freeze (p.apvts, ids::freeze, "FREEZE", colour::straw,
               "Freeze: hold the auto-EQ curve where it is; Heat keeps following the music"),

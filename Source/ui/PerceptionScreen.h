@@ -116,6 +116,9 @@ namespace anneal
         void choosePeakHold (int item);
         // The hover read-out's text at a frequency (also for the tests).
         juce::String getReadoutText (float hz) const;
+        // 5.3.9: the pill at the top right of the EQ lane naming what you hear (a Listen solo, the Listen check):
+        // its title and note, both empty while you hear the full result in stereo (also for the tests).
+        std::pair<juce::String, juce::String> getListenTag() const;
 
     private:
         enum class Handle { none, lo, hi };
@@ -182,6 +185,8 @@ namespace anneal
         std::unique_ptr<juce::ParameterAttachment> maxCutAttachment, maxBoostAttachment;   // 5.3.2: the limits' lines
         float maxCutDb = 24.0f, maxBoostDb = 24.0f;
         int listenMode = 0, refMode = 0;
+        std::unique_ptr<juce::ParameterAttachment> listenCheckAttachment;   // 5.3.9
+        int listenCheck = 0;
         juce::RangedAudioParameter* loParam = nullptr;
         juce::RangedAudioParameter* hiParam = nullptr;
         float rangeLo = 30.0f, rangeHi = 18000.0f;

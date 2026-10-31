@@ -45,6 +45,7 @@ namespace anneal::ids
     inline constexpr const char* scKeyHi     = "scKeyHi";     // 5.3.4: ... up to here, Hz (20 kHz = as before)
     inline constexpr const char* detail      = "detail";      // 5.3.6: how narrow the auto EQ's moves are, -100 broad .. +100 fine (0 = as before)
     inline constexpr const char* heatLimit   = "heatLimit";   // 5.3.7: the harmonics at most this far under the music per band, dB (0 = off, as before)
+    inline constexpr const char* listenCheck = "listenCheck"; // 5.3.9: hear the output as Stereo / Mono / Sides only (Stereo = as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -80,6 +81,11 @@ namespace anneal
     // as dB under ("-12", "12 dB", up to 30) or "off" / "none".
     juce::String formatHeatLimit (float db);
     float parseHeatLimit (const juce::String& text);
+    // 5.3.9 Listen check: "stereo"/"off", "mono"/"sum", "sides"/"side"/"s" or 0-2.
+    int parseListenCheck (const juce::String& text);
+
+    // 5.3.9 Listen check (choice indices of listenCheck): what you hear of the output, after the Ceiling.
+    enum ListenCheck { checkStereo = 0, checkMono = 1, checkSides = 2 };
 
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };

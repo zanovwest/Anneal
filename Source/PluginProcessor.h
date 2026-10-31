@@ -205,6 +205,9 @@ private:
     int dryPos = 0, ringLength = 0, chunkCapacity = 0, preparedChannels = 2;
 
     juce::SmoothedValue<float> mixSmoothed, outputSmoothed, deltaSmoothed, bypassSmoothed, listenSmoothed;
+    // 5.3.9 Listen check: how much of the output is heard summed to mono / as its sides (0 and 0 = Stereo).
+    juce::SmoothedValue<float> checkMono, checkSides;
+    void applyListenCheck (float* const* out, int nch, int len) noexcept;
     // While a listen mode is on (and for two frame lengths after, until the engine's output is
     // normal again) the wet signal is a solo, so the loudness match keeps its last gain.
     int matchHold = 0;
@@ -258,6 +261,7 @@ private:
     std::atomic<float>* pScKeyHi = nullptr;
     std::atomic<float>* pDetail = nullptr;     // 5.3.6
     std::atomic<float>* pHeatLimit = nullptr;  // 5.3.7
+    std::atomic<float>* pListenCheck = nullptr; // 5.3.9
 
     // 5.0 user presets
     juce::File userFolder { anneal::presets::defaultUserFolder() };

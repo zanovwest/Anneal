@@ -148,7 +148,8 @@ int main (int argc, char* argv[])
     bool haveAll = true;
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
-                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High", "Detail", "Heat Limit" })
+                    "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High", "Detail", "Heat Limit",
+                    "Listen Check" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -1144,6 +1145,64 @@ int main (int argc, char* argv[])
                texts + "; 2nd harmonic at 2 kHz " + juce::String (second[0], 1) + " dB (Off) -> " + juce::String (second[1], 1)
                    + " dB (" + juce::String::fromUTF8 ("\xe2\x88\x92") + "18 dB), the 1 kHz tone " + juce::String (tone[0], 2) + " / "
                    + juce::String (tone[1], 2) + " dB");
+    }
+
+    // 15. 5.3.9 Listen check through VST3: automatable, "Stereo" by default, typed values; a 1 kHz tone on the left
+    //     and the same tone upside down on the right (all side, no centre) vanishes in Mono and plays on both
+    //     speakers in Sides only; a tone in both channels alike (all centre) plays in Mono and vanishes in Sides.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* chk = inst != nullptr ? findParam (*inst, "Listen Check") : nullptr;
+        bool ok = chk != nullptr && chk->isAutomatable();
+        juce::String texts;
+        double level[3][2] {};   // Stereo / Mono / Sides x the anti-phase tone / the centred tone, left channel, dB
+        double lrDiff = 0.0;
+        if (ok)
+        {
+            const float mono = chk->getValueForText ("mono"), sides = chk->getValueForText ("sides");
+            texts << chk->getText (chk->getValue(), 32) << ", " << chk->getText (mono, 32) << ", " << chk->getText (sides, 32)
+                  << ", " << chk->getText (chk->getValueForText ("stereo"), 32);
+            ok = chk->getText (chk->getValue(), 32) == "Stereo" && chk->getText (mono, 32) == "Mono"
+                 && chk->getText (sides, 32) == "Sides only" && chk->getText (chk->getValueForText ("stereo"), 32) == "Stereo";
+
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Smooth", 0.0f }, { "Heat", 0.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            const int n = (int) (1.0 * fs);
+            testsig::Channels sig[2] { testsig::silence (2, n), testsig::silence (2, n) };
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = 0.25f * (float) std::sin (2.0 * testsig::pi * 1000.0 * i / fs);
+                sig[0][0][(size_t) i] = s;
+                sig[0][1][(size_t) i] = -s;
+                sig[1][0][(size_t) i] = sig[1][1][(size_t) i] = s;
+            }
+            const float values[] = { chk->getValueForText ("stereo"), mono, sides };
+            for (int k = 0; k < 3; ++k)
+                for (int t = 0; t < 2; ++t)
+                {
+                    chk->setValueNotifyingHost (values[k]);
+                    inst->reset();
+                    ok = ok && run (*inst, sig[t], out, [] { return 512; });
+                    const int from = (int) (0.5 * fs), len = (int) (0.4 * fs);
+                    level[k][t] = testsig::toDb (testsig::toneAmplitude (out[0].data() + from, len, 1000.0, fs) / 0.25);
+                    if (k > 0)
+                        for (int i = from; i < from + len; ++i)
+                            lrDiff = std::max (lrDiff, (double) std::abs (out[0][(size_t) i] - out[1][(size_t) i]));
+                }
+            inst->releaseResources();
+            ok = ok && std::abs (level[0][0]) < 0.1 && std::abs (level[0][1]) < 0.1   // Stereo: both tones as they are
+                 && level[1][0] < -80.0 && std::abs (level[1][1]) < 0.1                // Mono: the side tone gone
+                 && std::abs (level[2][0]) < 0.1 && level[2][1] < -80.0                // Sides: the centred tone gone
+                 && lrDiff < 1.0e-6;
+        }
+        check (ok, "Listen Check through VST3",
+               texts + "; side tone / centre tone: Stereo " + juce::String (level[0][0], 2) + " / " + juce::String (level[0][1], 2)
+                   + " dB, Mono " + juce::String (level[1][0], 1) + " / " + juce::String (level[1][1], 2) + " dB, Sides "
+                   + juce::String (level[2][0], 2) + " / " + juce::String (level[2][1], 1) + " dB; left - right "
+                   + juce::String (lrDiff, 9));
     }
 
     plugin->releaseResources();
