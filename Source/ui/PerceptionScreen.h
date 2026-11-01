@@ -119,6 +119,8 @@ namespace anneal
         // 5.3.9: the pill at the top right of the EQ lane naming what you hear (a Listen solo, the Listen check):
         // its title and note, both empty while you hear the full result in stereo (also for the tests).
         std::pair<juce::String, juce::String> getListenTag() const;
+        // 5.3.11: beside "AUTO EQ FROZEN": "average of 10 s" while Freeze holds the average, else empty.
+        juce::String getFrozenNote() const;
 
     private:
         enum class Handle { none, lo, hi };
@@ -169,6 +171,7 @@ namespace anneal
         bool attacksOn = false;
         bool zeroLatency = false;                      // 5.1
         bool keyActive = false, frozen = false;
+        float frozenSeconds = 0.0f;                    // 5.3.11: the held average's length (0: the curve as it was)
         void updateViews();
         float z0 = 0.0f, dz = 0.0f;
         bool haveFrame = false;

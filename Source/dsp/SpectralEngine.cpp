@@ -177,6 +177,13 @@ void SpectralEngine::adoptCurveFrom (const SpectralEngine& other) noexcept
         msModel[c].copyCurveFrom (other.msModel[c]);
 }
 
+void SpectralEngine::adoptAverageFrom (const SpectralEngine& other) noexcept
+{
+    model.copyAverageFrom (other.model);
+    for (int c = 0; c < 2; ++c)
+        msModel[c].copyAverageFrom (other.msModel[c]);
+}
+
 void SpectralEngine::process (float* const* io, int numChannels, int numSamples,
                               const float* const* key, int keyChannels) noexcept
 {
@@ -320,6 +327,7 @@ void SpectralEngine::smoothParameters() noexcept
     if (std::abs (current.heatLimitDb - target.heatLimitDb) < 0.01f)
         current.heatLimitDb = target.heatLimitDb;
     current.freeze = target.freeze;
+    current.freezeAverage = target.freezeAverage;
     current.scMode = target.scMode;
     current.refMode = target.refMode;
     lg  (current.rangeLoHz, target.rangeLoHz);
@@ -401,7 +409,11 @@ void SpectralEngine::runStage (int s) noexcept
         fw.msBlend = channels == 2 ? (current.midSide < 1.0e-4f ? 0.0f
                                      : current.midSide > 0.9999f ? 1.0f : current.midSide) : 0.0f;
         if (fw.msBlend == 0.0f && msActive)
-            for (auto& m : msModel) m.reset();
+            for (auto& m : msModel)
+            {
+                m.reset();
+                m.clearAverage();   // 5.3.11: back to Mid/Side later, its average starts then
+            }
         msActive = fw.msBlend > 0.0f;
 
         // Zero-phase analysis: the window centre lands on index 0, so a stationary partial's
@@ -564,6 +576,7 @@ void SpectralEngine::runStage (int s) noexcept
         ms.focus = current.focus;
         ms.guard = current.guard;
         ms.freeze = current.freeze;
+        ms.freezeAverage = current.freezeAverage;
         ms.scMode = current.scMode;
         ms.scAmount = current.scAmount;
         ms.scKeyLoHz = current.scKeyLoHz;
@@ -682,6 +695,7 @@ void SpectralEngine::runStage (int s) noexcept
                                  ? msModel[0].getSidechainPeakDb() : msModel[1].getSidechainPeakDb())
                           : model.getSidechainPeakDb();
         f.frozen = current.freeze;
+        f.frozenAverageSeconds = current.freeze ? (msActive ? msModel[0].getHeldAverageSeconds() : model.getHeldAverageSeconds()) : 0.0f;
         f.refMode = current.refMode;
         f.refValid = model.hasReference();
         f.refSeconds = getLearnedSeconds();

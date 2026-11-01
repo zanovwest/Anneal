@@ -7849,6 +7849,436 @@ void testNoteNames5310()
     }
 }
 
+// 5.3.11: a power spectrum (fftSize/2+1 bins) whose ring wanders and swells from frame to frame: a pink-ish bed with a
+// peak moving between 800 Hz and 5 kHz over about 10 s, so the auto-EQ curve keeps changing.
+void wanderingSpectrum (std::vector<float>& power, int frame, double fs, int nfft)
+{
+    const int bins = nfft / 2 + 1;
+    for (int k = 0; k < bins; ++k)
+        power[(size_t) k] = 1.0e-4f / (float) std::max (1, k);
+    const double hz = 2000.0 * std::pow (2.5, std::sin (frame * 0.0021));
+    const float amp = 0.02f * (1.5f + (float) std::sin (frame * 0.013));
+    const int kp = (int) std::lround (hz / (fs / nfft));
+    for (int d = -1; d <= 1; ++d)
+        power[(size_t) (kp + d)] += amp * (d == 0 ? 1.0f : 0.25f);
+}
+
+// 5.3.11: every curve (band dB) a model put in its average, in order, to compute the mean the held curve must be.
+struct CurveLog
+{
+    static constexpr int nb = anneal::PerceptualModel::numBands, cap = 3300;
+    const anneal::PerceptualModel* m;
+    std::vector<float> data = std::vector<float> ((size_t) cap * nb);
+    long long seen;
+    bool lost = false;   // two frames in one block: a curve not seen
+
+    explicit CurveLog (const anneal::PerceptualModel& model) : m (&model), seen (model.getAveragedFramesTotal()) {}
+
+    void take()
+    {
+        const long long t = m->getAveragedFramesTotal();
+        if (t == seen)
+            return;
+        lost = lost || t > seen + 1;
+        seen = t;
+        std::copy (m->getBandGainDb(), m->getBandGainDb() + nb, data.begin() + (std::ptrdiff_t) ((seen % cap) * nb));
+    }
+
+    std::vector<double> meanOfLast (int frames) const
+    {
+        std::vector<double> mean ((size_t) nb, 0.0);
+        for (int j = 0; j < frames; ++j)
+        {
+            const float* c = data.data() + (size_t) (((seen - j) % cap) * nb);
+            for (int b = 0; b < nb; ++b)
+                mean[(size_t) b] += c[b];
+        }
+        for (auto& v : mean)
+            v /= std::max (1, frames);
+        return mean;
+    }
+};
+
+double maxCurveDiff (const float* a, const std::vector<double>& b)
+{
+    double d = 0.0;
+    for (size_t i = 0; i < b.size(); ++i)
+        d = std::max (d, std::abs ((double) a[i] - b[i]));
+    return d;
+}
+
+void testFreezeAverage5311()
+{
+    section ("63. 5.3.11 Freeze the average");
+    const double fs = 48000.0;
+    constexpr int nb = anneal::PerceptualModel::numBands;
+    const int nfft = anneal::SpectralEngine::fftSizeFor (fs, anneal::SpectralEngine::low);
+    const float fps = (float) (fs / anneal::SpectralEngine::hopFor (fs, nfft));
+    std::vector<float> power ((size_t) (nfft / 2 + 1));
+    auto curveOf = [] (const anneal::PerceptualModel& m) { return std::vector<float> (m.getBandGainDb(), m.getBandGainDb() + nb); };
+    auto toDouble = [] (const std::vector<float>& v) { return std::vector<double> (v.begin(), v.end()); };
+    anneal::ModelSettings base;
+    base.reveal = 0.5f;
+    base.smooth = 0.8f;
+
+    // The held curve is the mean of the live curves over the last 10 s of music: after 12 s of a wandering ring, Freeze
+    // in average mode holds the mean of the last 3000 frames' curves (not the first 600's), bit for bit whatever follows.
+    {
+        anneal::PerceptualModel m;
+        m.prepare (fs, nfft);
+        auto s = base;
+        const int frames = (int) std::lround (12.0 * fps);
+        const int from = frames - (int) std::lround (anneal::PerceptualModel::averageSeconds * fps);
+        std::vector<double> mean ((size_t) nb, 0.0);
+        for (int i = 0; i < frames; ++i)
+        {
+            wanderingSpectrum (power, i, fs, nfft);
+            m.analyse (power.data(), s, fps);
+            if (i >= from)
+                for (int b = 0; b < nb; ++b)
+                    mean[(size_t) b] += m.getBandGainDb()[b];
+        }
+        const auto last = curveOf (m);
+        for (auto& v : mean)
+            v /= frames - from;
+        const long long counted = m.getAveragedFramesTotal();
+        const int window = m.getAverageFrames();
+        s.freeze = s.freezeAverage = true;
+        wanderingSpectrum (power, frames, fs, nfft);
+        m.analyse (power.data(), s, fps);
+        const auto held = curveOf (m);
+        const double err = maxCurveDiff (held.data(), mean), fromNow = maxCurveDiff (last.data(), mean);
+        bool stays = true;
+        for (int i = 0; i < 600; ++i)   // 2 s of something else: the held curve doesn't move at all
+        {
+            wanderingSpectrum (power, 5000 + 7 * i, fs, nfft);
+            m.analyse (power.data(), s, fps);
+            stays = stays && curveOf (m) == held;
+        }
+        check (counted == frames && window == frames - from && err < 1.0e-3 && fromNow > 1.0 && stays
+                   && std::abs (m.getHeldAverageSeconds() - 10.0f) < 0.05f,
+               "Freeze holds the mean of the last 10 s of curves",
+               juce::String (frames) + " frames, " + juce::String (window) + " in the average (" + juce::String (m.getHeldAverageSeconds(), 2)
+                   + " s); held vs. their mean " + juce::String (err, 6) + " dB, the curve then vs. the mean "
+                   + db (fromNow, 2) + "; held for 2 s more: " + (stays ? "unchanged" : "MOVED"));
+    }
+
+    // Silence is left out, and under 10 s the average is of what there is: 1237 frames of the ring, then 2 s of
+    // silence; the held curve is the mean of the frames that were heard: the ring's, and the tail the model still
+    // hears while its 20 ms integration lets go of a level ~80 dB over the threshold (about a third of a second).
+    {
+        anneal::PerceptualModel m;
+        m.prepare (fs, nfft);
+        auto s = base;
+        CurveLog log (m);
+        const int music = 1237, silent = (int) std::lround (2.0 * fps);
+        for (int i = 0; i < music + silent; ++i)
+        {
+            if (i < music)
+                wanderingSpectrum (power, i, fs, nfft);
+            else
+                std::fill (power.begin(), power.end(), 0.0f);
+            m.analyse (power.data(), s, fps);
+            log.take();
+        }
+        const int heard = m.getAverageFrames();
+        const auto want = log.meanOfLast (heard);
+        s.freeze = s.freezeAverage = true;
+        m.analyse (power.data(), s, fps);
+        const double err = maxCurveDiff (m.getBandGainDb(), want);
+        check (! log.lost && heard >= music && heard < music + silent / 4 && err < 1.0e-3
+                   && std::abs (m.getHeldAverageSeconds() - heard / fps) < 0.01f,
+               "silence left out; under 10 s, the mean of what was heard",
+               juce::String (music) + " frames of music + " + juce::String (silent) + " silent: " + juce::String (heard)
+                   + " in the average (" + juce::String (m.getHeldAverageSeconds(), 2) + " s); held vs. their mean "
+                   + juce::String (err, 6) + " dB");
+    }
+
+    // Hold now is what Freeze always held (the last frame's curve, unmoving). The live curve keeps following the music
+    // while Freeze holds: a twin that never froze has it. Average then takes the mean of every frame so far, back to
+    // Hold now takes the curve as it is at that moment, and releasing goes on from the held curve (no jump to the live one).
+    {
+        anneal::PerceptualModel a, b;
+        a.prepare (fs, nfft);
+        b.prepare (fs, nfft);
+        CurveLog log (b);
+        std::vector<float> bPrev, heldNow, heldNow2, afterRelease, liveAtRelease;
+        std::vector<double> wantAvg;
+        bool nowStays = true, avgOk = false;
+        double avgErr = 1.0e9;
+        for (int i = 0; i < 3001; ++i)
+        {
+            wanderingSpectrum (power, i, fs, nfft);
+            auto sa = base;
+            sa.freeze = i >= 1200 && i < 3000;
+            sa.freezeAverage = i >= 2400 && i < 2700;
+            if (i == 2400)
+                wantAvg = log.meanOfLast (b.getAverageFrames());
+            a.analyse (power.data(), sa, fps);
+            b.analyse (power.data(), base, fps);
+            log.take();
+            const auto ca = curveOf (a);
+            if (i == 1200)
+            {
+                nowStays = ca == bPrev;
+                heldNow = ca;
+            }
+            else if (i > 1200 && i < 2400)
+            {
+                nowStays = nowStays && ca == heldNow;
+            }
+            else if (i == 2400)
+            {
+                avgErr = maxCurveDiff (ca.data(), wantAvg);
+                avgOk = avgErr < 1.0e-3 && a.getAverageFrames() == 2401;
+            }
+            else if (i == 2700)
+            {
+                heldNow2 = ca;
+                avgOk = avgOk && ca == bPrev;
+            }
+            else if (i == 3000)
+            {
+                afterRelease = ca;
+                liveAtRelease = bPrev;
+            }
+            bPrev = curveOf (b);
+        }
+        const double gap = maxCurveDiff (liveAtRelease.data(), toDouble (heldNow2));
+        const double moved = maxCurveDiff (afterRelease.data(), toDouble (heldNow2));
+        check (nowStays && avgOk && gap > 2.0 && moved < 0.15 * gap,
+               "Hold now as before; the mode switches while frozen",
+               juce::String ("Hold now = the last frame's curve, unmoving: ") + (nowStays ? "yes" : "NO") + "; Average (frame 2400) vs. the mean "
+                   + juce::String (avgErr, 6) + " dB; back to Now = the live curve then: " + (avgOk ? "yes" : "NO")
+                   + "; released: first frame " + db (moved, 2) + " from the held curve (live one " + db (gap, 2) + " away)");
+    }
+
+    // Mid and Side each hold their own average, and so does Zero latency (the Low engine as analysis only).
+    {
+        const auto music = testsig::musicLike (fs, 11.0, 7);
+        const int n = (int) music[0].size();
+        anneal::SpectralEngine e;
+        e.prepare (fs, 2, anneal::SpectralEngine::low);
+        auto p = neutral();
+        p.reveal = 0.5f;
+        p.smooth = 0.8f;
+        p.midSide = 1.0f;
+        e.setParameters (p);
+        CurveLog mid (e.getMidSideModel (0)), side (e.getMidSideModel (1));
+        Channels x = music;
+        auto runFrom = [&] (int from, int to)
+        {
+            for (int pos = from; pos + 64 <= to; pos += 64)
+            {
+                float* ptrs[2] = { x[0].data() + pos, x[1].data() + pos };
+                e.process (ptrs, 2, 64);
+                mid.take();
+                side.take();
+            }
+        };
+        runFrom (0, n - 4096);
+        const auto wantMid = mid.meanOfLast (e.getMidSideModel (0).getAverageFrames());
+        const auto wantSide = side.meanOfLast (e.getMidSideModel (1).getAverageFrames());
+        p.freeze = p.freezeAverage = true;
+        e.setParameters (p);
+        runFrom (n - 4096, n);
+        const double errMid = maxCurveDiff (e.getMidSideModel (0).getBandGainDb(), wantMid);
+        const double errSide = maxCurveDiff (e.getMidSideModel (1).getBandGainDb(), wantSide);
+        const float msSeconds = e.getMidSideModel (0).getHeldAverageSeconds();
+
+        Rig r;
+        r.setNeutral();
+        r.set (ids::zeroLatency, 1.0f);
+        r.set (ids::smooth, 80.0f);
+        r.prepare (fs, 64);
+        const auto& zm = r.proc->getEngine().getModel();
+        CurveLog zlog (zm);
+        juce::AudioBuffer<float> buf (2, 64);
+        juce::MidiBuffer midi;
+        auto play = [&] (int from, int to)
+        {
+            for (int pos = from; pos + 64 <= to; pos += 64)
+            {
+                for (int c = 0; c < 2; ++c)
+                    buf.copyFrom (c, 0, music[(size_t) c].data() + pos, 64);
+                r.proc->processBlock (buf, midi);
+                zlog.take();
+            }
+        };
+        play (0, n - 4096);
+        const auto wantZero = zlog.meanOfLast (zm.getAverageFrames());
+        r.set (ids::freezeMode, 1.0f);
+        r.set (ids::freeze, 1.0f);
+        play (n - 4096, n);
+        const double errZero = maxCurveDiff (zm.getBandGainDb(), wantZero);
+        check (! mid.lost && ! side.lost && ! zlog.lost && errMid < 1.0e-3 && errSide < 1.0e-3 && msSeconds > 9.9f
+                   && errZero < 1.0e-3 && r.proc->getLatencySamples() == 0 && zm.getHeldAverageSeconds() > 9.9f,
+               "Mid/Side and Zero latency hold their averages",
+               "Mid " + juce::String (errMid, 6) + " dB, Side " + juce::String (errSide, 6) + " dB from their means ("
+                   + juce::String (msSeconds, 2) + " s); Zero latency " + juce::String (errZero, 6) + " dB ("
+                   + juce::String (zm.getHeldAverageSeconds(), 2) + " s, latency " + juce::String (r.proc->getLatencySamples()) + ")");
+    }
+
+    // The average is a measurement: it comes through the host stopping (reset()) and into the new engine when the
+    // latency mode changes (Low -> Precise, which never heard the song), and Freeze there holds it.
+    {
+        const auto music = testsig::musicLike (fs, 11.0, 7);
+        const int n = (int) music[0].size();
+        Rig r;
+        r.setNeutral();
+        r.set (ids::smooth, 80.0f);
+        r.prepare (fs, 64);
+        const auto& low = r.proc->getEngine().getModel();
+        CurveLog log (low);
+        juce::AudioBuffer<float> buf (2, 64);
+        juce::MidiBuffer midi;
+        auto play = [&] (int from, int to, bool logIt)
+        {
+            for (int pos = from; pos + 64 <= to; pos += 64)
+            {
+                for (int c = 0; c < 2; ++c)
+                    buf.copyFrom (c, 0, music[(size_t) c].data() + pos, 64);
+                r.proc->processBlock (buf, midi);
+                if (logIt)
+                    log.take();
+            }
+        };
+        play (0, n - 8192, true);
+        const int before = low.getAverageFrames();
+        const auto want = log.meanOfLast (before);
+        r.proc->reset();
+        const int afterStop = low.getAverageFrames();
+        r.set (ids::latency, 2.0f);
+        r.proc->applyLatencyModeIfChanged();
+        const auto& precise = r.proc->getEngine().getModel();
+        const int adopted = precise.getAverageFrames();
+        r.set (ids::freezeMode, 1.0f);
+        r.set (ids::freeze, 1.0f);
+        play (n - 8192, n, false);
+        const double err = maxCurveDiff (precise.getBandGainDb(), want);
+        check (! log.lost && &precise != &low && before > 2900 && afterStop == before && adopted == before && err < 1.0e-3,
+               "the average comes through a stop and a latency change",
+               juce::String (before) + " frames in Low's average, after the stop " + juce::String (afterStop) + ", in Precise "
+                   + juce::String (adopted) + "; Precise holds them " + juce::String (err, 6) + " dB from their mean");
+    }
+
+    // Freeze Mode alone changes nothing: with Freeze off, Average plays exactly what Now plays.
+    {
+        const auto music = testsig::musicLike (fs, 2.0, 9);
+        Rig a, b;
+        for (auto* r : { &a, &b })
+        {
+            r->set (ids::smooth, 80.0f);
+            r->set (ids::reveal, 60.0f);
+            r->set (ids::heat, 40.0f);
+        }
+        b.set (ids::freezeMode, 1.0f);
+        a.prepare (fs, 512);
+        b.prepare (fs, 512);
+        const auto oa = a.run (music, fixedBlocks (512)), ob = b.run (music, fixedBlocks (512));
+        double d = 0.0, peak = 0.0;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < oa[(size_t) c].size(); ++i)
+            {
+                d = std::max (d, (double) std::abs (oa[(size_t) c][i] - ob[(size_t) c][i]));
+                peak = std::max (peak, (double) std::abs (oa[(size_t) c][i]));
+            }
+        check (d == 0.0 && peak > 0.05, "Freeze off: the mode changes nothing", "Now vs. Average " + juce::String (d, 12));
+    }
+
+    // The parameter: "Now" by default, its texts and typed values; older projects open with Now (whatever this instance
+    // had), a saved mode comes back, factory presets leave it alone.
+    {
+        Rig r;
+        auto* fp = r.proc->apvts.getParameter (ids::freezeMode);
+        auto raw = [] (Rig& x) { return x.proc->apvts.getRawParameterValue (ids::freezeMode)->load(); };
+        auto typed = [fp] (const juce::String& t) { return juce::roundToInt (fp->convertFrom0to1 (fp->getValueForText (t))); };
+        const bool texts = fp->getCurrentValueAsText() == "Now" && fp->getText (fp->convertTo0to1 (1.0f), 32) == "Average 10 s"
+                           && typed ("avg") == 1 && typed ("Average") == 1 && typed ("10 s") == 1 && typed ("mean") == 1
+                           && typed ("1") == 1 && typed ("now") == 0 && typed ("Hold now") == 0 && typed ("0") == 0
+                           && fp->getName (32) == "Freeze Mode" && fp->isAutomatable();
+
+        auto old = r.proc->apvts.copyState();
+        old.removeChild (old.getChildWithProperty ("id", ids::freezeMode), nullptr);
+        juce::MemoryBlock oldState;
+        juce::AudioProcessor::copyXmlToBinary (*old.createXml(), oldState);
+        Rig b;
+        b.set (ids::freezeMode, 1.0f);
+        b.proc->setStateInformation (oldState.getData(), (int) oldState.getSize());
+        const bool oldOpen = raw (b) == 0.0f;
+
+        Rig c;
+        c.set (ids::freezeMode, 1.0f);
+        juce::MemoryBlock saved;
+        c.proc->getStateInformation (saved);
+        Rig d;
+        d.proc->setStateInformation (saved.getData(), (int) saved.getSize());
+        const bool kept = raw (d) == 1.0f;
+        d.proc->setCurrentProgram (2);
+        const bool presetKeeps = raw (d) == 1.0f;
+        check (texts && oldOpen && kept && presetKeeps, "Freeze Mode: texts, older projects, saved, presets",
+               "default " + fp->getCurrentValueAsText() + ", 1 -> " + fp->getText (fp->convertTo0to1 (1.0f), 32) + ", typed avg -> "
+                   + juce::String (typed ("avg")) + ", older project -> " + juce::String (raw (b), 0) + ", saved -> "
+                   + juce::String (raw (d), 0) + ", after a preset " + juce::String (raw (d), 0));
+    }
+
+    // The FREEZE pill opens the menu: Hold the average sets both parameters as one undo step and reads "FREEZE · AVG"
+    // (it fits); Hold now and Off as before; the display notes "average of 10 s" beside AUTO EQ FROZEN.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::FreezeMenu* menu = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+                if (auto* f = dynamic_cast<anneal::FreezeMenu*> (c))
+                    menu = f;
+        if (menu == nullptr)
+        {
+            check (false, "the FREEZE pill's menu", "no FREEZE pill");
+            return;
+        }
+        auto raw = [&r] (const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+        const bool atRest = menu->getButtonText() == "FREEZE" && ! menu->getToggleState() && menu->chosenItem() == 1;
+        menu->choose (3);
+        const bool avgSet = raw (ids::freeze) == 1.0f && raw (ids::freezeMode) == 1.0f && menu->getToggleState();
+        const auto avgText = menu->getButtonText();
+        const float room = (float) menu->getWidth() - 12.0f, textW = anneal::FreezeMenu::textWidth (avgText);
+        r.proc->undo();
+        const bool oneStep = raw (ids::freeze) == 0.0f && raw (ids::freezeMode) == 0.0f && menu->getButtonText() == "FREEZE";
+        r.proc->redo();
+        menu->choose (2);
+        const bool nowSet = raw (ids::freeze) == 1.0f && raw (ids::freezeMode) == 0.0f && menu->getButtonText() == "FREEZE"
+                            && menu->getToggleState() && menu->chosenItem() == 2;
+        menu->choose (1);
+        const bool off = raw (ids::freeze) == 0.0f && ! menu->getToggleState();
+
+        auto buf = std::make_unique<anneal::TripleBuffer<anneal::DisplayFrame>>();
+        anneal::PerceptionScreen screen (*buf, r.proc->apvts);
+        screen.setSize (1440, 356);
+        auto push = [&] (bool frozen, float seconds)
+        {
+            auto& fr = buf->beginWrite();
+            fr.z0 = (float) anneal::erb::hzToCam (20.0);
+            fr.dz = (float) ((anneal::erb::hzToCam (20000.0) - fr.z0) / (anneal::DisplayFrame::numBands - 1));
+            fr.frozen = frozen;
+            fr.frozenAverageSeconds = seconds;
+            buf->endWrite();
+            screen.refreshNow();
+            return screen.getFrozenNote();
+        };
+        const auto noteAvg = push (true, 9.96f), noteNow = push (true, 0.0f), noteOff = push (false, 0.0f);
+        check (atRest && avgSet && avgText == juce::String::fromUTF8 ("FREEZE \xc2\xb7 AVG") && textW <= room && oneStep && nowSet
+                   && off && noteAvg == "average of 10 s" && noteNow.isEmpty() && noteOff.isEmpty()
+                   && menu->getTooltip().contains ("average"),
+               "the FREEZE pill's menu and the display's note",
+               "at rest " + juce::String (atRest ? "FREEZE" : "WRONG") + "; Hold the average -> \"" + avgText + "\" ("
+                   + juce::String (textW, 1) + " of " + juce::String (room, 1) + " px), undo " + (oneStep ? "one step" : "NOT ONE STEP")
+                   + "; Hold now " + (nowSet ? "ok" : "WRONG") + ", Off " + (off ? "ok" : "WRONG") + "; display: \"" + noteAvg
+                   + "\", now \"" + noteNow + "\"");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -7867,7 +8297,7 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testNoteNames5310();
+        testFreezeAverage5311();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -7935,6 +8365,7 @@ int main (int argc, char** argv)
     testListenCheck539();
     testFixes5310();
     testNoteNames5310();
+    testFreezeAverage5311();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

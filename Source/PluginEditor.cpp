@@ -71,8 +71,7 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                   "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
       listen (p.apvts, ids::listen, ids::listenCheck),
       flavour (p.apvts, ids::flavour, ids::heatLimit),
-      freeze (p.apvts, ids::freeze, "FREEZE", colour::straw,
-              "Freeze: hold the auto-EQ curve where it is; Heat keeps following the music"),
+      freeze (p.apvts, ids::freeze, ids::freezeMode),
       scMode (p.apvts, ids::scMode, "", { "Off", "Make room", "Unmask" },
               "Sidechain: Make room ducks this track where the key track needs space; Unmask lifts this track where the key "
               "masks it. Route a track to Anneal's sidechain input in your DAW"),
@@ -222,7 +221,7 @@ void AnnealEditorContent::resized()
     // and the M/S routing on the group's title row. 5.3.3: Response and Guard first, then Tilt with its
     // Pivot under it, at the foot of the stack, so the Pivot comes and goes without moving anything.
     limits.setBounds (108, routingY, 138, 26);
-    freeze.setBounds (252, routingY, 84, 26);
+    freeze.setBounds (252, routingY, 100, 26);   // 5.3.11: room for "FREEZE · AVG"
     eqTarget.setBounds (360, routingY, 114, 26);
     reveal.setBounds (26, 442, primaryW, primaryH);
     smooth.setBounds (172, 442, primaryW, primaryH);

@@ -46,6 +46,7 @@ namespace anneal::ids
     inline constexpr const char* detail      = "detail";      // 5.3.6: how narrow the auto EQ's moves are, -100 broad .. +100 fine (0 = as before)
     inline constexpr const char* heatLimit   = "heatLimit";   // 5.3.7: the harmonics at most this far under the music per band, dB (0 = off, as before)
     inline constexpr const char* listenCheck = "listenCheck"; // 5.3.9: hear the output as Stereo / Mono / Sides only (Stereo = as before)
+    inline constexpr const char* freezeMode  = "freezeMode";  // 5.3.11: Freeze holds the curve Now / the Average of 10 s (Now = as before)
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
@@ -88,9 +89,13 @@ namespace anneal
     float parseHeatLimit (const juce::String& text);
     // 5.3.9 Listen check: "stereo"/"off", "mono"/"sum", "sides"/"side"/"s" or 0-2.
     int parseListenCheck (const juce::String& text);
+    // 5.3.11 Freeze mode: "now"/"hold now", "average"/"avg"/"10 s"/"mean" or 0-1.
+    int parseFreezeMode (const juce::String& text);
 
     // 5.3.9 Listen check (choice indices of listenCheck): what you hear of the output, after the Ceiling.
     enum ListenCheck { checkStereo = 0, checkMono = 1, checkSides = 2 };
+    // 5.3.11 Freeze mode (choice indices of freezeMode): what Freeze holds.
+    enum FreezeMode { freezeNow = 0, freezeAverage = 1 };
 
     // Sidechain modes and true-peak ceilings (choice indices of scMode / ceiling).
     enum SidechainMode { scOff = 0, scMakeRoom = 1, scUnmask = 2 };

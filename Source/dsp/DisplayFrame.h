@@ -23,6 +23,7 @@ namespace anneal
         bool midSide = false;        // gainDb = Mid, sideGainDb = Side when true
         bool keyActive = false;      // 3.0: a sidechain mode is on and the key carries signal
         bool frozen = false;         // 3.0: the auto-EQ curve is held (Freeze)
+        float frozenAverageSeconds = 0.0f;   // 5.3.11: it holds the average of this many seconds (0: the curve as it was)
         float scDb = 0.0f;           // 3.0: strongest sidechain move, dB (< 0 ducking, > 0 lifting)
         float keyLoHz = 20.0f;       // 5.3.4: the part of the key that counts (20 Hz - 20 kHz = all of it)
         float keyHiHz = 20000.0f;

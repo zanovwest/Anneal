@@ -262,6 +262,7 @@ private:
     std::atomic<float>* pDetail = nullptr;     // 5.3.6
     std::atomic<float>* pHeatLimit = nullptr;  // 5.3.7
     std::atomic<float>* pListenCheck = nullptr; // 5.3.9
+    std::atomic<float>* pFreezeMode = nullptr;  // 5.3.11
 
     // 5.0 user presets
     juce::File userFolder { anneal::presets::defaultUserFolder() };

@@ -221,6 +221,7 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pDetail     = apvts.getRawParameterValue (ids::detail);
     pHeatLimit  = apvts.getRawParameterValue (ids::heatLimit);
     pListenCheck = apvts.getRawParameterValue (ids::listenCheck);
+    pFreezeMode = apvts.getRawParameterValue (ids::freezeMode);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -309,6 +310,8 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     getEngine().reset (pFreeze->load() > 0.5f && previous == mode);
     if (pFreeze->load() > 0.5f && previous != mode)   // a frozen curve stays what it is in the new mode
         getEngine().adoptCurveFrom (*engines[(size_t) previous]);
+    if (previous != mode)   // 5.3.11: so does the average of the last 10 s (the new mode's own is stale)
+        getEngine().adoptAverageFrom (*engines[(size_t) previous]);
     pollLearnedReference();       // a reference learned in the previous mode's engine comes along
     {
         const juce::ScopedLock sl (refLock);
@@ -477,6 +480,7 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.flavour = juce::jlimit (0, anneal::HarmonicSynth::numFlavours - 1, juce::roundToInt (pFlavour->load()));
     p.heatLimitDb = pHeatLimit->load();
     p.freeze = pFreeze->load() > 0.5f;
+    p.freezeAverage = juce::roundToInt (pFreezeMode->load()) == anneal::freezeAverage;
     p.punch = pPunch->load() / 100.0f;
     p.width = pWidth->load() / 100.0f;
     p.monoHz = pMonoBass->load() >= anneal::monoBassMinHz ? pMonoBass->load() : 0.0f;
@@ -1136,6 +1140,7 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasDetail = tree.getChildWithProperty ("id", anneal::ids::detail).isValid();
             const bool hasHeatLimit = tree.getChildWithProperty ("id", anneal::ids::heatLimit).isValid();
             const bool hasListenCheck = tree.getChildWithProperty ("id", anneal::ids::listenCheck).isValid();
+            const bool hasFreezeMode = tree.getChildWithProperty ("id", anneal::ids::freezeMode).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1256,6 +1261,12 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             if (! hasListenCheck)
                 if (auto* cp = apvts.getParameter (anneal::ids::listenCheck))
                     cp->setValueNotifyingHost (cp->getDefaultValue());
+
+            // Projects saved before 5.3.11: Freeze holds the curve as it is (Now), as it did then, whatever this
+            // instance had.
+            if (! hasFreezeMode)
+                if (auto* fp = apvts.getParameter (anneal::ids::freezeMode))
+                    fp->setValueNotifyingHost (fp->getDefaultValue());
 
             // 5.0: the user preset the project was last set from, if its file is still there.
             userChosen = false;

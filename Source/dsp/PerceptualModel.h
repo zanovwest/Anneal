@@ -41,7 +41,8 @@ namespace anneal
         float guard        = 0.0f;     // 0..1 transient guard (0 = off: exactly the old behaviour)
         float punch        = 0.0f;     // 5.0: -1..1, attacks softer (-) or louder (+), up to 8 dB (0 = off)
         bool freeze        = false;    // hold the auto-EQ curve where it is (3.0)
-        int scMode         = 0;        // sidechain: 0 off, 1 make room (duck where the key needs space), 2 unmask
+        bool freezeAverage = false;    // 5.3.11: Freeze holds the average of the last 10 s (false = the curve now, as before)
+        int scMode         = 0;      // sidechain: 0 off, 1 make room (duck where the key needs space), 2 unmask
         float scAmount     = 0.5f;     // 0..1
         float scKeyLoHz    = keyFullLoHz;   // 5.3.4: the key counts only from here ...
         float scKeyHiHz    = keyFullHiHz;   // ... to here (both at the ends = the whole key, as before)
@@ -72,6 +73,18 @@ namespace anneal
         void reset (bool keepCurve = false);
         // Takes over another model's curve (same sample rate): a frozen curve across latency modes.
         void copyCurveFrom (const PerceptualModel& other) noexcept;
+
+        // 5.3.11 Freeze the average. The live curve (and its prominence memory) is averaged over the last
+        // 10 s of music, frames where nothing is audible left out, in 20 chunks of half a second; Freeze in
+        // average mode holds that. While Freeze holds, the live curve keeps following the music (unheard),
+        // so a mode change takes the new hold at once; releasing goes on from the held curve, as before.
+        // The average is a measurement: it survives reset() and preparing at the same bands.
+        static constexpr double averageSeconds = 10.0, averageChunkSeconds = 0.5;
+        void clearAverage() noexcept;
+        void copyAverageFrom (const PerceptualModel& other) noexcept;   // same sample rate
+        float getHeldAverageSeconds() const noexcept { return heldAverageSeconds; }   // 0: not holding an average
+        int getAverageFrames() const noexcept { return avgFull * avgChunkLen + avgPartialFrames; }   // in it now
+        long long getAveragedFramesTotal() const noexcept { return averagedTotal; }   // tests: every frame it took
 
         // binPower: fftSize/2+1 values in amplitude^2 units (a full-scale sine peaks at 1.0).
         // keyPower: the sidechain key's spectrum in the same units, or nullptr (no key).
@@ -162,6 +175,18 @@ namespace anneal
         double aUp = 0.0, aDn = 0.0, aUpM = 0.0, aDnM = 0.0;
         bool primed = false;        // signal state (integration, transient detector)
         bool curvePrimed = false;   // the gain curve and its prominence memory
+
+        // 5.3.11: what Freeze holds (gain / promSlow keep following the music meanwhile), and the average.
+        static constexpr int averageChunks = 20;
+        std::vector<float> heldGain, heldProm;
+        bool holding = false, holdingAverage = false;
+        float heldAverageSeconds = 0.0f;
+        std::vector<float> avgChunkMean;   // averageChunks x (numBands gain means, numBands promSlow means)
+        std::vector<double> avgPartial;    // the chunk being filled: numBands gain sums, numBands promSlow sums
+        int avgFull = 0, avgNext = 0, avgPartialFrames = 0, avgChunkLen = 0;
+        long long averagedTotal = 0;
+        void accumulateAverage (float framesPerSecond) noexcept;
+        bool takeAverage (float framesPerSecond) noexcept;   // into heldGain / heldProm; false: nothing heard yet
         float liftPeakDb = 0.0f, cutPeakDb = 0.0f;   // (not maxCutDb/maxBoostDb: those are the limits)
         float sidePeakDb = 0.0f;
         float transientPeak = 0.0f;

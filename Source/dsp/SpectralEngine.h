@@ -39,6 +39,7 @@ namespace anneal
         int flavour        = flavourClean;   // Flavour enum (HarmonicSynth.h); switches per frame like listen
         float heatLimitDb  = heatLimitOffDb; // 5.3.7: the harmonics at most this far under the music per band (0 = off)
         bool freeze        = false;          // hold the auto-EQ curve
+        bool freezeAverage = false;          // 5.3.11: hold the average of the last 10 s instead (false = as before)
         int scMode         = 0;              // sidechain: 0 off, 1 make room, 2 unmask
         float scAmount     = 0.5f;
         float scKeyLoHz    = keyFullLoHz;    // 5.3.4: the part of the key that counts (the ends = the whole key)
@@ -75,6 +76,8 @@ namespace anneal
         // Takes over another engine's auto-EQ curve (same sample rate), e.g. a frozen curve when
         // the latency mode changes.
         void adoptCurveFrom (const SpectralEngine& other) noexcept;
+        // 5.3.11: takes over another engine's 10 s average (same sample rate), when the latency mode changes.
+        void adoptAverageFrom (const SpectralEngine& other) noexcept;
 
         // Called once per host block from the audio thread; values are smoothed per frame.
         void setParameters (const EngineParams& p) noexcept { target = p; }
@@ -102,6 +105,7 @@ namespace anneal
         float getLastHeatGuard() const noexcept { return lastHeatGuard; }   // 1 = harmonics written in full
 
         const PerceptualModel& getModel() const noexcept { return model; }
+        const PerceptualModel& getMidSideModel (int c) const noexcept { return msModel[c & 1]; }   // tests: 0 Mid, 1 Side
         TripleBuffer<DisplayFrame>& getDisplay() noexcept { return *displayOut; }
         // Several engines (one per latency mode) can publish into one shared display buffer.
         void setDisplayTarget (TripleBuffer<DisplayFrame>* shared) noexcept { displayOut = shared != nullptr ? shared : &display; }

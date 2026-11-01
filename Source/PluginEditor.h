@@ -4,6 +4,7 @@
 #include "ui/AnnealLookAndFeel.h"
 #include "ui/Fader.h"
 #include "ui/FlavourMenu.h"
+#include "ui/FreezeMenu.h"
 #include "ui/HarmonicGraph.h"
 #include "ui/IconButton.h"
 #include "ui/KeyRangeMenu.h"
@@ -57,7 +58,7 @@ private:
     anneal::ListenMenu listen;
     anneal::FlavourMenu flavour;
     // 3.0
-    anneal::Toggle freeze;
+    anneal::FreezeMenu freeze;   // 5.3.11: a menu (Off / Hold now / Hold the average of 10 s)
     anneal::RoutingMenu scMode, ceiling;
     anneal::Knob scAmount;
     anneal::IconButton undoButton, redoButton;

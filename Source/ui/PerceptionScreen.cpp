@@ -219,6 +219,7 @@ void PerceptionScreen::timerCallback()
         keyLoHz = f->keyLoHz;
         keyHiHz = f->keyHiHz;
         frozen = f->frozen;
+        frozenSeconds = f->frozenAverageSeconds;
         activity.matchDb = std::abs (f->matchDb) >= std::abs (activity.matchDb) ? f->matchDb
                          : activity.matchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
         activity.refSeconds = f->refSeconds;
@@ -299,6 +300,7 @@ void PerceptionScreen::refreshNow()
         keyLoHz = f->keyLoHz;
         keyHiHz = f->keyHiHz;
         frozen = f->frozen;
+        frozenSeconds = f->frozenAverageSeconds;
         std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
         activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid, f->punchDb };
         attacksOn = f->attacks;
@@ -863,7 +865,7 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     // 5.3: only what you need to read the picture; the explanations live in the tooltips.
     float y = mainLane.getY() + 8.0f;
     if (frozen)
-        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw, {});
+        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw, getFrozenNote());
     else
         tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ", colour::muted, midSide ? "Mid solid / Side dashed" : "");
     if (keyActive)
@@ -899,6 +901,14 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     tag ({ widthLane.getX() + 10.0f, widthLane.getY() + 2.0f }, "WIDTH", colour::rose.withAlpha (0.9f),
          paintMode ? juce::String ("how much of Width acts (top = all of it)") : juce::String());
     legendBottom = y + 14.0f;
+}
+
+juce::String PerceptionScreen::getFrozenNote() const
+{
+    // 5.3.11: what Freeze holds when it is the average ("average of 10 s"); nothing for the curve as it was.
+    if (! frozen || frozenSeconds <= 0.0f)
+        return {};
+    return "average of " + juce::String (juce::jmax (1, juce::roundToInt (frozenSeconds))) + " s";
 }
 
 std::pair<juce::String, juce::String> PerceptionScreen::getListenTag() const

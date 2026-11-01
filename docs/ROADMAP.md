@@ -18,13 +18,7 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Added by the 5.3.9 run (Next up was empty after item 24; item 25 was done in 5.3.9, item 26 in 5.3.10); reorder or
-drop freely:
-
-27. **Freeze the average**: the FREEZE pill opens a small menu, *Hold now* (as today) or *Hold the average of
-    the last 10 s*, so the static EQ comes from a whole passage instead of the last moment. Off and Hold now
-    as before (bit-identical), older projects unchanged. Tests: the held curve is the mean of the live curves
-    over the window, Hold now is unchanged, Mid/Side and Zero latency follow.
+Empty after item 27 (done in 5.3.11): the next run adds three new ideas here first.
 
 ## Waiting on the user
 
@@ -60,6 +54,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.11 (2026-11-01, every-minute update): **Freeze the average** (item 27): the FREEZE pill opens a menu (Off /
+  Hold now / Hold the average of the last 10 s); the average is of the live curve over the last 10 s of music
+  (silence left out, 20 half-second chunks), held exactly, in every mode, Mid/Side and Zero latency, and it comes
+  through a host stop, preparing again and a latency change. While frozen the other choice takes over at once;
+  releasing goes on from the held curve as before. Host parameter "Freeze Mode" (Now / Average 10 s); Now, the
+  default and what older projects open with, holds exactly what Freeze always held. No bugs found.
 - 5.3.10 (2026-11-01, every-minute update): **Note names** (item 26): the hover read-out names the nearest note
   ("3.15 kHz · G7 +8 ct", A4 = 440 Hz, sharps, cents to the nearest note), and every frequency field takes a note
   as well as hertz (`E1`, `A#4`, `Bb2`, `C-1`, `G7 -14 ct`): Mono bass and the Pivot on the deck, and the host's

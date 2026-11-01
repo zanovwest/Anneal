@@ -149,7 +149,7 @@ int main (int argc, char* argv[])
     for (auto n : { "Reveal", "Smooth", "Tilt", "Response", "Range Low", "Range High", "Heat", "Color", "Focus", "Mix", "Output", "Match", "Delta", "Guard", "Stereo Mode", "EQ Target", "Heat Target", "Listen", "Flavour",
                     "Freeze", "Sidechain", "Sidechain Amount", "Ceiling", "Reference", "Reference Amount",
                     "Punch", "Width", "Mono Bass", "Max Cut", "Max Boost", "Tilt Pivot", "Sidechain Key Low", "Sidechain Key High", "Detail", "Heat Limit",
-                    "Listen Check" })
+                    "Listen Check", "Freeze Mode" })
         haveAll = haveAll && names.contains (n);
     check (haveAll && plugin->getBypassParameter() != nullptr, "all parameters exposed, bypass flagged",
            juce::String (names.size()) + ": " + names.joinIntoString (", "));
@@ -1224,6 +1224,62 @@ int main (int argc, char* argv[])
             texts << c.name << " \"" << c.text << "\" -> " << got << (got == c.want ? "" : " (WANTED " + juce::String (c.want) + ")") << ", ";
         }
         check (ok, "Note names through VST3", texts);
+    }
+
+    // 17. 5.3.11 Freeze Mode through VST3: "Now" by default, "avg" typed is "Average 10 s". After 5 s of a ringing
+    //     3150 Hz (Smooth cuts it ~9 dB) and 5 s without, Freeze holds about half the cut in average mode, and the
+    //     curve as it is (no cut) when the mode goes back to Now while frozen. Measured on a quiet probe tone.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto* mode = inst != nullptr ? findParam (*inst, "Freeze Mode") : nullptr;
+        bool ok = mode != nullptr;
+        juce::String texts;
+        double avgDb = 0.0, nowDb = 0.0;
+        if (ok)
+        {
+            const double fs = 48000.0;
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            const float avg = mode->getValueForText ("avg"), now = mode->getValueForText ("now");
+            texts << mode->getText (mode->getValue(), 32) << ", avg -> " << mode->getText (avg, 32);
+            ok = mode->getText (mode->getValue(), 32) == "Now" && mode->getText (avg, 32) == "Average 10 s"
+                 && mode->getText (now, 32) == "Now";
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Heat", 0.0f }, { "Smooth", 1.0f }, { "Freeze", 0.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            auto withTone = [fs] (float toneAmp, double seconds, unsigned seed)
+            {
+                const int n = (int) (seconds * fs);
+                auto x = testsig::silence (2, n);
+                testsig::Pink pl (seed), pr (seed + 1);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float tone = toneAmp * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+                    x[0][(size_t) i] = 0.03f * pl.next() + tone;
+                    x[1][(size_t) i] = 0.03f * pr.next() + tone;
+                }
+                return x;
+            };
+            auto probeGainDb = [&] (unsigned seed)
+            {
+                const auto probe = withTone (0.003f, 1.5, seed);
+                ok = ok && run (*inst, probe, out, [] { return 512; });
+                const int from = (int) (0.75 * fs), len = (int) (0.5 * fs), lat = inst->getLatencySamples();
+                return testsig::toDb (testsig::toneAmplitude (out[0].data() + from + lat, len, 3150.0, fs)
+                                      / testsig::toneAmplitude (probe[0].data() + from, len, 3150.0, fs));
+            };
+            ok = ok && run (*inst, withTone (0.05f, 5.0, 1), out, [] { return 512; });   // the ring: Smooth cuts it
+            ok = ok && run (*inst, withTone (0.0f, 5.0, 3), out, [] { return 512; });    // gone: the curve lets go
+            mode->setValueNotifyingHost (avg);
+            findParam (*inst, "Freeze")->setValueNotifyingHost (1.0f);
+            avgDb = probeGainDb (5);
+            mode->setValueNotifyingHost (now);   // while frozen: the curve as it is now
+            nowDb = probeGainDb (7);
+            inst->releaseResources();
+            ok = ok && avgDb < nowDb - 1.5 && avgDb > -8.0 && nowDb > -1.5;
+        }
+        check (ok, "Freeze Mode through VST3",
+               texts + "; 5 s ring + 5 s without, 3150 Hz probe: average " + juce::String (avgDb, 1) + " dB, now "
+                   + juce::String (nowDb, 1) + " dB");
     }
 
     plugin->releaseResources();

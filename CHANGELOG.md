@@ -4,6 +4,50 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.11 — 2026-11-01 12:45
+
+New
+- **Freeze the average**: Freeze can now hold the average of the last 10 seconds instead of one moment, so the static
+  EQ comes from a whole passage (a verse, a chorus, a whole loop) rather than whatever was playing when you clicked.
+  - A click on the **FREEZE** pill opens a small menu: **Off** (follow the music), **Hold now** (what Freeze always
+    did: the curve as it is) and **Hold the average of the last 10 s**. Holding the average, the pill reads
+    "FREEZE · AVG" and the display says "AUTO EQ FROZEN · average of 10 s". The deck gains no control.
+  - Silence is left out of the average, so you can play the passage, stop, and then freeze: it still holds what the
+    music was doing, not the curve relaxing to 0 dB. Under 10 s of music it averages what there is (the display says
+    how many seconds).
+  - While frozen, choosing the other one takes it at once: from the average back to Hold now holds the curve as it is
+    at that moment. Releasing goes on from the held curve, as before.
+  - Works in every latency mode, in Mid/Side (Mid and Side each hold their own average) and at Zero latency. The
+    average comes through the host stopping and starting, preparing again, and a latency-mode change.
+  - Also a host parameter, "Freeze Mode" (Now / Average 10 s), automatable; type `avg` or `now`. Now is the default
+    and what older projects open with, so they sound exactly as before. Factory presets leave it alone.
+
+Fixes
+- None found this run. The bug pass looked at the newest build log and benchmark (5.3.10's: nothing over budget, the
+  slowest 0.1 % of blocks where they were), the rendered interface at every size, Freeze through a host stop, a new
+  buffer size and a latency change, and loading older projects, and found nothing to fix.
+
+Tests: 259/259 acceptance checks, 8 new:
+- after 12 s of a wandering ring, Freeze holds the mean of the last 3000 frames' curves exactly (0.000000 dB from it;
+  the curve at that moment was 6.66 dB away), and it doesn't move for 2 s more of other music;
+- 1237 frames of music and 2 s of silence: the average is of the 1341 frames the model heard (the music and its
+  fading tail, 0.35 s), 4.47 s, held exactly;
+- Hold now holds the last frame's curve unmoving, as always; the live curve keeps following meanwhile (a twin that
+  never froze has it, bit for bit); switching to Average takes the mean of every frame so far, back to Now the live
+  curve then; released, the first frame is 0.69 dB from the held curve (the live one 8.71 dB away);
+- Mid and Side each hold their own mean exactly (10.41 s), and so does Zero latency (latency 0);
+- the average comes through a host stop and into Precise after a switch from Low (3098 frames, held exactly);
+- with Freeze off, Average plays exactly what Now plays (difference 0.000000000000);
+- Freeze Mode's texts and typed values, older projects (Now), saved projects, presets;
+- the FREEZE pill's menu: Hold the average is one undo step and reads "FREEZE · AVG" (64 of 88 px), Hold now and Off
+  as before; the display's note "average of 10 s".
+Host check: 33/33 on the built VST3 (new: Freeze Mode through VST3; after 5 s of a ring and 5 s without, the average
+holds −4.6 dB at the ring, Now −0.9 dB). Setup: 25/25.
+
+CPU: unchanged within the run-to-run spread; the average costs about 2,000 additions a frame per model (Stereo Low
+2.1 %, Normal 2.9 %, Precise 4.7 %; Mid/Side Precise 8.0 %; slowest 0.1 % of 64-sample blocks in Precise Mid/Side
+22 % of the deadline, 32 samples 42 %).
+
 ## 5.3.10 — 2026-11-01 12:19
 
 New
