@@ -65,7 +65,12 @@ namespace anneal
 
     // Text helpers shared by parameters and the display (exposed for tests).
     juce::String formatHz (float hz);
-    float parseHz (const juce::String& text);
+    float parseHz (const juce::String& text);   // hertz ("150", "2.5k", "2.5 kHz") or a note ("E1", "A#4")
+    // 5.3.10 Note names (A4 = 440 Hz, sharps, C-1 = MIDI note 0): "G7", "G7 +8 ct", "A#2 −14 ct" (U+2212).
+    juce::String noteName (float hz);
+    // A note as typed: a letter A-G, then # or b (or the music signs), the octave (-1 to 10) and optional cents
+    // with their sign ("A4", "eb2", "C-1", "G7 -14 ct"). False for anything else (then it is hertz).
+    bool parseNote (const juce::String& text, float& hz);
     int parseListen (const juce::String& text);   // "reveal", "smooth", "harmonics"/"heat", "off" or 0-3
     int parseFlavour (const juce::String& text);  // "clean", "tape", "tube", "transformer", "exciter" or 0-4
     int parseReference (const juce::String& text); // "off", "learn"/"key", "match" or 0-2

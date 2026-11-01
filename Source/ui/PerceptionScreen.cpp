@@ -985,7 +985,7 @@ juce::String PerceptionScreen::getReadoutText (float hz) const
     const double cam = erb::hzToCam (hz);
     const float eq = valueAtCam (gainDb.data(), cam);
     const float heatAbs = valueAtCam (heatView.data(), cam);
-    auto text = formatHz (hz)
+    auto text = formatHz (hz) + juce::String::fromUTF8 (" \xc2\xb7 ") + noteName (hz)   // 5.3.10: "3.15 kHz · G7 +8 ct"
               + (midSide ? "    M " + signedDb (eq, 1) + " / S " + signedDb (valueAtCam (sideGainDb.data(), cam), 1) + " dB"
                          : "    EQ " + signedDb (eq, 1) + " dB")
               + "    in " + signedDb (valueAtCam (inView.data(), cam), 1) + " dB"
@@ -1184,7 +1184,7 @@ void PerceptionScreen::setPaintMode (bool on)
                      "set (how far it may lift and cut); the dotted line is the peak hold (HOLD, top right; the fainter "
                      "one is the input's; a click here clears it). WIDTH: the stereo width you "
                      "hear (100 % in the middle); the shading shows how much of the sound is in the sides. HEAT: where "
-                     "harmonics are written, against the output there. Drag a range handle to limit where Anneal acts; "
+                     "harmonics are written, against the output there. Hover to read the values and the nearest note. Drag a range handle to limit where Anneal acts; "
                      "double-click a handle to reset it. Drop an audio file here to use it as the reference. Horizontal "
                      "axis: ERB-rate scale (equal steps of the ear's frequency resolution).");
     repaint();

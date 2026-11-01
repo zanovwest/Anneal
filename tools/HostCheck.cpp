@@ -1205,6 +1205,27 @@ int main (int argc, char* argv[])
                    + juce::String (lrDiff, 9));
     }
 
+    // 16. 5.3.10 Note names through VST3: the frequency parameters take a typed note as well as hertz ("E1" is
+    //     41 Hz on Mono Bass, "C5" 523 Hz on Tilt Pivot, "A#1" 58.3 Hz on Range Low, "A6" 1.76 kHz on Sidechain Key
+    //     High), and hertz as before.
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        struct Case { const char* name; const char* text; const char* want; };
+        const Case cases[] = { { "Mono Bass", "E1", "41 Hz" }, { "Tilt Pivot", "C5", "523 Hz" }, { "Range Low", "A#1", "58 Hz" },
+                               { "Sidechain Key High", "A6", "1.76 kHz" }, { "Range High", "C8", "4.19 kHz" },
+                               { "Mono Bass", "120 Hz", "120 Hz" }, { "Tilt Pivot", "2k", "2.00 kHz" } };
+        bool ok = inst != nullptr;
+        juce::String texts;
+        for (const auto& c : cases)
+        {
+            auto* p = inst != nullptr ? findParam (*inst, c.name) : nullptr;
+            const auto got = p != nullptr ? p->getText (p->getValueForText (c.text), 32) : juce::String ("missing");
+            ok = ok && got == c.want;
+            texts << c.name << " \"" << c.text << "\" -> " << got << (got == c.want ? "" : " (WANTED " + juce::String (c.want) + ")") << ", ";
+        }
+        check (ok, "Note names through VST3", texts);
+    }
+
     plugin->releaseResources();
     plugin.reset();
     std::printf ("\n%d checks, %d failed\n", checks, failures);

@@ -18,12 +18,9 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Added by the 5.3.9 run (Next up was empty after item 24; item 25 was done in 5.3.9); reorder or drop freely:
+Added by the 5.3.9 run (Next up was empty after item 24; item 25 was done in 5.3.9, item 26 in 5.3.10); reorder or
+drop freely:
 
-26. **Note names**: the hover read-out names the nearest note ("3.15 kHz · G7 −14 ct"), and the frequency
-    fields take a note as well as hertz (`E1`, `A#4`): Mono bass, the Pivot, the key range, the Range handles'
-    typed values. Display and typing only, nothing on the deck. Tests: A4 = 440 Hz and back, typed notes land
-    on their frequency, the widest read-out still fits the display.
 27. **Freeze the average**: the FREEZE pill opens a small menu, *Hold now* (as today) or *Hold the average of
     the last 10 s*, so the static EQ comes from a whole passage instead of the last moment. Off and Hold now
     as before (bit-identical), older projects unchanged. Tests: the held curve is the mean of the live curves
@@ -63,6 +60,12 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.10 (2026-11-01, every-minute update): **Note names** (item 26): the hover read-out names the nearest note
+  ("3.15 kHz · G7 +8 ct", A4 = 440 Hz, sharps, cents to the nearest note), and every frequency field takes a note
+  as well as hertz (`E1`, `A#4`, `Bb2`, `C-1`, `G7 -14 ct`): Mono bass and the Pivot on the deck, and the host's
+  typed values for Range Low / High, Sidechain Key Low / High, Tilt Pivot and Mono Bass. Display and typing only;
+  anything that isn't a note parses as before. Fixed: the read-out and the frequency texts switched to kHz by the
+  unrounded number, so 999.7 Hz read "1000 Hz" and 9,998 Hz "10.00 kHz".
 - 5.3.9 (2026-10-31, every-minute update): **Mono and Sides check** (item 25, added by this run with 26 and 27):
   a second section in the Listen menu, *Check the output*: Stereo (as is), Mono (left and right summed) or Sides
   only (what mono loses, on both speakers), after the Ceiling and before Bypass. The pill reads "Mono" alone or

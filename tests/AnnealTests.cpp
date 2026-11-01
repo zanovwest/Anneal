@@ -7629,6 +7629,226 @@ void testListenCheck539()
     }
 }
 
+// 5.3.10: a display with one flat frame pushed by hand (Mid/Side or not, stereo image, heat), for the read-out.
+struct ReadoutRig
+{
+    static constexpr int nb = anneal::DisplayFrame::numBands;
+    Rig r;
+    std::unique_ptr<anneal::TripleBuffer<anneal::DisplayFrame>> buf = std::make_unique<anneal::TripleBuffer<anneal::DisplayFrame>>();
+    anneal::PerceptionScreen screen { *buf, r.proc->apvts };
+
+    ReadoutRig() { screen.setSize (1440, 356); }
+
+    void push (float levelDb, bool midSide)
+    {
+        const float z0 = (float) anneal::erb::hzToCam (20.0);
+        auto& fr = buf->beginWrite();
+        fr.z0 = z0;
+        fr.dz = (float) ((anneal::erb::hzToCam (20000.0) - z0) / (nb - 1));
+        fr.midSide = midSide;
+        fr.stereo = true;
+        for (int i = 0; i < nb; ++i)
+        {
+            fr.inDb[i] = fr.outDb[i] = levelDb;
+            fr.gainDb[i] = fr.sideGainDb[i] = -10.5f;
+            fr.heatDb[i] = levelDb - 4.0f;
+            fr.sideRelDb[i] = -10.0f;
+        }
+        buf->endWrite();
+        screen.refreshNow();
+    }
+};
+
+void testFixes5310()
+{
+    section ("61. 5.3.10 bug fix");
+
+    // Hz or kHz by the number shown: 999.7 Hz read "1000 Hz" (and 1000.2 Hz "1.00 kHz"), 9,998 Hz "10.00 kHz" (and
+    // 10 kHz "10.0 kHz"), in the hover read-out and in Range Low's text (it moves in 0.1 Hz steps).
+    {
+        const std::pair<float, const char*> cases[] = { { 999.4f, "999 Hz" }, { 999.7f, "1.00 kHz" }, { 1000.0f, "1.00 kHz" },
+                                                        { 9994.0f, "9.99 kHz" }, { 9998.0f, "10.0 kHz" }, { 10000.0f, "10.0 kHz" },
+                                                        { 19.6f, "20 Hz" }, { 2500.0f, "2.50 kHz" } };
+        juce::String log;
+        bool ok = true;
+        for (const auto& [hz, want] : cases)
+        {
+            const auto got = anneal::formatHz (hz);
+            ok = ok && got == want;
+            log << juce::String (hz, 1) << " -> " << got << (got == want ? "" : " (WANTED " + juce::String (want) + ")") << ", ";
+        }
+        ReadoutRig rr;
+        rr.push (-30.0f, false);
+        const auto readout = rr.screen.getReadoutText (999.7f);
+        auto* lo = rr.r.proc->apvts.getParameter (ids::rangeLo);
+        const auto loText = lo->getText (lo->convertTo0to1 (999.8f), 32);
+        check (ok && readout.startsWith ("1.00 kHz") && loText == "1.00 kHz", "Hz or kHz by the number shown",
+               log + "read-out at 999.7 Hz \"" + readout.upToFirstOccurrenceOf ("    ", false, false) + "\", Range Low 999.8 Hz \"" + loText + "\"");
+    }
+}
+
+// 5.3.10: note names. The hover read-out names the nearest note, and every frequency field takes a note as
+// well as hertz. Display and typing only: nothing on the deck, the sound doesn't change.
+void testNoteNames5310()
+{
+    section ("62. 5.3.10 Note names");
+    const auto minus = juce::String::fromUTF8 ("\xe2\x88\x92");
+    auto noteHz = [] (double midi) { return 440.0 * std::pow (2.0, (midi - 69.0) / 12.0); };
+
+    // Names: A4 = 440 Hz, sharps, octaves from C (C-1 = MIDI note 0), cents to the nearest note; the display's ends.
+    {
+        const std::pair<double, juce::String> cases[] = {
+            { 440.0, "A4" }, { noteHz (60), "C4" }, { noteHz (28), "E1" }, { noteHz (70), "A#4" }, { noteHz (0), "C-1" },
+            { noteHz (127), "G9" }, { 3150.0, "G7 +8 ct" }, { 438.0, "A4 " + minus + "8 ct" }, { 20.0, "D#0 +49 ct" },
+            { 20000.0, "D#10 +8 ct" } };
+        juce::String log, wrong;
+        for (const auto& [hz, want] : cases)
+        {
+            const auto got = anneal::noteName ((float) hz);
+            log << juce::String (hz, 1) << " Hz " << got << ", ";
+            if (got != want)
+                wrong << juce::String (hz, 2) << " Hz -> \"" << got << "\" (wanted \"" << want << "\") ";
+        }
+        check (wrong.isEmpty() && anneal::noteName (0.0f).isEmpty(), "note names: A4 = 440 Hz, sharps, cents", log + wrong);
+    }
+
+    // Typing: a note lands on its frequency (also lower case, flats, the music signs, C-1, cents as the read-out
+    // writes them), and every name the read-out gives from 20 Hz to 20 kHz goes back within half a cent.
+    {
+        const std::pair<juce::String, double> typed[] = {
+            { "A4", 440.0 }, { "a4", 440.0 }, { "E1", noteHz (28) }, { "A#4", noteHz (70) }, { "Bb4", noteHz (70) },
+            { "bb4", noteHz (70) }, { "eb2", noteHz (39) }, { "C-1", noteHz (0) }, { " c4 ", noteHz (60) },
+            { juce::String::fromUTF8 ("A\xe2\x99\xaf" "4"), noteHz (70) }, { juce::String::fromUTF8 ("B\xe2\x99\xad" "4"), noteHz (70) },
+            { "G7 -14 ct", noteHz (103 - 0.14) }, { "G7 " + minus + "14 ct", noteHz (103 - 0.14) }, { "A4 +8", noteHz (69.08) },
+            { "D#10 +8 ct", noteHz (135.08) } };
+        double worst = 0.0;
+        juce::String wrong;
+        for (const auto& [text, want] : typed)
+        {
+            const double got = anneal::parseHz (text);
+            const double err = std::abs (got / want - 1.0);
+            worst = std::max (worst, err);
+            if (err > 1.0e-5)
+                wrong << "\"" << text << "\" -> " << juce::String (got, 3) << " Hz (wanted " << juce::String (want, 3) << ") ";
+        }
+        double roundTrip = 0.0;
+        for (int k = 0; k <= 600; ++k)
+        {
+            const float hz = 20.0f * std::pow (1000.0f, (float) k / 600.0f);
+            roundTrip = std::max (roundTrip, std::abs (1200.0 * std::log2 (anneal::parseHz (anneal::noteName (hz)) / hz)));
+        }
+        check (wrong.isEmpty() && roundTrip <= 0.501, "typed notes land on their frequency; read-out names go back",
+               juce::String ((int) std::size (typed)) + " notes, worst " + juce::String (worst * 1.0e6, 2) + " ppm; 601 read-out names "
+                   "20 Hz - 20 kHz back within " + juce::String (roundTrip, 3) + " cent " + wrong);
+    }
+
+    // Hertz as before: anything that isn't a note parses exactly as 5.3.9 did (its parseHz, copied here).
+    {
+        auto oldParseHz = [] (const juce::String& text)
+        {
+            const auto lower = text.toLowerCase();
+            const float v = lower.retainCharacters ("0123456789.-+").getFloatValue();
+            return lower.containsChar ('k') ? v * 1000.0f : v;
+        };
+        const char* texts[] = { "150", "150 Hz", "2.5k", "2.5 kHz", "20.0 kHz", "1.00 kHz", "999 Hz", "1,000 Hz", "-5", "off",
+                                "Off", "all", "", "Default", "4", "A", "H2", "A4 Hz", "E1x", "B 4", "C#", "G7 14" };
+        juce::String wrong;
+        for (auto* t : texts)
+        {
+            float hz = 0.0f;
+            if (anneal::parseHz (t) != oldParseHz (t) || anneal::parseNote (t, hz))
+                wrong << "\"" << t << "\" -> " << juce::String (anneal::parseHz (t), 2) << " (was " << juce::String (oldParseHz (t), 2) << ") ";
+        }
+        check (wrong.isEmpty(), "hertz typed as before", juce::String ((int) std::size (texts)) + " texts that aren't notes parse as in 5.3.9 " + wrong);
+    }
+
+    // The frequency parameters (the host's typed values, the Range handles and the key range): a note lands on its
+    // frequency within the parameter's step; hertz and "off" / "all" as before.
+    {
+        Rig r;
+        struct Case { const char* id; const char* text; double hz; double step; };
+        const Case cases[] = { { ids::monoBass, "E1", noteHz (28), 1.0 }, { ids::tiltPivot, "C5", noteHz (72), 1.0 },
+                               { ids::rangeLo, "A#1", noteHz (34), 0.1 }, { ids::rangeHi, "C8", noteHz (108), 1.0 },
+                               { ids::scKeyLo, "E3", noteHz (52), 1.0 }, { ids::scKeyHi, "A6", noteHz (93), 1.0 },
+                               { ids::monoBass, "120 Hz", 120.0, 1.0 }, { ids::monoBass, "off", 0.0, 1.0 },
+                               { ids::scKeyLo, "all", 20.0, 1.0 }, { ids::rangeHi, "5k", 5000.0, 1.0 } };
+        juce::String log;
+        bool ok = true;
+        for (const auto& c : cases)
+        {
+            auto* p = r.proc->apvts.getParameter (c.id);
+            const double v = p->convertFrom0to1 (p->getValueForText (c.text));
+            const bool here = std::abs (v - c.hz) <= 0.5 * c.step + 1.0e-3;
+            ok = ok && here;
+            log << c.id << " \"" << c.text << "\" -> " << p->getText (p->convertTo0to1 ((float) v), 32) << (here ? "" : " (WRONG)") << ", ";
+        }
+        check (ok, "the frequency parameters take notes", log);
+    }
+
+    // On the deck: Mono bass and the Pivot (typed into their rows) take a note too, and their tooltips say so.
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        anneal::Knob* mono = nullptr;
+        anneal::Knob* pivot = nullptr;
+        if (editor != nullptr)
+            for (auto* c : editor->getContent().getChildren())
+                if (auto* k = dynamic_cast<anneal::Knob*> (c))
+                {
+                    if (k->slider.getTooltip().startsWith ("Mono bass:")) mono = k;
+                    if (k->slider.getTooltip().startsWith ("Pivot:"))     pivot = k;
+                }
+        if (mono == nullptr || pivot == nullptr)
+        {
+            check (false, "Mono bass and Pivot take a typed note", "missing");
+            return;
+        }
+        mono->slider.setValue (mono->slider.getValueFromText ("E1"), juce::sendNotificationSync);
+        pivot->slider.setValue (pivot->slider.getValueFromText ("A#4"), juce::sendNotificationSync);
+        const float m = r.proc->apvts.getRawParameterValue (ids::monoBass)->load();
+        const float p = r.proc->apvts.getRawParameterValue (ids::tiltPivot)->load();
+        const bool tips = mono->slider.getTooltip().contains ("note") && pivot->slider.getTooltip().contains ("note");
+        check (m == 41.0f && p == 466.0f && tips, "Mono bass and Pivot take a typed note",
+               "Mono bass \"E1\" -> " + juce::String (m, 1) + " Hz, Pivot \"A#4\" -> " + juce::String (p, 1) + " Hz"
+                   + (tips ? ", tooltips name it" : ", TOOLTIPS DON'T SAY SO"));
+    }
+
+    // The read-out: "3.15 kHz · G7 +8 ct" leads it; the widest one anywhere from 20 Hz to 20 kHz (Mid/Side, heat,
+    // width, sides, both peaks, paint mode, three-digit levels) still fits the display.
+    {
+        ReadoutRig rr;
+        rr.push (-30.0f, false);
+        const auto plain = rr.screen.getReadoutText (3150.0f);
+        const auto lead = juce::String::fromUTF8 ("3.15 kHz \xc2\xb7 G7 +8 ct    EQ ");
+
+        rr.r.set (ids::width, 150.0f);
+        rr.screen.choosePeakHold (3);
+        rr.push (-19.5f, true);
+        rr.push (-100.5f, true);
+        rr.screen.setPaintMode (true);
+        const auto fnt = anneal::theme::font (anneal::theme::size::caption + 0.5f);
+        float widest = 0.0f;
+        juce::String widestText;
+        for (int k = 0; k <= 600; ++k)
+        {
+            const auto t = rr.screen.getReadoutText (20.0f * std::pow (1000.0f, (float) k / 600.0f));
+            const float w = anneal::theme::tabularWidths (fnt, t) + 20.0f;
+            if (w > widest)
+            {
+                widest = w;
+                widestText = t;
+            }
+        }
+        rr.screen.setPaintMode (false);
+        const float room = rr.screen.getEqLane().getWidth();
+        check (plain.startsWith (lead) && widestText.contains ("peak in") && widestText.contains ("paint") && widest <= room,
+               "the read-out names the note and still fits",
+               "\"" + plain.upToFirstOccurrenceOf (" dB", true, false) + "\"; widest " + juce::String (widest, 1) + " px of "
+                   + juce::String (room, 1) + ": \"" + widestText + "\"");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -7641,13 +7861,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes537();
+        testFixes5310();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testListenCheck539();
+        testNoteNames5310();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -7713,6 +7933,8 @@ int main (int argc, char** argv)
     testHeatLimit537();
     testPeakHoldInput538();
     testListenCheck539();
+    testFixes5310();
+    testNoteNames5310();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

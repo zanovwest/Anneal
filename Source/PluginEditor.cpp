@@ -94,11 +94,11 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
              "Width: the stereo width of Anneal's output, from mono (0 %) to twice as wide (200 %). 100 % = as before"),
       monoBass (p.apvts, ids::monoBass, "Mono bass", colour::rose, Size::secondary, false, {},
                 "Mono bass: makes everything below this frequency mono (a quarter octave either side fades in), "
-                "so the low end stays centred and mono-safe. Off = as before"),
+                "so the low end stays centred and mono-safe. Type hertz or a note (E1 = 41 Hz). Off = as before"),
       limits (p.apvts, ids::maxBoost, ids::maxCut),
       tiltPivot (p.apvts, ids::tiltPivot, "Pivot", colour::muted, Size::secondary, false, {},
                  "Pivot: the frequency Tilt turns around. It stays at 0 dB there; above it Tilt lifts (or cuts) more and "
-                 "more, below it the opposite. Shown while Tilt isn't 0. 1 kHz = as before"),
+                 "more, below it the opposite. Shown while Tilt isn't 0. Type hertz or a note (C5). 1 kHz = as before"),
       keyRange (p.apvts, ids::scKeyLo, ids::scKeyHi),
       detail (p.apvts, ids::detail, "Detail", "broad", "fine", colour::muted, true,
               "Detail: how narrow Reveal's and Smooth's moves are. Toward Broad (left) they are wider and smoother, "

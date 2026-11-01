@@ -26,13 +26,85 @@ namespace
 
 juce::String formatHz (float hz)
 {
-    if (hz < 1000.0f)
+    // 5.3.10 fix: the unit by the number shown, so 999.7 Hz reads "1.00 kHz" (not "1000 Hz") and 9,998 Hz
+    // "10.0 kHz" (not "10.00 kHz").
+    if (hz < 999.5f)
         return juce::String (juce::roundToInt (hz)) + " Hz";
-    return juce::String (hz / 1000.0f, hz < 10000.0f ? 2 : 1) + " kHz";
+    return juce::String (hz / 1000.0f, hz < 9995.0f ? 2 : 1) + " kHz";
+}
+
+juce::String noteName (float hz)
+{
+    static constexpr const char* names[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    if (! (hz > 0.0f))
+        return {};
+    const double midi = 69.0 + 12.0 * std::log2 ((double) hz / 440.0);
+    const int note = (int) std::lround (midi);
+    const int cents = (int) std::lround ((midi - note) * 100.0);
+    const int pc = ((note % 12) + 12) % 12;
+    auto text = juce::String (names[pc]) + juce::String ((note - pc) / 12 - 1);
+    if (cents != 0)
+        text << " " << (cents > 0 ? juce::String ("+") : juce::String::fromUTF8 ("\xe2\x88\x92")) << std::abs (cents) << " ct";
+    return text;
+}
+
+bool parseNote (const juce::String& text, float& hz)
+{
+    const auto t = text.trim().replace (juce::String::fromUTF8 ("\xe2\x88\x92"), "-")
+                              .replace (juce::String::fromUTF8 ("\xe2\x99\xaf"), "#")
+                              .replace (juce::String::fromUTF8 ("\xe2\x99\xad"), "b");
+    const int n = t.length();
+    int i = 0;
+    auto at = [&t, n] (int k) { return k < n ? t[k] : (juce::juce_wchar) 0; };
+    auto digit = [&at] (int k) { return at (k) >= '0' && at (k) <= '9'; };
+
+    static constexpr int pcOf[] = { 9, 11, 0, 2, 4, 5, 7 };   // A B C D E F G
+    const auto letter = juce::CharacterFunctions::toUpperCase (at (i++));
+    if (letter < 'A' || letter > 'G')
+        return false;
+    int semitone = pcOf[letter - 'A'];
+    if (at (i) == '#')      { ++semitone; ++i; }
+    else if (at (i) == 'b') { --semitone; ++i; }
+    const bool below = at (i) == '-';   // C-1 = MIDI note 0
+    if (below)
+        ++i;
+    if (! digit (i))
+        return false;
+    int octave = 0;
+    while (digit (i) && octave < 100)
+        octave = octave * 10 + (int) (at (i++) - '0');
+    if (below)
+        octave = -octave;
+
+    // Cents, as the read-out writes them: "G7 -14 ct", "A4 +8".
+    double cents = 0.0;
+    while (at (i) == ' ')
+        ++i;
+    if (at (i) == '+' || at (i) == '-')
+    {
+        const double sign = at (i++) == '-' ? -1.0 : 1.0;
+        const int from = i;
+        while (digit (i) || at (i) == '.')
+            ++i;
+        if (i == from)
+            return false;
+        cents = sign * t.substring (from, i).getDoubleValue();
+        const auto unit = t.substring (i).trim().toLowerCase();
+        if (unit.isNotEmpty() && unit != "c" && unit != "ct" && unit != "cent" && unit != "cents")
+            return false;
+        i = n;
+    }
+    if (i != n || octave < -1 || octave > 10)
+        return false;
+    const double midi = 12.0 * (octave + 1) + semitone + cents / 100.0;
+    hz = (float) (440.0 * std::pow (2.0, (midi - 69.0) / 12.0));
+    return true;
 }
 
 float parseHz (const juce::String& text)
 {
+    if (float hz = 0.0f; parseNote (text, hz))   // 5.3.10: "E1", "A#4"
+        return hz;
     const auto lower = text.toLowerCase();
     const float v = leadingNumber (lower);
     return lower.containsChar ('k') ? v * 1000.0f : v;

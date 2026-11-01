@@ -4,6 +4,50 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.10 — 2026-11-01 12:19
+
+New
+- **Note names**: Anneal now speaks in notes as well as hertz, so you can match it to the key of your track.
+  - Point at the display and the read-out names the nearest note next to the frequency: "3.15 kHz · G7 +8 ct" means
+    the cursor is 8 cents above G7 (A4 = 440 Hz, sharps, cents to the nearest note). A ringing resonance Smooth
+    cuts, a bump in the peak hold, a kick's fundamental: you can see which note it is at a glance.
+  - Every frequency field takes a note when you type: **Mono bass** and the **Pivot** (click their value and type
+    `E1` or `C5`), and the host's typed values for **Range Low / High**, **Sidechain Key Low / High**, Tilt Pivot and
+    Mono Bass. Lower case, flats and the music signs work (`e1`, `Bb2`, `A♯4`), so does `C-1`, and so do cents the way
+    the read-out writes them (`G7 -14 ct`). A note lands on its frequency within the control's step (Mono bass
+    `E1` = 41 Hz). Hertz work exactly as before (`120`, `2.5k`, `2.5 kHz`, `off`, `all`).
+  - Display and typing only: nothing new on the deck, and the sound doesn't change. The tooltips of Mono bass, the
+    Pivot and the display mention it.
+
+Fixes
+- Frequencies just under 1 kHz and 10 kHz were written with the wrong unit: the switch to kHz looked at the number
+  before rounding, so 999.7 Hz read "1000 Hz" (and 1000.2 Hz "1.00 kHz") and 9,998 Hz "10.00 kHz" (10 kHz itself is
+  "10.0 kHz"). Now the unit follows the number shown, in the hover read-out and in the frequency controls' texts
+  (Range Low moves in 0.1 Hz steps and could show "1000 Hz").
+- The rest of the bug pass found nothing else: the newest build log and benchmark (5.3.9's: nothing over budget),
+  the rendered interface at every size, the Listen check's output stage, loading older projects, and the peak hold
+  across sample-rate changes.
+
+Tests: 251/251 acceptance checks, 7 new:
+- Hz or kHz by the number shown: 999.4 Hz "999 Hz", 999.7 Hz "1.00 kHz", 9,994 Hz "9.99 kHz", 9,998 Hz "10.0 kHz",
+  also in the read-out and in Range Low's text (failed before the fix: "1000 Hz", "10.00 kHz");
+- note names: A4 = 440 Hz, C4, E1, A#4, C-1, G9, "G7 +8 ct" at 3150 Hz, "A4 −8 ct" at 438 Hz, the display's ends
+  ("D#0 +49 ct" at 20 Hz, "D#10 +8 ct" at 20 kHz);
+- 15 typed notes (lower case, flats, ♯ / ♭, C-1, cents) land on their frequency within 0.06 ppm, and every name
+  the read-out gives from 20 Hz to 20 kHz (601 of them) goes back within half a cent;
+- 22 texts that aren't notes (`150 Hz`, `2.5k`, `off`, `all`, `Default`, `A4 Hz`, …) parse exactly as in 5.3.9;
+- the six frequency parameters take a note within their step (Mono bass `E1` 41 Hz, Pivot `C5` 523 Hz, Range Low
+  `A#1` 58.3 Hz, Range High `C8` 4186 Hz, Key Low `E3` 165 Hz, Key High `A6` 1760 Hz), hertz and `off` / `all` as
+  before;
+- on the deck, Mono bass `E1` → 41 Hz and the Pivot `A#4` → 466 Hz, and their tooltips say so;
+- the read-out starts "3.15 kHz · G7 +8 ct", and the widest one anywhere from 20 Hz to 20 kHz (Mid/Side, heat,
+  width, sides, both peaks, paint mode) is 774 of 1376 px.
+Host check: 32/32 on the built VST3 (new: note names typed through VST3 on Mono Bass, Tilt Pivot, Range Low / High
+and Sidechain Key High, hertz as before). Setup: 25/25.
+
+CPU: unchanged, nothing in the audio path moved (Stereo Low 2.0 %, Normal 2.8 %, Precise 4.6 %; Mid/Side Precise
+7.9 %; slowest 0.1 % of 64-sample blocks in Precise Mid/Side 21 % of the deadline, 32 samples 44 %).
+
 ## 5.3.9 — 2026-10-31 10:05
 
 New
