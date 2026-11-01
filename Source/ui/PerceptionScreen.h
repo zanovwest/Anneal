@@ -61,7 +61,9 @@ namespace anneal
         // 4.0 Reference. The curve is the processor's (level-normalised, on the fixed grid); it is
         // drawn while Reference is Learn key or Match, at the level of the output spectrum.
         void setReference (const ReferenceCurve& curve, const juce::String& name);
-        void setReferenceStatus (bool analysing, const juce::String& error);
+        // notice (5.3.13): good news, e.g. "saved as Final mix.annealref", shown in teal where an error would be.
+        void setReferenceStatus (bool analysing, const juce::String& error, const juce::String& notice = {});
+        juce::String getReferenceStatusText() const { return refStatusText(); }   // what the REF line says (tests)
         std::function<bool (const juce::File&)> canLoadFile;
         std::function<void (const juce::File&)> onFileDropped;
         bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -200,7 +202,8 @@ namespace anneal
         // 4.0 Reference
         std::array<float, ReferenceCurve::numPoints> refDb {};
         bool refHave = false, refAnalysing = false, dropHover = false;
-        juce::String refName, refError;
+        juce::String refName, refError, refNotice;
+        juce::String refStatusText() const;
         float refOffset = 0.0f;   // dB: where the normalised reference sits on the spectrum scale
         bool refOffsetPrimed = false;
 

@@ -119,6 +119,8 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
     screen.canLoadFile = [] (const juce::File& f) { return AnnealAudioProcessor::canLoadReferenceFile (f); };
     screen.onFileDropped = [&p] (const juce::File& f) { p.loadReferenceFile (f); };
     refMenu.onLoadFile = [&p] (const juce::File& f) { p.loadReferenceFile (f); };
+    refMenu.onSaveFile = [&p] (const juce::File& f) { p.saveReferenceFile (f); };   // 5.3.13: the display says how it went
+    refMenu.suggestedSaveName = [&p] { return p.suggestedReferenceFileName(); };
     refMenu.onClear = [&p] { p.clearReference(); };
     refMenu.hasReference = [this] { return refLoaded; };
 
@@ -482,12 +484,15 @@ void AnnealEditorContent::tick (float dt)
         screen.setPaint (processor.getPaint());
     }
     const auto error = processor.getReferenceError();
-    if (error != shownRefError)
+    const auto notice = processor.getReferenceNotice();   // 5.3.13: "saved as ...", for 6 s like an error
+    if (error != shownRefError || notice != shownRefNotice)
     {
         shownRefError = error;
+        shownRefNotice = notice;
         refErrorTicks = 0;
     }
-    screen.setReferenceStatus (processor.isAnalysingReference(), refErrorTicks++ < 180 ? error : juce::String());
+    const bool fresh = refErrorTicks++ < 180;
+    screen.setReferenceStatus (processor.isAnalysingReference(), fresh ? error : juce::String(), fresh ? notice : juce::String());
     updateActivity();
 
     const bool stereo = processor.getMainBusNumInputChannels() > 1;

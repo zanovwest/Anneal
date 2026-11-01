@@ -4,6 +4,51 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.13 — 2026-11-01 13:31
+
+New
+- **Save the reference**: keep a reference you like and use it in any project, without the original file or the
+  sidechain track.
+  - In the Reference menu, **Save the reference as…** writes the reference in use (learned from the sidechain key or
+    analysed from a file) to a small `.annealref` file (about 6 kB). The display says "saved as Final mix.annealref".
+  - It loads like an audio file: drop it on the display or pick it with *Load a reference file…*. Nothing is analysed
+    again, so it's there at once, exactly as it was saved, and Reference switches to Match as for a dropped file.
+  - The reference keeps its name ("Final mix.wav"); one learned from the key takes the file's name ("Vocal tone"),
+    since in another project it isn't that track's key any more.
+  - A file that isn't an Anneal reference, a damaged one or one from a newer Anneal is refused, and the display says
+    why; the reference you had stays.
+  - Nothing new on the deck, and projects sound exactly as before.
+
+Fixes
+- **Opening a project while a dropped file was still being analysed** no longer gives that project the file's reference.
+  The analysis used to finish anyway, replace the project's own reference (or none) and switch Reference to Match, so
+  the project sounded different from how it was saved. The same for *Clear the reference* or pasted settings during
+  an analysis: the newest choice now stays, and the analysis stops early.
+- **A damaged reference or frozen curve in a project is refused** instead of loading half empty: a reference cut short
+  loaded with its top end at 0 dB, a frozen curve held 0 dB where the data ran out. They now open as projects without
+  them. Whole ones load exactly as before.
+- The rest of the bug pass found nothing else: the newest build log and benchmark (5.3.12's: nothing over budget,
+  no warnings) and the rendered interface.
+
+Tests: 281/281 acceptance checks, 11 new:
+- a project opened 2 ms after a 90 s file was dropped keeps its own reference (none) and Reference Off (failed before
+  the fix: "Long mix.wav" and Match); Clear the reference and a reference set meanwhile stay (failed before: the file
+  came back); an undisturbed analysis still arrives and switches to Match;
+- a reference cut in half and a frozen curve cut to a quarter are refused, whole ones load (failed before: the
+  reference loaded with 0.0 dB at the top, the frozen curve was held);
+- saved and loaded bit for bit (1024 of 1024 points identical) with its name, Reference Match, the project unchanged;
+- a learned key saved as "Vocal tone.annealref" loads bit for bit as "Vocal tone" into an instance that was learning;
+- Match with the loaded copy plays exactly what Match with the original plays (difference 0.000000000000 over 2 s);
+- 5 of 5 broken or foreign files refused with the reason (plain text, a preset file, an empty file, a cut one, a newer
+  format), the reference in use kept; saving refused without a reference or a writable folder;
+- the menu is wired, the display says "saved as …", and accepts a dropped `.annealref`.
+Host check: 34/34 on the built VST3 (nothing host-facing changed). Setup: 25/25.
+
+CPU: unchanged (Stereo Low 2.1 %, Normal 2.9 %, Precise 4.6 %; Mid/Side Precise 8.1 %; slowest 0.1 % of 64-sample blocks
+in Precise Mid/Side 21-24 % of the deadline, 32 samples 42 %, as in 5.3.12). Two earlier measurements in this run put the
+32-sample case at 50 % while Spotify and a browser were busy on the machine; nothing on the audio path changed (the work
+is in the menu, the loader and the project reader).
+
 ## 5.3.12 — 2026-11-01 13:07
 
 New

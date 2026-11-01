@@ -8600,6 +8600,353 @@ void testCopyPaste5312()
     }
 }
 
+// 5.3.13 bug fix: a dropped file still being analysed when the project was opened (or the reference cleared, or
+// another one set) became the reference anyway once its analysis finished, and switched Reference to Match: the
+// project opened with someone else's reference and a different sound.
+static void writeWav (const juce::File& file, const Channels& audio, double rate)
+{
+    file.deleteFile();
+    auto stream = file.createOutputStream();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> writer (wav.createWriterFor (stream.get(), rate, (unsigned int) audio.size(), 16, {}, 0));
+    if (writer == nullptr)
+        return;
+    stream.release();
+    std::vector<const float*> ptrs;
+    for (const auto& c : audio)
+        ptrs.push_back (c.data());
+    writer->writeFromFloatArrays (ptrs.data(), (int) ptrs.size(), (int) audio[0].size());
+}
+
+// Until the reference loader is idle and the processor's timer has had its turn (it switches to Match after a drop).
+static void settleReference (Rig& r)
+{
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+    while (r.proc->isAnalysingReference() && juce::Time::getMillisecondCounterHiRes() - t0 < 30000.0)
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+}
+
+void testFixes5313()
+{
+    section ("66. 5.3.13 bug fix: a file still being analysed");
+    const double fs = 48000.0;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AnnealTests-stale-reference");
+    dir.createDirectory();
+    const auto file = dir.getChildFile ("Long mix.wav");
+    writeWav (file, pinkNoise (44100.0, 90.0, 0.05f, 21), 44100.0);
+    auto refMode = [] (Rig& r) { return r.proc->apvts.getRawParameterValue (ids::refMode)->load(); };
+
+    // A project opened while the dropped file is analysed: it keeps its own reference (none) and Reference Off.
+    {
+        Rig project;
+        juce::MemoryBlock blob;
+        project.proc->getStateInformation (blob);
+        Rig r;
+        r.prepare (fs, 512);
+        r.proc->loadReferenceFile (file);
+        juce::Thread::sleep (2);
+        r.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        const bool wasAnalysing = r.proc->isAnalysingReference();
+        settleReference (r);
+        const auto ref = r.proc->getReference();
+        check (wasAnalysing && ! ref.curve.valid && refMode (r) < 0.5f && r.proc->getReferenceError().isEmpty(),
+               "a project opened during an analysis keeps its own reference",
+               juce::String (wasAnalysing ? "opened while analysing; " : "THE ANALYSIS WAS ALREADY DONE; ") + "reference "
+                   + (ref.curve.valid ? "\"" + ref.name + "\" (THE DROPPED FILE)" : juce::String ("none, as saved")) + ", Reference "
+                   + (refMode (r) > 1.5f ? "MATCH" : refMode (r) > 0.5f ? "LEARN KEY" : "Off"));
+    }
+
+    // Clear the reference during the analysis, or set another (pasted settings): the newest choice stays.
+    {
+        anneal::ReferenceCurve kept;
+        kept.valid = true;
+        std::fill (kept.db, kept.db + anneal::ReferenceCurve::numPoints, -2.0f);
+        Rig c, s;
+        for (auto* r : { &c, &s })
+        {
+            r->prepare (fs, 512);
+            r->proc->loadReferenceFile (file);
+            juce::Thread::sleep (2);
+        }
+        c.proc->clearReference();
+        s.proc->setReference (kept, "Pasted.wav");
+        settleReference (c);
+        settleReference (s);
+        const auto rc = c.proc->getReference(), rs = s.proc->getReference();
+        const bool cleared = ! rc.curve.valid && refMode (c) < 0.5f;
+        const bool newer = rs.name == "Pasted.wav" && rs.curve.db[300] == -2.0f && refMode (s) < 0.5f;
+        check (cleared && newer, "cleared, or replaced, during an analysis: the newest choice stays",
+               juce::String ("cleared: ") + (cleared ? "stays clear" : "THE FILE CAME BACK") + "; another set: "
+                   + (newer ? "\"Pasted.wav\" stays" : "\"" + rs.name + "\" (WRONG)"));
+    }
+
+    // Undisturbed, the file still arrives and switches to Match (as in section 27).
+    {
+        Rig r;
+        r.prepare (fs, 512);
+        r.proc->loadReferenceFile (file);
+        settleReference (r);
+        check (r.proc->getReference().name == "Long mix.wav" && refMode (r) > 1.5f, "an undisturbed analysis still arrives",
+               "\"" + r.proc->getReference().name + "\", Reference " + juce::String (refMode (r), 0));
+    }
+    dir.deleteRecursively();
+
+    // A reference cut short in a project (or a saved reference) is refused: JUCE's base64 fills the missing part
+    // with zeros, so it used to load with its top end at 0 dB. A whole one still loads exactly.
+    {
+        anneal::ReferenceCurve curve;
+        curve.valid = true;
+        std::fill (curve.db, curve.db + anneal::ReferenceCurve::numPoints, -6.0f);
+        Rig a;
+        a.proc->setReference (curve, "Cut.wav");
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        auto* refEl = xml->getChildByName ("Reference");
+        const auto whole = refEl->getStringAttribute ("db");
+        auto load = [] (const juce::XmlElement& x)
+        {
+            Rig b;
+            juce::MemoryBlock m;
+            juce::AudioProcessor::copyXmlToBinary (x, m);
+            b.proc->setStateInformation (m.getData(), (int) m.getSize());
+            return b.proc->getReference();
+        };
+        const auto full = load (*xml);
+        refEl->setAttribute ("db", whole.substring (0, whole.length() / 2));
+        const auto cut = load (*xml);
+        check (full.curve.valid && full.curve.db[1000] == -6.0f && ! cut.curve.valid, "a reference cut short is refused",
+               juce::String ("whole: ") + (full.curve.valid ? "loads" : "REFUSED") + "; cut in half: "
+                   + (cut.curve.valid ? "LOADED (top point " + juce::String (cut.curve.db[1000], 1) + " dB)" : juce::String ("refused, no reference")));
+    }
+
+    // The same for a frozen curve (5.3.12) cut short: the project opens as one without it (Freeze holds what it hears
+    // first), not holding 0 dB where the text ran out. The reopened project shows whether it took the curve.
+    {
+        Rig a;
+        a.setNeutral();
+        a.set (ids::smooth, 100.0f);
+        a.prepare (fs, 512);
+        a.run (ringingPink (fs, 2.0, 0.05f, 1), fixedBlocks (512));
+        a.set (ids::freeze, 1.0f);
+        a.run (pinkNoise (fs, 0.2, 0.03f, 4), fixedBlocks (512));
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+        auto* frozen = xml->getChildByName ("Frozen");
+        auto takes = [] (const juce::XmlElement& x)
+        {
+            Rig b;
+            juce::MemoryBlock m, again;
+            juce::AudioProcessor::copyXmlToBinary (x, m);
+            b.proc->setStateInformation (m.getData(), (int) m.getSize());
+            b.proc->getStateInformation (again);
+            const auto y = juce::AudioProcessor::getXmlFromBinary (again.getData(), (int) again.getSize());
+            return y != nullptr && y->getChildByName ("Frozen") != nullptr;
+        };
+        const bool whole = frozen != nullptr && takes (*xml);
+        if (frozen != nullptr)
+            frozen->setAttribute ("curves", frozen->getStringAttribute ("curves").substring (0, frozen->getStringAttribute ("curves").length() / 4));
+        const bool cut = frozen != nullptr && takes (*xml);
+        check (whole && ! cut, "a frozen curve cut short is refused",
+               juce::String ("whole: ") + (whole ? "held" : "NOT HELD") + "; cut to a quarter: " + (cut ? "HELD (zeros where it ran out)" : "refused"));
+    }
+}
+
+// 5.3.13 Save the reference (roadmap item 29): the Reference menu's "Save the reference as..." writes the reference
+// (learned from the key or analysed from a file) to an .annealref file, which loads like an audio file, dropped on
+// the display or through "Load a reference file...", without analysing anything again.
+void testSaveReference5313()
+{
+    section ("67. 5.3.13 Save the reference");
+    const double fs = 48000.0;
+    const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("AnnealTests-annealref");
+    dir.deleteRecursively();
+    dir.createDirectory();
+    auto refMode = [] (Rig& r) { return r.proc->apvts.getRawParameterValue (ids::refMode)->load(); };
+    auto stateOf = [] (Rig& r) { juce::MemoryBlock b; r.proc->getStateInformation (b); return b; };
+    auto same = [] (const anneal::ReferenceCurve& a, const anneal::ReferenceCurve& b)
+    {
+        return a.valid && b.valid && std::memcmp (a.db, b.db, sizeof (a.db)) == 0;
+    };
+    anneal::ReferenceCurve curve;   // every kind of value: fractions, signs, a tiny one
+    curve.valid = true;
+    for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+        curve.db[i] = (float) (std::sin (i * 0.37) * 17.3 - 0.001 * i) + (i == 7 ? 1.0e-30f : 0.0f);
+
+    // Saved (the extension added) and loaded into another instance: bit for bit, with its name, and Reference
+    // switches to Match as for a dropped audio file. Saving changes nothing in the project.
+    const auto saved = dir.getChildFile ("Final mix.annealref");
+    {
+        Rig a;
+        a.proc->setReference (curve, "Final mix.wav");
+        const auto before = stateOf (a);
+        const auto suggested = a.proc->suggestedReferenceFileName();
+        const auto why = a.proc->saveReferenceFile (dir.getChildFile ("Final mix"));
+        const bool unchanged = stateOf (a) == before;
+        Rig b;
+        b.prepare (fs, 512);
+        const bool accepted = AnnealAudioProcessor::canLoadReferenceFile (saved);
+        b.proc->loadReferenceFile (saved);
+        settleReference (b);
+        const auto got = b.proc->getReference();
+        check (why.isEmpty() && suggested == "Final mix.annealref" && accepted && same (got.curve, curve) && got.name == "Final mix.wav"
+                   && refMode (b) > 1.5f && b.proc->getReferenceError().isEmpty() && unchanged
+                   && a.proc->getReferenceNotice() == "saved as Final mix.annealref",
+               "saved and loaded bit for bit, with its name",
+               (why.isEmpty() ? "saved as \"" + saved.getFileName() + "\" (" + juce::String (saved.getSize()) + " bytes, suggested \"" + suggested + "\")"
+                              : "NOT SAVED: " + why)
+                   + "; loaded \"" + got.name + "\", " + (same (got.curve, curve) ? "1024 of 1024 points identical" : juce::String ("POINTS DIFFER"))
+                   + ", Reference " + juce::String (refMode (b), 0) + (unchanged ? "; the project unchanged" : "; THE PROJECT CHANGED"));
+    }
+
+    // Learned from the sidechain key: saved under the file's name (elsewhere it isn't that track's key), loaded into
+    // an instance that was learning its own key: the saved curve exactly, and Learn key ends there, as for a drop.
+    {
+        Rig k;
+        juce::AudioProcessor::BusesLayout l;
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.inputBuses.add (juce::AudioChannelSet::stereo());
+        l.outputBuses.add (juce::AudioChannelSet::stereo());
+        k.proc->setBusesLayout (l);
+        k.set (ids::refMode, 1.0f);
+        k.prepare (fs, 512);
+        const auto key = ringingPink (fs, 2.0, 0.05f, 6);
+        juce::AudioBuffer<float> buf (4, 512);
+        juce::MidiBuffer midi;
+        for (int pos = 0; pos + 512 <= (int) key[0].size(); pos += 512)
+        {
+            buf.clear();
+            for (int c = 0; c < 2; ++c)
+                buf.copyFrom (c + 2, 0, key[(size_t) c].data() + pos, 512);
+            k.proc->processBlock (buf, midi);
+        }
+        const auto learned = k.proc->getReference();
+        const auto suggested = k.proc->suggestedReferenceFileName();
+        const auto file = dir.getChildFile ("Vocal tone.annealref");
+        const auto why = k.proc->saveReferenceFile (file);
+        Rig m;
+        m.set (ids::refMode, 1.0f);
+        m.prepare (fs, 512);
+        m.proc->loadReferenceFile (file);
+        settleReference (m);
+        const auto got = m.proc->getReference();
+        check (learned.name == "sidechain key" && why.isEmpty() && suggested == "Sidechain key.annealref" && same (got.curve, learned.curve)
+                   && got.name == "Vocal tone" && refMode (m) > 1.5f && k.proc->getReference().name == "sidechain key",
+               "a learned key saved and loaded bit for bit",
+               "learned \"" + learned.name + "\" (suggested \"" + suggested + "\"), loaded as \"" + got.name + "\", "
+                   + (same (got.curve, learned.curve) ? "identical" : "DIFFERENT") + ", Reference " + juce::String (refMode (m), 0));
+    }
+
+    // Match with the loaded copy plays exactly what Match with the original plays.
+    {
+        Rig c, d, o;
+        for (auto* r : { &c, &d, &o })
+        {
+            r->set (ids::refMode, 2.0f);
+            r->set (ids::refAmount, 100.0f);
+            r->prepare (fs, 512);
+        }
+        c.proc->setReference (curve, "Final mix.wav");
+        d.proc->loadReferenceFile (saved);
+        settleReference (d);
+        const auto in = ringingPink (fs, 2.0, 0.05f, 9);
+        const auto oc = c.run (in, fixedBlocks (512));
+        const auto od = d.run (in, fixedBlocks (512));
+        const auto oo = o.run (in, fixedBlocks (512));   // Match with nothing to match
+        const double diff = maxDiff (oc, od), matched = maxDiff (oc, oo);
+        check (diff == 0.0 && matched > 1.0e-3, "Match with the loaded copy is identical",
+               "max difference " + juce::String (diff, 12) + " over 2 s (the match itself moves the output by up to "
+                   + juce::String (matched, 3) + ")");
+    }
+
+    // Broken or foreign files are refused with the reason; the reference in use and Reference stay.
+    {
+        const auto text = saved.loadFileAsString();
+        auto cut = juce::parseXML (text);
+        auto* refEl = cut->getChildByName ("Reference");
+        refEl->setAttribute ("db", refEl->getStringAttribute ("db").substring (0, 1000));
+        auto newer = juce::parseXML (text);
+        newer->setAttribute ("format", 2);
+        const std::vector<std::pair<juce::String, juce::String>> cases {
+            { "Notes", "hello" },
+            { "Preset", "<AnnealPreset version=\"1\"><PARAM id=\"heat\" value=\"10\"/></AnnealPreset>" },
+            { "Empty", "" },
+            { "Cut", cut->toString() },
+            { "Newer", newer->toString() } };
+        const juce::StringArray want { "it isn't an Anneal reference", "it isn't an Anneal reference", "it isn't an Anneal reference",
+                                       "the reference in it is damaged", "it was saved by a newer Anneal" };
+        anneal::ReferenceCurve kept;
+        kept.valid = true;
+        std::fill (kept.db, kept.db + anneal::ReferenceCurve::numPoints, -1.5f);
+        int refused = 0;
+        juce::String log;
+        for (size_t i = 0; i < cases.size(); ++i)
+        {
+            const auto file = dir.getChildFile (cases[i].first + ".annealref");
+            file.replaceWithText (cases[i].second);
+            Rig e;
+            e.proc->setReference (kept, "kept");
+            e.proc->loadReferenceFile (file);
+            settleReference (e);
+            anneal::ReferenceCurve direct;
+            juce::String name;
+            const auto why = AnnealAudioProcessor::readReferenceFile (file, direct, name);
+            const bool ok = why == want[(int) i] && ! direct.valid && e.proc->getReferenceError() == file.getFileName() + ": " + why
+                            && e.proc->getReference().name == "kept" && e.proc->getReference().curve.db[100] == -1.5f && refMode (e) < 0.5f;
+            refused += ok ? 1 : 0;
+            log << (i > 0 ? "; " : "") << cases[i].first << ": " << (ok ? why : "WRONG (" + e.proc->getReferenceError() + ")");
+        }
+        anneal::ReferenceCurve none;
+        juce::String noName;
+        const auto missing = dir.getChildFile ("Missing.annealref");
+        const bool missingOk = ! AnnealAudioProcessor::canLoadReferenceFile (missing)
+                               && AnnealAudioProcessor::readReferenceFile (missing, none, noName) == "can't read this file";
+        check (refused == (int) cases.size() && missingOk, "broken or foreign files refused with the reason",
+               juce::String (refused) + " of " + juce::String ((int) cases.size()) + " refused, reference kept (" + log + ")"
+                   + (missingOk ? "; a missing file isn't offered" : "; MISSING FILE ACCEPTED"));
+    }
+
+    // Saving is refused without a reference or where it can't be written; nothing is left behind.
+    {
+        Rig f, g;
+        const auto noRef = f.proc->saveReferenceFile (dir.getChildFile ("Nothing"));
+        g.proc->setReference (curve, "Final mix.wav");
+        const auto blocker = dir.getChildFile ("a file.txt");
+        blocker.replaceWithText ("x");
+        const auto target = blocker.getChildFile ("Final mix.annealref");
+        const auto noWrite = g.proc->saveReferenceFile (target);
+        const bool ok = noRef == "there is no reference to save" && ! dir.getChildFile ("Nothing.annealref").exists()
+                        && noWrite == "can't write this file" && ! target.exists()
+                        && g.proc->getReferenceError() == "Final mix.annealref: can't write this file" && g.proc->getReferenceNotice().isEmpty();
+        check (ok, "saving refused without a reference or a writable place", "\"" + noRef + "\"; \"" + noWrite + "\"");
+    }
+
+    // The menu and the display: "Save the reference as..." is wired, the display says "saved as ..." after a save
+    // and a dropped .annealref is accepted there like an audio file.
+    {
+        Rig r;
+        r.proc->setReference (curve, "Final mix.wav");
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto& content = dynamic_cast<AnnealEditor&> (*ed).getContent();
+        content.getReferenceMenu().onSaveFile (dir.getChildFile ("Shown"));
+        content.tick (0.0f);
+        const auto shown = content.screen.getReferenceStatusText();
+        const bool wired = content.getReferenceMenu().suggestedSaveName != nullptr && content.getReferenceMenu().suggestedSaveName() == "Final mix.annealref"
+                           && content.getReferenceMenu().getTooltip().contains ("Save the reference as");
+        const bool dropOk = content.screen.isInterestedInFileDrag ({ saved.getFullPathName() });
+        r.proc->clearReference();
+        content.tick (0.0f);
+        const bool gone = content.screen.getReferenceStatusText() != shown;
+        check (wired && shown == "saved as Shown.annealref" && dir.getChildFile ("Shown.annealref").existsAsFile() && dropOk && gone,
+               "the menu saves; the display says so; a saved reference can be dropped",
+               juce::String (wired ? "wired" : "NOT WIRED") + "; display \"" + shown + "\"" + (gone ? " (until the next reference event)" : " (STUCK)")
+                   + (dropOk ? "; .annealref accepted by the display" : "; .annealref REFUSED BY THE DISPLAY"));
+    }
+    dir.deleteRecursively();
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -8612,13 +8959,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes5312();
+        testFixes5313();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testCopyPaste5312();
+        testSaveReference5313();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -8689,6 +9036,8 @@ int main (int argc, char** argv)
     testFreezeAverage5311();
     testFixes5312();
     testCopyPaste5312();
+    testFixes5313();
+    testSaveReference5313();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

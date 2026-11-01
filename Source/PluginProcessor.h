@@ -141,11 +141,23 @@ public:
 
     // A file dropped on the display (wav, aif/aiff, flac, mp3, ogg) is decoded and analysed on a
     // background thread; when it is ready it becomes the reference and Reference switches to Match.
+    // 5.3.13: a saved reference (.annealref) loads the same way, without analysing anything. A reference set,
+    // cleared or loaded with a project meanwhile wins: the analysis still running is dropped.
     static bool canLoadReferenceFile (const juce::File& file);
     void loadReferenceFile (const juce::File& file);
     bool isAnalysingReference() const noexcept { return analysing.load(); }
     juce::String getReferenceError();   // why the last dropped file was not used, or empty
     void* getLastAnalysisThread() const noexcept { return analysisThread.load(); }   // tests
+
+    // 5.3.13 Save the reference (the Reference menu's "Save the reference as..."): the curve and its name in an
+    // .annealref file (added when the chosen name lacks it), so one reference serves many projects. Empty when
+    // saved, else why not (also shown on the display). A reference learned from the key is named after the file.
+    juce::String saveReferenceFile (const juce::File& file);
+    static juce::File referenceFileFor (const juce::File& chosen);
+    juce::String suggestedReferenceFileName();   // "Final mix.annealref" for "Final mix.wav"
+    // Reads an .annealref: empty and the curve and name set, else why it can't be used (curve invalid).
+    static juce::String readReferenceFile (const juce::File& file, anneal::ReferenceCurve& curve, juce::String& name);
+    juce::String getReferenceNotice();   // "saved as ...", after a save until the next reference event
 
     // 4.0 Paint (message thread). setPaint between beginPaintStroke() and endPaintStroke() is one
     // undo step; a paint change outside a stroke isn't recorded. mergeWithPrevious: the stroke joins
@@ -284,7 +296,9 @@ private:
     // 4.0 Reference and Paint. refLock guards the copies below, the writer side of refToAudio and
     // paintToAudio and the reader side of refLearned; the audio thread never takes it.
     void applyPaintNow (const anneal::PaintCurves& paint);   // no undo step
-    void referenceFailed (const juce::File& file, const juce::String& why);
+    // From the loader: applied only while no other reference came since its load started (epoch: refEpoch then).
+    void referenceFailed (const juce::File& file, const juce::String& why, unsigned int epoch);
+    void referenceArrived (const anneal::ReferenceCurve& curve, const juce::String& name, unsigned int epoch);
     anneal::TripleBuffer<anneal::ReferenceCurve> refToAudio, refLearned;
     anneal::TripleBuffer<anneal::PaintCurves> paintToAudio;
     // 5.3.12: the frozen curve. The engine in use publishes what it holds; heldSaved (refLock) is the newest, for
@@ -295,7 +309,7 @@ private:
     anneal::HeldCurves heldSaved;
     juce::CriticalSection refLock;
     anneal::ReferenceCurve refCurve;
-    juce::String refName, refError;
+    juce::String refName, refError, refNotice;
     anneal::PaintCurves paint, strokeStart;
     bool strokeOpen = false, lastStepWasStroke = false;
     unsigned int refEpoch = 0;

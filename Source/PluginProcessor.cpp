@@ -15,10 +15,11 @@ public:
     explicit ReferenceLoader (AnnealAudioProcessor& p) : juce::Thread ("Anneal reference"), owner (p) {}
     ~ReferenceLoader() override { stopThread (10000); }
 
-    void load (const juce::File& f)
+    void load (const juce::File& f, unsigned int epoch)
     {
         stopThread (10000);   // a newer drop replaces one still being analysed
         file = f;
+        startEpoch = epoch;
         owner.analysing = true;
         startThread();
     }
@@ -42,12 +43,24 @@ private:
 
     void analyse()
     {
+        // 5.3.13: a saved reference is read, not analysed.
+        if (file.hasFileExtension ("annealref"))
+        {
+            anneal::ReferenceCurve curve;
+            juce::String name;
+            if (const auto why = readReferenceFile (file, curve, name); why.isNotEmpty())
+                owner.referenceFailed (file, why, startEpoch);
+            else
+                owner.referenceArrived (curve, name, startEpoch);
+            return;
+        }
+
         juce::AudioFormatManager formats;
         registerFormats (formats);
         std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
         if (reader == nullptr || reader->sampleRate <= 0.0 || reader->numChannels < 1)
         {
-            owner.referenceFailed (file, "can't read this file");
+            owner.referenceFailed (file, "can't read this file", startEpoch);
             return;
         }
 
@@ -70,15 +83,15 @@ private:
             return;
         if (! curve.valid)
         {
-            owner.referenceFailed (file, "it is silent");
+            owner.referenceFailed (file, "it is silent", startEpoch);
             return;
         }
-        owner.setReference (curve, file.getFileName(), true);
-        owner.autoMatchPending = true;
+        owner.referenceArrived (curve, file.getFileName(), startEpoch);
     }
 
     AnnealAudioProcessor& owner;
     juce::File file;
+    unsigned int startEpoch = 0;
 };
 
 //==============================================================================
@@ -87,6 +100,13 @@ private:
 namespace
 {
     const juce::Identifier referenceTag ("Reference"), paintTag ("Paint");
+
+    // 5.3.13: JUCE's base64 ("<bytes>.<text>") fills a text cut short with zeros; true only when all `bytes` are there.
+    bool fromBase64Exactly (const juce::String& encoded, size_t bytes, juce::MemoryBlock& data)
+    {
+        return encoded.fromFirstOccurrenceOf (".", false, false).length() >= (int) ((bytes * 8 + 5) / 6)
+            && data.fromBase64Encoding (encoded) && data.getSize() == bytes;
+    }
 
     juce::ValueTree referenceToTree (const anneal::ReferenceCurve& curve, const juce::String& name)
     {
@@ -109,8 +129,7 @@ namespace
         name.clear();
         juce::MemoryBlock data;
         if (! t.isValid() || (int) t.getProperty ("points", 0) != anneal::ReferenceCurve::numPoints
-            || ! data.fromBase64Encoding (t.getProperty ("db").toString())
-            || data.getSize() != sizeof (float) * (size_t) anneal::ReferenceCurve::numPoints)
+            || ! fromBase64Exactly (t.getProperty ("db").toString(), sizeof (float) * (size_t) anneal::ReferenceCurve::numPoints, data))
             return curve;
         juce::MemoryInputStream in (data, false);
         for (auto& v : curve.db)
@@ -169,12 +188,13 @@ namespace
         constexpr int nb = anneal::HeldCurves::numBands;
         h.valid = false;
         juce::MemoryBlock data;
-        if (! t.isValid() || (int) t.getProperty ("bands", 0) != nb || ! data.fromBase64Encoding (t.getProperty ("curves").toString()))
+        if (! t.isValid() || (int) t.getProperty ("bands", 0) != nb)
             return false;
         const bool midSide = (bool) t.getProperty ("midSide", false);
         const int models = midSide ? 3 : 1;
         const double z0 = t.getProperty ("z0", 0.0), dz = t.getProperty ("dz", 0.0);
-        if (data.getSize() != sizeof (float) * (size_t) (2 * nb * models) || ! std::isfinite (z0) || ! (dz > 0.0 && dz < 1.0))
+        if (! fromBase64Exactly (t.getProperty ("curves").toString(), sizeof (float) * (size_t) (2 * nb * models), data)
+            || ! std::isfinite (z0) || ! (dz > 0.0 && dz < 1.0))
             return false;
         juce::MemoryInputStream in (data, false);
         for (int m = 0; m < models; ++m)
@@ -1009,9 +1029,22 @@ void AnnealAudioProcessor::setReference (const anneal::ReferenceCurve& curve, co
     refCurve.holdLearning = holdLearning;
     refName = curve.valid ? name : juce::String();
     refError.clear();
+    refNotice.clear();
     refToAudio.beginWrite() = refCurve;
     refToAudio.endWrite();
     ++refSerial;
+    // 5.3.13: a file still being analysed would only be dropped now (see referenceArrived); stop it early.
+    if (loader != nullptr && juce::Thread::getCurrentThreadId() != analysisThread.load())
+        loader->signalThreadShouldExit();
+}
+
+void AnnealAudioProcessor::referenceArrived (const anneal::ReferenceCurve& curve, const juce::String& name, unsigned int epoch)
+{
+    const juce::ScopedLock sl (refLock);
+    if (epoch != refEpoch)   // a project, a paste or Clear came meanwhile: that is the newer choice
+        return;
+    setReference (curve, name, true);
+    autoMatchPending = true;
 }
 
 void AnnealAudioProcessor::pollLearnedReference()
@@ -1028,28 +1061,110 @@ void AnnealAudioProcessor::pollLearnedReference()
 
 bool AnnealAudioProcessor::canLoadReferenceFile (const juce::File& file)
 {
-    return file.existsAsFile() && file.hasFileExtension ("wav;wave;aif;aiff;aifc;flac;mp3;ogg");
+    return file.existsAsFile() && file.hasFileExtension ("wav;wave;aif;aiff;aifc;flac;mp3;ogg;annealref");
 }
 
 void AnnealAudioProcessor::loadReferenceFile (const juce::File& file)
 {
+    unsigned int epoch = 0;
     {
         const juce::ScopedLock sl (refLock);
         refError.clear();
+        refNotice.clear();
+        epoch = refEpoch;
     }
-    loader->load (file);
+    loader->load (file, epoch);
 }
 
-void AnnealAudioProcessor::referenceFailed (const juce::File& file, const juce::String& why)
+void AnnealAudioProcessor::referenceFailed (const juce::File& file, const juce::String& why, unsigned int epoch)
 {
     const juce::ScopedLock sl (refLock);
-    refError = file.getFileName() + ": " + why;
+    if (epoch == refEpoch)
+        refError = file.getFileName() + ": " + why;
 }
 
 juce::String AnnealAudioProcessor::getReferenceError()
 {
     const juce::ScopedLock sl (refLock);
     return refError;
+}
+
+//==============================================================================
+// 5.3.13 Save the reference: <AnnealReference format="1"> holding the project's own Reference child, so a saved
+// reference and a project's are the same data (1024 floats, bit for bit, and the name).
+namespace
+{
+    const juce::Identifier referenceFileTag ("AnnealReference");
+    constexpr int referenceFileFormat = 1;
+    constexpr juce::int64 maxReferenceFile = 1 << 20;   // one is about 6 kB
+    const char* const learnedName = "sidechain key";
+}
+
+juce::File AnnealAudioProcessor::referenceFileFor (const juce::File& chosen)
+{
+    return chosen.hasFileExtension ("annealref") ? chosen : chosen.getSiblingFile (chosen.getFileName() + ".annealref");
+}
+
+juce::String AnnealAudioProcessor::suggestedReferenceFileName()
+{
+    const auto ref = getReference();
+    auto stem = ref.name == learnedName ? juce::String ("Sidechain key") : ref.name;
+    if (juce::StringArray::fromTokens ("wav wave aif aiff aifc flac mp3 ogg annealref", false)
+            .contains (stem.fromLastOccurrenceOf (".", false, false), true))
+        stem = stem.upToLastOccurrenceOf (".", false, false);
+    stem = juce::File::createLegalFileName (stem.trim());
+    return (stem.isEmpty() ? juce::String ("Reference") : stem) + ".annealref";
+}
+
+juce::String AnnealAudioProcessor::readReferenceFile (const juce::File& file, anneal::ReferenceCurve& curve, juce::String& name)
+{
+    curve = {};
+    name.clear();
+    juce::FileInputStream in (file);
+    if (! in.openedOk())
+        return "can't read this file";
+    if (in.getTotalLength() > maxReferenceFile)
+        return "it isn't an Anneal reference";
+    const auto xml = juce::parseXML (in.readEntireStreamAsString());
+    if (xml == nullptr || ! xml->hasTagName (referenceFileTag.toString()) || xml->getIntAttribute ("format", 0) < 1)
+        return "it isn't an Anneal reference";
+    if (xml->getIntAttribute ("format") > referenceFileFormat)
+        return "it was saved by a newer Anneal";
+    curve = referenceFromTree (juce::ValueTree::fromXml (*xml).getChildWithName (referenceTag), name);
+    if (! curve.valid)
+        return "the reference in it is damaged";
+    if (name.isEmpty())
+        name = file.getFileNameWithoutExtension();
+    return {};
+}
+
+juce::String AnnealAudioProcessor::saveReferenceFile (const juce::File& chosen)
+{
+    const auto ref = getReference();
+    const auto file = referenceFileFor (chosen);
+    juce::String why;
+    if (! ref.curve.valid)
+        why = "there is no reference to save";
+    else
+    {
+        // Elsewhere a learned key isn't that track's key any more: it takes the file's name.
+        juce::ValueTree root (referenceFileTag);
+        root.setProperty ("format", referenceFileFormat, nullptr);
+        root.appendChild (referenceToTree (ref.curve, ref.name == learnedName ? file.getFileNameWithoutExtension() : ref.name), nullptr);
+        const auto xml = root.createXml();
+        if (xml == nullptr || ! xml->writeTo (file))
+            why = "can't write this file";
+    }
+    const juce::ScopedLock sl (refLock);
+    refError = why.isEmpty() ? juce::String() : file.getFileName() + ": " + why;
+    refNotice = why.isEmpty() ? "saved as " + file.getFileName() : juce::String();
+    return why;
+}
+
+juce::String AnnealAudioProcessor::getReferenceNotice()
+{
+    const juce::ScopedLock sl (refLock);
+    return refNotice;
 }
 
 //==============================================================================

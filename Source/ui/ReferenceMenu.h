@@ -7,9 +7,10 @@
 
 namespace anneal
 {
-// The Reference menu (REFERENCE group, 4.0), bound to the "refMode" parameter, with two extra
-// actions under the modes: load a reference file (the same as dropping one on the display) and
-// clear the reference. Off is a plain raised pill; Learn key and Match light it in teal.
+// The Reference menu (REFERENCE group, 4.0), bound to the "refMode" parameter, with extra actions
+// under the modes: load a reference file (the same as dropping one on the display), save the
+// reference as an .annealref file (5.3.13) and clear it. Off is a plain raised pill; Learn key and
+// Match light it in teal.
 class ReferenceMenu final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -24,11 +25,14 @@ public:
         }, state.undoManager);
         attachment->sendInitialUpdate();
         setTooltip ("Reference: Learn key learns the tone of the track routed to the sidechain input; Match steers "
-                    "the auto EQ toward the reference. Drop an audio file on the display (or load one here) to use it");
+                    "the auto EQ toward the reference. Drop an audio file on the display (or load one here) to use it; "
+                    "Save the reference as... keeps it in an .annealref file that loads the same way in any project");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
 
     std::function<void (const juce::File&)> onLoadFile;
+    std::function<void (const juce::File&)> onSaveFile;   // 5.3.13
+    std::function<juce::String()> suggestedSaveName;
     std::function<void()> onClear;
     std::function<bool()> hasReference;
 
@@ -80,8 +84,10 @@ public:
         for (int i = 0; i < numChoices; ++i)
             menu.addItem (i + 1, menuText (i), true, i == choice);
         menu.addSeparator();
+        const bool have = hasReference != nullptr && hasReference();
         menu.addItem (loadItem, "Load a reference file...");
-        menu.addItem (clearItem, "Clear the reference", hasReference != nullptr && hasReference());
+        menu.addItem (saveItem, "Save the reference as...", have);
+        menu.addItem (clearItem, "Clear the reference", have);
         juce::Component::SafePointer<ReferenceMenu> safe (this);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withStandardItemHeight (24),
                            [safe] (int selected)
@@ -90,6 +96,8 @@ public:
                 return;
             if (selected == loadItem)
                 safe->chooseFile();
+            else if (selected == saveItem)
+                safe->chooseSaveFile();
             else if (selected == clearItem)
             {
                 if (safe->onClear != nullptr)
@@ -101,22 +109,45 @@ public:
     }
 
 private:
-    static constexpr int loadItem = 10, clearItem = 11;
+    static constexpr int loadItem = 10, clearItem = 11, saveItem = 12;
 
     void chooseFile()
     {
-        chooser = std::make_unique<juce::FileChooser> ("Choose a reference recording", juce::File(),
-                                                       "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.flac;*.mp3;*.ogg");
+        chooser = std::make_unique<juce::FileChooser> ("Choose a reference recording or a saved reference", lastFolder,
+                                                       "*.wav;*.wave;*.aif;*.aiff;*.aifc;*.flac;*.mp3;*.ogg;*.annealref");
         juce::Component::SafePointer<ReferenceMenu> safe (this);
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                               [safe] (const juce::FileChooser& fc)
         {
             if (safe != nullptr && fc.getResult().existsAsFile() && safe->onLoadFile != nullptr)
+            {
+                safe->lastFolder = fc.getResult().getParentDirectory();
                 safe->onLoadFile (fc.getResult());
+            }
+        });
+    }
+
+    void chooseSaveFile()
+    {
+        const auto folder = lastFolder.isDirectory() ? lastFolder
+                                                     : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+        const auto name = suggestedSaveName != nullptr ? suggestedSaveName() : juce::String ("Reference.annealref");
+        chooser = std::make_unique<juce::FileChooser> ("Save the reference", folder.getChildFile (name), "*.annealref");
+        juce::Component::SafePointer<ReferenceMenu> safe (this);
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safe] (const juce::FileChooser& fc)
+        {
+            if (safe != nullptr && fc.getResult() != juce::File() && safe->onSaveFile != nullptr)
+            {
+                safe->lastFolder = fc.getResult().getParentDirectory();
+                safe->onSaveFile (fc.getResult());
+            }
         });
     }
 
     int choice = 0;
+    juce::File lastFolder;
     std::unique_ptr<juce::ParameterAttachment> attachment;
     std::unique_ptr<juce::FileChooser> chooser;
 };

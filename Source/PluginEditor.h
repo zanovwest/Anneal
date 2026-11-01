@@ -40,6 +40,7 @@ public:
 
     anneal::PerceptionScreen screen;
     anneal::PresetBar presets;
+    anneal::ReferenceMenu& getReferenceMenu() noexcept { return refMenu; }   // 5.3.13 tests
 
 private:
     void updateActivity();
@@ -84,7 +85,7 @@ private:
     Status scStatus, refStatus;
     void setStatus (Status& s, const juce::String& text, bool active, int titleY);
 
-    juce::String shownMatchText, shownRefError;
+    juce::String shownMatchText, shownRefError, shownRefNotice;
     std::uint32_t shownRefSerial = ~0u, shownPaintSerial = ~0u;
     bool refLoaded = false;
     int refErrorTicks = 0;
