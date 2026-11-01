@@ -630,7 +630,7 @@ int main (int argc, char* argv[])
             if (ref != nullptr)
                 refName = ref->getStringAttribute ("name");
             learned = ref != nullptr && refName == "sidechain key" && ref->getIntAttribute ("points") == 1024
-                      && saved->getIntAttribute ("stateVersion") == 2;
+                      && saved->getIntAttribute ("stateVersion") >= 2;   // 3 since 5.3.12
 
             layout.inputBuses.getReference (1) = juce::AudioChannelSet::disabled();
             plugin->releaseResources();
@@ -879,6 +879,63 @@ int main (int argc, char* argv[])
         }
         check (ok && before < -6.0 && std::abs (after - before) < 0.5, "Freeze holds through deactivate/activate",
                "3150 Hz probe " + juce::String (before, 1) + " dB frozen, " + juce::String (after, 1) + " dB after the host re-activates");
+    }
+
+    // 9b. 5.3.12: a frozen curve comes through a saved project: the VST3 state of a frozen instance, loaded into a new
+    //     one, holds the same cut (it held the first frame it heard, about 0 dB on a quiet probe in pink noise).
+    {
+        auto inst = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        auto loaded = format.createInstanceFromDescription (desc, 48000.0, 512, error);
+        bool ok = inst != nullptr && loaded != nullptr;
+        double before = 0.0, after = 0.0;
+        bool hasFrozen = false;
+        if (ok)
+        {
+            const double fs = 48000.0;
+            auto withTone = [fs] (float toneAmp, double seconds, unsigned seed)
+            {
+                const int n = (int) (seconds * fs);
+                auto x = testsig::silence (2, n);
+                testsig::Pink pl (seed), pr (seed + 1);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float tone = toneAmp * (float) std::sin (2.0 * testsig::pi * 3150.0 * i / fs);
+                    x[0][(size_t) i] = 0.03f * pl.next() + tone;
+                    x[1][(size_t) i] = 0.03f * pr.next() + tone;
+                }
+                return x;
+            };
+            auto probeGainDb = [&] (juce::AudioPluginInstance& p, unsigned seed)
+            {
+                const auto probe = withTone (0.003f, 1.5, seed);
+                ok = ok && run (p, probe, out, [] { return 512; });
+                const int from = (int) (0.75 * fs), len = (int) (0.5 * fs), lat = p.getLatencySamples();
+                return testsig::toDb (testsig::toneAmplitude (out[0].data() + from + lat, len, 3150.0, fs)
+                                      / testsig::toneAmplitude (probe[0].data() + from, len, 3150.0, fs));
+            };
+            inst->setPlayConfigDetails (2, 2, fs, 512);
+            inst->prepareToPlay (fs, 512);
+            for (auto [name, value] : { std::pair<const char*, float> { "Reveal", 0.0f }, { "Heat", 0.0f }, { "Smooth", 1.0f }, { "Freeze", 0.0f } })
+                findParam (*inst, name)->setValueNotifyingHost (value);
+            ok = ok && run (*inst, withTone (0.05f, 2.0, 1), out, [] { return 512; });   // a ringing 3150 Hz: Smooth cuts it
+            findParam (*inst, "Freeze")->setValueNotifyingHost (1.0f);
+            before = probeGainDb (*inst, 5);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (200);   // the processor's timer collects the held curve
+            juce::MemoryBlock state;
+            inst->getStateInformation (state);
+            const auto saved = annealStateOf (state);
+            hasFrozen = saved != nullptr && saved->getChildByName ("Frozen") != nullptr && saved->getIntAttribute ("stateVersion") == 3;
+            inst->releaseResources();
+
+            loaded->setPlayConfigDetails (2, 2, fs, 512);
+            loaded->setStateInformation (state.getData(), (int) state.getSize());
+            loaded->prepareToPlay (fs, 512);
+            after = probeGainDb (*loaded, 7);
+            loaded->releaseResources();
+        }
+        check (ok && hasFrozen && before < -6.0 && std::abs (after - before) < 0.5, "a frozen curve through a saved project",
+               "3150 Hz probe " + juce::String (before, 1) + " dB frozen, " + juce::String (after, 1) + " dB in a new instance from its state"
+                   + (hasFrozen ? "" : " (no Frozen child)"));
     }
 
     // 10. 5.3.2 Max Cut / Max Boost through VST3: automatable, "No limit" by default, typed values; a ring

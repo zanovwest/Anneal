@@ -191,6 +191,18 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
             note = names.isEmpty() ? errors[0] : note + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (errors.size()) + " not added";
         presets.showMessage (note);
     };
+    // 5.3.12: copy this instance's settings to the clipboard as text; paste them into another one (one undo step).
+    presets.onCopySettings = [this]
+    {
+        juce::SystemClipboard::copyTextToClipboard (processor.getSettingsText());
+        presets.showMessage ("Settings copied");
+    };
+    presets.canPasteSettings = [] { return AnnealAudioProcessor::isSettingsText (juce::SystemClipboard::getTextFromClipboard()); };
+    presets.onPasteSettings = [this]
+    {
+        const bool pasted = processor.pasteSettingsText (juce::SystemClipboard::getTextFromClipboard());
+        presets.showMessage (pasted ? "Settings pasted" : "No Anneal settings to paste");
+    };
     presets.refresh();
     harmonics.refresh();
     updateActivity();

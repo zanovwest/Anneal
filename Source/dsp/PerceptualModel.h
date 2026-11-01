@@ -86,6 +86,20 @@ namespace anneal
         int getAverageFrames() const noexcept { return avgFull * avgChunkLen + avgPartialFrames; }   // in it now
         long long getAveragedFramesTotal() const noexcept { return averagedTotal; }   // tests: every frame it took
 
+        // 5.3.12 The held curve in a project: a frozen project reopens holding the curve it was saved with (it held
+        // whatever played first after loading). getHoldSerial() changes whenever what is held changes; restoreHold
+        // makes the model hold a saved curve (bands at Cam fromZ0 + i * fromDz, resampled on Cam where this rate's
+        // bands lie elsewhere), and the live curve goes on from it. Real-time safe.
+        bool isHolding() const noexcept { return holding; }
+        bool isHoldingAverage() const noexcept { return holdingAverage; }
+        unsigned int getHoldSerial() const noexcept { return holdSerial; }
+        const float* getHeldGainDb() const noexcept { return heldGain.data(); }
+        const float* getHeldProm() const noexcept { return heldProm.data(); }
+        double getCamZ0() const noexcept { return z0; }
+        double getCamDz() const noexcept { return dz; }
+        void restoreHold (const float* gainDb, const float* prominence, double fromZ0, double fromDz,
+                          bool average, float averageSecondsHeld) noexcept;
+
         // binPower: fftSize/2+1 values in amplitude^2 units (a full-scale sine peaks at 1.0).
         // keyPower: the sidechain key's spectrum in the same units, or nullptr (no key).
         void analyse (const float* binPower, const ModelSettings& settings, float framesPerSecond,
@@ -181,6 +195,7 @@ namespace anneal
         std::vector<float> heldGain, heldProm;
         bool holding = false, holdingAverage = false;
         float heldAverageSeconds = 0.0f;
+        unsigned int holdSerial = 0;   // 5.3.12
         std::vector<float> avgChunkMean;   // averageChunks x (numBands gain means, numBands promSlow means)
         std::vector<double> avgPartial;    // the chunk being filled: numBands gain sums, numBands promSlow sums
         int avgFull = 0, avgNext = 0, avgPartialFrames = 0, avgChunkLen = 0;

@@ -160,6 +160,12 @@ value names the side it leans to); the tooltip says which way is which. The valu
 and Focus's. It shows only while Reveal or Smooth
 is on, like the Pivot under Tilt. Nothing on the display: the curve itself gets narrower or wider.
 
+**Copy and paste settings (5.3.12).** Two entries at the end of the preset menu, under a separator, so the header gains
+nothing: *Copy settings* and *Paste settings* (greyed out unless the clipboard holds Anneal settings). The preset bar's
+name gives way for a moment to "Settings copied" / "Settings pasted", as it does for a dropped preset. What travels is
+what shapes the sound (every parameter but Match, Delta, Bypass, Listen and its check; the paint, the reference, a frozen
+curve, the preset name); the listening aids belong to the instance you listen through. The tooltip says so.
+
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
 The display's x-axis is the **ERB-rate (Cam) scale**, not a log-frequency axis:

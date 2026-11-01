@@ -50,7 +50,9 @@ namespace anneal::ids
 
     // 2 (4.0): optional "Reference" and "Paint" children (see AnnealAudioProcessor). Version 1
     // states have neither and load with the reference empty and no paint.
-    inline constexpr int stateVersion = 2;
+    // 3 (5.3.12): an optional "Frozen" child, the curve Freeze holds. Older states have none and keep
+    // what the instance holds, as before.
+    inline constexpr int stateVersion = 3;
 }
 
 namespace anneal

@@ -177,6 +177,41 @@ void SpectralEngine::adoptCurveFrom (const SpectralEngine& other) noexcept
         msModel[c].copyCurveFrom (other.msModel[c]);
 }
 
+void SpectralEngine::restoreHold (const HeldCurves& h) noexcept
+{
+    if (! h.valid)
+        return;
+    model.restoreHold (h.gain[0], h.prom[0], h.z0, h.dz, h.average, h.averageSeconds);
+    if (h.midSide)
+        for (int c = 0; c < 2; ++c)
+            msModel[c].restoreHold (h.gain[1 + c], h.prom[1 + c], h.z0, h.dz, h.average, h.averageSeconds);
+}
+
+void SpectralEngine::publishHold() noexcept
+{
+    // The serials only ever grow, so their sum changes whenever any model's hold does.
+    const unsigned int serial = model.getHoldSerial() + msModel[0].getHoldSerial() + msModel[1].getHoldSerial();
+    if (holdOut == nullptr || ! current.freeze || ! model.isHolding() || serial == holdPublished)
+        return;
+    holdPublished = serial;
+    auto& h = holdOut->beginWrite();
+    constexpr int nb = HeldCurves::numBands;
+    h.valid = true;
+    h.midSide = msActive && msModel[0].isHolding() && msModel[1].isHolding();
+    h.average = model.isHoldingAverage();
+    h.averageSeconds = model.getHeldAverageSeconds();
+    h.z0 = model.getCamZ0();
+    h.dz = model.getCamDz();
+    std::copy (model.getHeldGainDb(), model.getHeldGainDb() + nb, h.gain[0]);
+    std::copy (model.getHeldProm(), model.getHeldProm() + nb, h.prom[0]);
+    for (int c = 0; c < 2; ++c)
+    {
+        std::copy (msModel[c].getHeldGainDb(), msModel[c].getHeldGainDb() + nb, h.gain[1 + c]);
+        std::copy (msModel[c].getHeldProm(), msModel[c].getHeldProm() + nb, h.prom[1 + c]);
+    }
+    holdOut->endWrite();
+}
+
 void SpectralEngine::adoptAverageFrom (const SpectralEngine& other) noexcept
 {
     model.copyAverageFrom (other.model);
@@ -739,6 +774,7 @@ void SpectralEngine::runStage (int s) noexcept
         if (f.stereo)
             std::copy (imageRelDb.begin(), imageRelDb.end(), f.sideRelDb);
         displayOut->endWrite();
+        publishHold();
         return;
     }
 

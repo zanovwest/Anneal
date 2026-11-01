@@ -209,6 +209,35 @@ void PerceptualModel::copyCurveFrom (const PerceptualModel& other) noexcept
     holding = other.holding;
     holdingAverage = other.holdingAverage;
     heldAverageSeconds = other.heldAverageSeconds;
+    ++holdSerial;
+}
+
+void PerceptualModel::restoreHold (const float* g, const float* p, double fromZ0, double fromDz,
+                                   bool average, float seconds) noexcept
+{
+    if (heldGain.size() != (size_t) numBands || g == nullptr || p == nullptr)
+        return;
+    if (std::abs (fromZ0 - z0) < 1.0e-9 && std::abs (fromDz - dz) < 1.0e-12)
+    {
+        std::copy (g, g + numBands, heldGain.begin());
+        std::copy (p, p + numBands, heldProm.begin());
+    }
+    else   // saved at a rate whose bands lie elsewhere (under 40.8 kHz): linear on Cam, flat past the ends
+        for (int b = 0; b < numBands; ++b)
+        {
+            const double x = fromDz > 0.0 ? std::clamp ((z0 + b * dz - fromZ0) / fromDz, 0.0, (double) (numBands - 1)) : 0.0;
+            const int i = std::min ((int) x, numBands - 2);
+            const float t = (float) (x - i);
+            heldGain[(size_t) b] = g[i] + t * (g[i + 1] - g[i]);
+            heldProm[(size_t) b] = p[i] + t * (p[i + 1] - p[i]);
+        }
+    std::copy (heldGain.begin(), heldGain.end(), gain.begin());
+    std::copy (heldProm.begin(), heldProm.end(), promSlow.begin());
+    curvePrimed = true;
+    holding = true;
+    holdingAverage = average;
+    heldAverageSeconds = average ? seconds : 0.0f;
+    ++holdSerial;
 }
 
 void PerceptualModel::clearAverage() noexcept
@@ -579,6 +608,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
             heldAverageSeconds = 0.0f;
         }
         holdingAverage = s.freezeAverage;
+        ++holdSerial;   // 5.3.12: the project saves what is held now
     }
     holding = s.freeze;
     if (curveWasPrimed)   // the live curve follows the music, also while Freeze holds (5.3.11)

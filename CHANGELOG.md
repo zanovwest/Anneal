@@ -4,6 +4,49 @@ Newest first. Each completed, tested update gets a versioned entry (see docs/ROA
 The plugin version shown in the DAW and in the setup's name comes from `project(... VERSION)` in
 CMakeLists.txt.
 
+## 5.3.12 — 2026-11-01 13:07
+
+New
+- **Copy and paste settings**: give another Anneal this one's sound in two clicks, on another track or in another project.
+  - At the end of the preset menu: **Copy settings** puts this instance's settings on the clipboard; in the other Anneal,
+    **Paste settings** takes them. The preset bar says "Settings copied" / "Settings pasted".
+  - Everything that shapes the sound comes along: every control (latency mode, Mid/Side and routing included), the paint,
+    the reference, a frozen curve and the preset name ("Mix bus glue *"). The listening aids stay as they are in the
+    instance you paste into: Match, Delta, Bypass, Listen and its Mono / Sides check.
+  - Pasting is one undo step (Ctrl+Z takes all of it back), and the pasted instance plays exactly what the copied one
+    would after reopening its project.
+  - Paste settings is greyed out while the clipboard holds anything else; plain text, a preset file or half a copy is
+    refused and changes nothing. A copy from an older version gives the controls it didn't have their defaults.
+  - Nothing new on the deck, and the sound doesn't change. The preset bar's tooltip mentions it.
+
+Fixes
+- **A frozen EQ is now saved with the project.** Freeze's curve was never stored, so a project saved with Freeze on
+  reopened holding whatever Anneal heard first after loading: usually nothing, a flat EQ where you had frozen a 9 dB cut.
+  The project now carries the frozen curve (Hold now or the average, Stereo or Mid and Side each), and reopening it holds
+  exactly that, also when it opens in another latency mode, after the host stops and starts, or at another sample rate.
+  Projects saved before 5.3.12 open as they did.
+- The rest of the bug pass found nothing else: the newest build log and benchmark (5.3.11's: nothing over budget), the
+  rendered interface at every size, and Freeze through a host stop, a new buffer size and a latency change.
+
+Tests: 270/270 acceptance checks, 11 new:
+- a frozen project reopens holding its curve: 3150 Hz −9.00 dB held, −9.00 dB reopened, the held curve 0.000000 dB from
+  the saved one (failed before the fix: no curve in the project, 0.00 dB reopened, as projects without it still load);
+- Mid/Side in Precise holding the average: Mid's, Side's and the linked curve come back exactly through the new instance's
+  switch from Low and a host stop;
+- a curve saved at 48 kHz holds at 32 kHz (other bands) within 0.0025 dB;
+- projects without the curve and a broken one load as before; with Freeze off nothing is saved;
+- pasted: 37 of 37 settings, 5 of 5 listening aids kept, the reference, the paint, "Mix bus glue *", Precise;
+- one undo step takes it back (41 of 41 at their defaults, no paint), redo brings it again;
+- the pasted instance plays exactly what one loading the copied project plays (difference 0.000000000000 over 2 s);
+- 4 of 4 non-settings refused, nothing changed; an older copy's missing setting takes its default;
+- a frozen curve (0.000000 dB from the copied one) and the user preset's name come along; the menu is wired.
+Host check: 34/34 on the built VST3 (new: the VST3 state of a frozen instance makes a new instance hold the same cut,
+−8.9 dB / −8.9 dB). Setup: 25/25.
+
+CPU: unchanged within the run-to-run spread (Stereo Low 2.1 %, Normal 2.9 %, Precise 4.7 %; Mid/Side Precise 8.1 %;
+slowest 0.1 % of 64-sample blocks in Precise Mid/Side 24 % of the deadline, 32 samples 42 %). The frozen curve is handed
+to the project only when it changes (24 kB copied once per freeze).
+
 ## 5.3.11 — 2026-11-01 12:45
 
 New

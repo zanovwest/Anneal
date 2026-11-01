@@ -18,7 +18,18 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Empty after item 27 (done in 5.3.11): the next run adds three new ideas here first.
+Items 28-30 were added by the 5.3.12 run (Next up was empty); 28 was done there.
+
+- **29. Save the learned reference.** The Reference menu gets *Save the reference as…*: the reference (learned from
+  the sidechain key, or analysed from a long file) goes to an `.annealref` file, which loads like an audio file (dropped
+  on the display or through *Load a reference file…*) without analysing anything again, so one reference serves many
+  projects. Test: saved and loaded bit for bit with its name, a broken or foreign file refused with the reason, Match
+  identical with the loaded copy, projects unchanged.
+- **30. Sustain** (SHAPE): the body right after an attack, softer or longer (−100 … +100 %, up to 8 dB like Punch,
+  in the bands an attack just hit, fading over ~150 ms), a compact rose row under Punch. 0 (the default, and older
+  projects) bit-identical; factory presets leave it at 0. At zero latency through the time-domain shaper, or resting
+  there with the display saying so. Test: a pluck's tail +/− dB with the attack itself unchanged, steady sounds
+  untouched, Low / Precise / Mid/Side, texts and older projects.
 
 ## Waiting on the user
 
@@ -54,6 +65,13 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
+- 5.3.12 (2026-11-01, every-minute update): **Copy and paste settings** (item 28, added by this run with 29 and 30):
+  *Copy settings* / *Paste settings* at the end of the preset menu give another Anneal this one's sound as text on the
+  clipboard: every parameter but the listening aids (Match, Delta, Bypass, Listen, Listen Check), the paint, the
+  reference, a frozen curve and the preset name. One undo step; an instance pasted into plays exactly what one loading
+  the copied project plays; anything else on the clipboard is refused (Paste greyed out). Fixed: a frozen curve wasn't
+  saved with the project, so a frozen project reopened holding whatever it heard first (0 dB where it cut 9 dB); the
+  state carries it now (stateVersion 3, an optional "Frozen" child).
 - 5.3.11 (2026-11-01, every-minute update): **Freeze the average** (item 27): the FREEZE pill opens a menu (Off /
   Hold now / Hold the average of the last 10 s); the average is of the live curve over the last 10 s of music
   (silence left out, 20 half-second chunks), held exactly, in every mode, Mid/Side and Zero latency, and it comes

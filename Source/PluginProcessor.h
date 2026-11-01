@@ -69,6 +69,15 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // 5.3.12 Copy and paste settings (message thread), to give another Anneal the same sound: every parameter but
+    // the listening aids (Match, Delta, Bypass, Listen, Listen Check), the paint, the reference, a frozen curve and
+    // the preset they came from, as text for the clipboard. Pasting is one undo step (the parameters and the
+    // paint); a parameter the text lacks (copied from an older version) takes its default, as it had there; a
+    // reference comes along when there is one. False, and nothing changes, when the text isn't Anneal settings.
+    juce::String getSettingsText();
+    bool pasteSettingsText (const juce::String& text);
+    static bool isSettingsText (const juce::String& text);
+
     juce::AudioProcessorParameter* getBypassParameter() const override;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -148,6 +157,8 @@ public:
     std::uint32_t getPaintSerial() const noexcept { return paintSerial.load(); }
 
 private:
+    juce::ValueTree makeStateTree();   // what getStateInformation saves
+    void restoreUserPreset (const juce::String& name);   // the user preset settings came from, if its file is there
     void pushParametersToEngine() noexcept;
     void timerCallback() override;
     int requestedLatencyMode() const noexcept;
@@ -276,6 +287,12 @@ private:
     void referenceFailed (const juce::File& file, const juce::String& why);
     anneal::TripleBuffer<anneal::ReferenceCurve> refToAudio, refLearned;
     anneal::TripleBuffer<anneal::PaintCurves> paintToAudio;
+    // 5.3.12: the frozen curve. The engine in use publishes what it holds; heldSaved (refLock) is the newest, for
+    // the project; a project's goes to the audio thread through holdToAudio.
+    void pollHeldCurve();
+    void restoreHeldCurve (const juce::ValueTree& frozenTree);   // after the parameters are set
+    anneal::TripleBuffer<anneal::HeldCurves> holdFromAudio, holdToAudio;
+    anneal::HeldCurves heldSaved;
     juce::CriticalSection refLock;
     anneal::ReferenceCurve refCurve;
     juce::String refName, refError;

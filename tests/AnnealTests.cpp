@@ -2902,12 +2902,12 @@ void testReferenceState()
         worstPaint = std::max ({ worstPaint, std::abs (gotPaint.eq[i] - paint.eq[i]), std::abs (gotPaint.heat[i] - paint.heat[i]) });
     auto v = [] (Rig& r, const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
     auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
-    const bool versioned = xml != nullptr && (int) xml->getIntAttribute ("stateVersion") == 2;
+    const bool versioned = xml != nullptr && (int) xml->getIntAttribute ("stateVersion") == ids::stateVersion;   // 3 since 5.3.12
     check (got.curve.valid && worst == 0.0f && got.name == juce::String::fromUTF8 ("Mix \xe2\x80\x94 final.wav") && worstPaint < 1.0e-4f
                && v (b, ids::refMode) == 2.0f && std::abs (v (b, ids::refAmount) - 80.0f) < 0.05f && versioned,
            "state round trip: reference, paint, mode and amount",
            "reference max diff " + juce::String (worst, 6) + ", paint " + juce::String (worstPaint, 6) + ", state "
-               + juce::String ((int) blob.getSize()) + " bytes" + (versioned ? ", stateVersion 2" : ", WRONG VERSION"));
+               + juce::String ((int) blob.getSize()) + " bytes" + (versioned ? ", stateVersion " + juce::String (ids::stateVersion) : juce::String (", WRONG VERSION")));
 
     // A 3.x project (stateVersion 1, none of the 4.0 data) into an instance with a reference, paint
     // and Match: the reference empty, no paint, Reference Off.
@@ -8279,6 +8279,327 @@ void testFreezeAverage5311()
     }
 }
 
+//==============================================================================
+// 5.3.12 bug pass: a frozen curve wasn't saved with the project, so a frozen project reopened holding whatever it heard
+// first after loading (about 0 dB where the frozen curve cut 9 dB). The project now carries the held curve.
+Channels ringingPink (double fs, double seconds, float ringAmp, unsigned seed)
+{
+    auto x = pinkNoise (fs, seconds, 0.03f, seed);
+    for (int c = 0; c < 2; ++c)
+        for (size_t i = 0; i < x[(size_t) c].size(); ++i)
+            x[(size_t) c][i] += ringAmp * (float) std::sin (2.0 * testsig::pi * 3150.0 * (double) i / fs);
+    return x;
+}
+
+double heldDiff (const anneal::PerceptualModel& a, const anneal::PerceptualModel& b)
+{
+    double d = 0.0;
+    for (int i = 0; i < anneal::PerceptualModel::numBands; ++i)
+        d = std::max ({ d, (double) std::abs (a.getHeldGainDb()[i] - b.getHeldGainDb()[i]),
+                        (double) std::abs (a.getHeldProm()[i] - b.getHeldProm()[i]) });
+    return d;
+}
+
+void testFixes5312()
+{
+    section ("64. 5.3.12 bug fix: a frozen curve in the project");
+    const double fs = 48000.0;
+    auto stateOf = [] (Rig& r) { juce::MemoryBlock b; r.proc->getStateInformation (b); return b; };
+
+    // Stereo, Low: frozen on a ringing 3150 Hz, saved, loaded into a new instance that then hears pink noise without
+    // the ring. It holds the same curve, band for band (before: the first frame it heard, about 0 dB at 3150 Hz).
+    Rig a;
+    a.setNeutral();
+    a.set (ids::smooth, 100.0f);
+    a.prepare (fs, 512);
+    a.run (ringingPink (fs, 2.0, 0.05f, 1), fixedBlocks (512));
+    a.set (ids::freeze, 1.0f);
+    a.run (pinkNoise (fs, 0.2, 0.03f, 4), fixedBlocks (512));
+    const float held = bandGain (a.proc->getEngine(), 3150.0);
+    const auto blob = stateOf (a);
+    const auto xml = juce::AudioProcessor::getXmlFromBinary (blob.getData(), (int) blob.getSize());
+    const bool hasFrozen = xml != nullptr && xml->getChildByName ("Frozen") != nullptr && xml->getIntAttribute ("stateVersion") == 3;
+    {
+        Rig b;
+        b.prepare (fs, 512);
+        b.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        b.run (pinkNoise (fs, 1.0, 0.03f, 9), fixedBlocks (512));
+        const float loaded = bandGain (b.proc->getEngine(), 3150.0);
+        const double diff = heldDiff (a.proc->getEngine().getModel(), b.proc->getEngine().getModel());
+        check (hasFrozen && held <= -6.0f && std::abs (loaded - held) < 0.01f && diff == 0.0,
+               "a frozen project reopens holding its curve (Stereo, Low)",
+               "3150 Hz held " + db (held, 2) + ", in the reopened project " + db (loaded, 2) + "; held curve "
+                   + juce::String (diff, 6) + " dB from the saved one" + (hasFrozen ? ", Frozen child, stateVersion 3" : ", NO Frozen child"));
+    }
+
+    // Mid/Side, Precise, holding the average: Mid's and Side's own held curves come back exactly, through the switch
+    // from the new instance's Low to Precise and a host stop; the display still says "average of N s".
+    {
+        Rig m;
+        m.setNeutral();
+        m.set (ids::smooth, 100.0f);
+        m.set (ids::stereoMode, 1.0f);
+        m.set (ids::latency, 2.0f);
+        m.set (ids::freezeMode, 1.0f);
+        m.prepare (fs, 512);
+        m.proc->applyLatencyModeIfChanged();
+        m.run (ringingPink (fs, 3.0, 0.05f, 2), fixedBlocks (512));
+        m.set (ids::freeze, 1.0f);
+        m.run (pinkNoise (fs, 0.2, 0.03f, 5), fixedBlocks (512));
+        const auto mblob = stateOf (m);
+        Rig b;
+        b.prepare (fs, 256);
+        b.proc->setStateInformation (mblob.getData(), (int) mblob.getSize());
+        b.run (pinkNoise (fs, 0.5, 0.03f, 11), fixedBlocks (256));
+        b.proc->reset();
+        b.run (pinkNoise (fs, 0.5, 0.03f, 12), fixedBlocks (256));
+        auto& me = m.proc->getEngine();
+        auto& be = b.proc->getEngine();
+        const double dMid = heldDiff (me.getMidSideModel (0), be.getMidSideModel (0));
+        const double dSide = heldDiff (me.getMidSideModel (1), be.getMidSideModel (1));
+        const double dLinked = heldDiff (me.getModel(), be.getModel());
+        const float midCut = me.getMidSideModel (0).getHeldGainDb()[me.getMidSideModel (0).bandForHz (3150.0)];
+        const float secs = be.getMidSideModel (0).getHeldAverageSeconds();
+        check (b.proc->getLatencyMode() == anneal::SpectralEngine::precise && be.getMidSideModel (0).isHoldingAverage()
+                   && midCut <= -3.0f && dMid == 0.0 && dSide == 0.0 && dLinked == 0.0 && secs > 2.5f,
+               "Mid/Side, Precise, the average: each held curve comes back exactly",
+               "Mid holds " + db (midCut, 2) + " at 3150 Hz; Mid " + juce::String (dMid, 6) + ", Side " + juce::String (dSide, 6)
+                   + ", linked " + juce::String (dLinked, 6) + " dB from the saved curves; average of " + juce::String (secs, 1) + " s, latency mode "
+                   + juce::String (b.proc->getLatencyMode()));
+    }
+
+    // Saved at a rate whose bands lie elsewhere (32 kHz: they end at 15.5 kHz, not 20 kHz): resampled on Cam.
+    {
+        anneal::PerceptualModel at48, at32;
+        at48.prepare (48000.0, 1024);
+        at32.prepare (32000.0, 1024);
+        const double zRing = anneal::erb::hzToCam (3150.0);
+        auto shape = [zRing] (double z) { return (float) (-9.0 * std::exp (-0.5 * std::pow ((z - zRing) / 0.8, 2.0))); };
+        std::vector<float> g (anneal::PerceptualModel::numBands), p (anneal::PerceptualModel::numBands);
+        for (int i = 0; i < anneal::PerceptualModel::numBands; ++i)
+        {
+            g[(size_t) i] = shape (at48.getCamZ0() + i * at48.getCamDz());
+            p[(size_t) i] = 0.5f * g[(size_t) i];
+        }
+        at32.restoreHold (g.data(), p.data(), at48.getCamZ0(), at48.getCamDz(), false, 0.0f);
+        double worst = 0.0;
+        for (int i = 0; i < anneal::PerceptualModel::numBands; ++i)
+            worst = std::max ({ worst, (double) std::abs (at32.getHeldGainDb()[i] - shape (at32.getCamZ0() + i * at32.getCamDz())),
+                                (double) std::abs (at32.getHeldProm()[i] - 0.5f * shape (at32.getCamZ0() + i * at32.getCamDz())) });
+        check (at32.isHolding() && at48.getCamDz() != at32.getCamDz() && worst < 0.01,
+               "a curve saved at 48 kHz holds at 32 kHz (resampled on Cam)",
+               "largest difference " + juce::String (worst, 4) + " dB over " + juce::String (anneal::PerceptualModel::numBands) + " bands");
+    }
+
+    // Projects from before 5.3.12 (no Frozen child) load as they did: the new instance holds the first frame it hears.
+    // A broken Frozen child does the same; with Freeze off there is none.
+    {
+        auto strip = [] (const juce::MemoryBlock& src, bool breakIt)
+        {
+            auto x = juce::AudioProcessor::getXmlFromBinary (src.getData(), (int) src.getSize());
+            if (auto* f = x->getChildByName ("Frozen"))
+            {
+                if (breakIt)
+                    f->setAttribute ("curves", "AAAA");
+                else
+                    x->removeChildElement (f, true);
+            }
+            juce::MemoryBlock out;
+            juce::AudioProcessor::copyXmlToBinary (*x, out);
+            return out;
+        };
+        float old[2] {};
+        for (int k = 0; k < 2; ++k)
+        {
+            const auto s = strip (blob, k == 1);
+            Rig b;
+            b.prepare (fs, 512);
+            b.proc->setStateInformation (s.getData(), (int) s.getSize());
+            b.run (pinkNoise (fs, 1.0, 0.03f, 9), fixedBlocks (512));
+            old[k] = bandGain (b.proc->getEngine(), 3150.0);
+        }
+        a.set (ids::freeze, 0.0f);
+        a.run (pinkNoise (fs, 0.1, 0.03f, 6), fixedBlocks (512));
+        const auto off = stateOf (a);
+        const auto offXml = juce::AudioProcessor::getXmlFromBinary (off.getData(), (int) off.getSize());
+        const bool none = offXml != nullptr && offXml->getChildByName ("Frozen") == nullptr;
+        check (old[0] > held + 4.0f && old[1] > held + 4.0f && none,
+               "older projects and a broken curve load as before; nothing saved with Freeze off",
+               "3150 Hz without the curve " + db (old[0], 2) + ", broken " + db (old[1], 2) + " (held " + db (held, 2) + "); Freeze off: "
+                   + (none ? "no Frozen child" : "A FROZEN CHILD"));
+    }
+}
+
+//==============================================================================
+// 5.3.12 Copy and paste settings (roadmap item 28): every setting but the listening aids, the paint, the reference, a
+// frozen curve and the preset they came from, as text; pasting is one undo step.
+void testCopyPaste5312()
+{
+    section ("65. 5.3.12 Copy and paste settings");
+    const double fs = 48000.0;
+    auto v = [] (Rig& r, const char* id) { return r.proc->apvts.getRawParameterValue (id)->load(); };
+    const std::vector<const char*> aids { ids::match, ids::delta, ids::bypass, ids::listen, ids::listenCheck };
+    auto isAid = [&aids] (const juce::String& id) { return std::find_if (aids.begin(), aids.end(), [&id] (const char* a) { return id == a; }) != aids.end(); };
+
+    anneal::ReferenceCurve curve;
+    curve.valid = true;
+    for (int i = 0; i < anneal::ReferenceCurve::numPoints; ++i)
+        curve.db[i] = -12.0f + 0.02f * (float) i;
+    auto paint = paintedOut (true, 300.0, 600.0);
+    paint.width[20] = 0.25f;
+
+    Rig a;
+    a.proc->setCurrentProgram (2);
+    for (auto [id, value] : { std::pair<const char*, float> { ids::reveal, 63.0f }, { ids::heat, 72.0f }, { ids::tilt, 1.5f },
+                              { ids::punch, 35.0f }, { ids::width, 140.0f }, { ids::monoBass, 110.0f }, { ids::stereoMode, 1.0f },
+                              { ids::flavour, 2.0f }, { ids::latency, 2.0f }, { ids::heatLimit, -12.0f }, { ids::detail, 40.0f },
+                              { ids::refMode, 2.0f }, { ids::refAmount, 80.0f }, { ids::maxCut, 6.0f }, { ids::freezeMode, 1.0f },
+                              { ids::match, 1.0f }, { ids::delta, 1.0f }, { ids::listen, 2.0f }, { ids::listenCheck, 1.0f } })
+        a.set (id, value);
+    a.proc->setReference (curve, "Final mix.wav");
+    a.proc->setPaint (paint);
+    const auto aName = a.proc->getPresetDisplayName();
+    const auto text = a.proc->getSettingsText();
+
+    // Pasted into a new instance: every setting but the listening aids, the paint, the reference, the preset's name and
+    // the latency mode; one undo step takes it all back, redo brings it again.
+    Rig b;
+    b.prepare (fs, 512);
+    const bool pasted = AnnealAudioProcessor::isSettingsText (text) && b.proc->pasteSettingsText (text);
+    int same = 0, total = 0, aidsKept = 0;
+    juce::String firstDiff;
+    for (auto* prm : a.proc->getParameters())
+        if (auto* ra = dynamic_cast<juce::RangedAudioParameter*> (prm))
+        {
+            const auto id = ra->getParameterID();
+            const float want = isAid (id) ? b.proc->apvts.getParameter (id)->getDefaultValue() : ra->getValue();
+            const bool ok = std::abs (b.proc->apvts.getParameter (id)->getValue() - want) < 1.0e-6f;
+            if (isAid (id))
+                aidsKept += ok ? 1 : 0;
+            else
+            {
+                ++total;
+                same += ok ? 1 : 0;
+                if (! ok && firstDiff.isEmpty())
+                    firstDiff = id;
+            }
+        }
+    const auto ref = b.proc->getReference();
+    const bool refOk = ref.curve.valid && ref.name == "Final mix.wav" && std::equal (ref.curve.db, ref.curve.db + anneal::ReferenceCurve::numPoints, curve.db);
+    const bool paintOk = b.proc->getPaint() == a.proc->getPaint();
+    const auto bName = b.proc->getPresetDisplayName();
+    check (pasted && same == total && aidsKept == (int) aids.size() && refOk && paintOk && bName == aName
+               && b.proc->getLatencyMode() == anneal::SpectralEngine::precise,
+           "pasted: every setting but the listening aids, the paint, the reference, the preset's name",
+           juce::String (same) + " of " + juce::String (total) + " settings" + (firstDiff.isEmpty() ? "" : " (first off: " + firstDiff + ")")
+               + ", " + juce::String (aidsKept) + " of " + juce::String ((int) aids.size()) + " listening aids kept; reference "
+               + (refOk ? "ok" : "WRONG") + ", paint " + (paintOk ? "ok" : "WRONG") + "; shows \"" + bName + "\" (copied from \"" + aName
+               + "\"); latency mode " + juce::String (b.proc->getLatencyMode()));
+
+    b.proc->undo();
+    int atDefault = 0, n = 0;
+    for (auto* prm : b.proc->getParameters())
+        if (auto* rb = dynamic_cast<juce::RangedAudioParameter*> (prm); rb != nullptr && rb->getParameterID() != ids::latency)
+        {
+            ++n;
+            atDefault += std::abs (rb->getValue() - rb->getDefaultValue()) < 1.0e-6f ? 1 : 0;
+        }
+    const bool undonePaint = b.proc->getPaint().isDefault();
+    const bool oneStep = ! b.proc->canUndo();
+    b.proc->redo();
+    const bool redone = std::abs (v (b, ids::reveal) - 63.0f) < 0.01f && b.proc->getPaint() == a.proc->getPaint();
+    check (atDefault == n && undonePaint && oneStep && redone, "one undo step takes the paste back (parameters and paint); redo",
+           juce::String (atDefault) + " of " + juce::String (n) + " at their defaults after undo, paint " + (undonePaint ? "none" : "STILL PAINTED")
+               + (oneStep ? ", one step" : ", MORE STEPS") + "; redo " + (redone ? "ok" : "WRONG"));
+
+    // The same sound: an instance pasted into plays exactly what one loading the copied instance's project plays
+    // (with the listening aids as the pasted one has them).
+    {
+        Rig c, d;
+        juce::MemoryBlock blob;
+        a.proc->getStateInformation (blob);
+        c.prepare (fs, 512);
+        d.prepare (fs, 512);
+        c.proc->pasteSettingsText (text);
+        d.proc->setStateInformation (blob.getData(), (int) blob.getSize());
+        for (auto id : aids)
+            d.set (id, d.proc->apvts.getParameter (id)->convertFrom0to1 (d.proc->apvts.getParameter (id)->getDefaultValue()));
+        c.proc->applyLatencyModeIfChanged();
+        d.proc->applyLatencyModeIfChanged();
+        const auto in = ringingPink (fs, 2.0, 0.05f, 3);
+        const auto oc = c.run (in, fixedBlocks (512));
+        const auto od = d.run (in, fixedBlocks (512));
+        const double diff = maxDiff (oc, od);
+        check (diff == 0.0 && c.proc->getLatencySamples() == d.proc->getLatencySamples(), "the pasted instance sounds exactly like the copied project",
+               "max difference " + juce::String (diff, 12) + " over 2 s; latency " + juce::String (c.proc->getLatencySamples()) + " / "
+                   + juce::String (d.proc->getLatencySamples()));
+    }
+
+    // Anything else changes nothing: plain text, a preset file's text, an empty clipboard, a broken copy.
+    {
+        Rig e;
+        e.set (ids::heat, 44.0f);
+        const auto before = e.proc->getSettingsText();
+        int refused = 0;
+        for (const auto& t : { juce::String ("hello"), juce::String ("<AnnealPreset version=\"1\"><PARAM id=\"heat\" value=\"10\"/></AnnealPreset>"),
+                               juce::String(), text.substring (0, text.length() / 2) })
+            refused += (! AnnealAudioProcessor::isSettingsText (t) && ! e.proc->pasteSettingsText (t)) ? 1 : 0;
+        check (refused == 4 && e.proc->getSettingsText() == before && ! e.proc->canUndo() && std::abs (v (e, ids::heat) - 44.0f) < 0.01f,
+               "anything but Anneal settings is refused and changes nothing", juce::String (refused) + " of 4 refused");
+    }
+
+    // A copy from an older version lacks the newer settings: they take their defaults, as they were there.
+    {
+        auto x = juce::parseXML (text);
+        if (auto* f = x->getChildByAttribute ("id", ids::freezeMode))
+            x->removeChildElement (f, true);
+        x->setAttribute ("settings", x->getIntAttribute ("settings") - 1);   // as the older version counted them
+        Rig f;
+        f.set (ids::freezeMode, 1.0f);
+        const bool ok = f.proc->pasteSettingsText (x->toString());
+        check (ok && v (f, ids::freezeMode) == 0.0f && std::abs (v (f, ids::reveal) - 63.0f) < 0.01f,
+               "a copy without a newer setting gives it its default", "Freeze Mode " + juce::String (v (f, ids::freezeMode), 0) + " (Now = 0)");
+    }
+
+    // A frozen curve comes along, and so does the user preset the settings were set from (when its file is there).
+    {
+        const auto folder = juce::File::createTempFile ("anneal-paste");
+        folder.createDirectory();
+        Rig g, h;
+        g.proc->setUserPresetFolder (folder, false);
+        h.proc->setUserPresetFolder (folder, false);
+        g.setNeutral();
+        g.set (ids::smooth, 100.0f);
+        g.proc->saveUserPreset ("Bus glue");
+        g.prepare (fs, 512);
+        g.run (ringingPink (fs, 2.0, 0.05f, 1), fixedBlocks (512));
+        g.set (ids::freeze, 1.0f);
+        g.run (pinkNoise (fs, 0.2, 0.03f, 4), fixedBlocks (512));
+        h.prepare (fs, 512);
+        h.run (pinkNoise (fs, 0.5, 0.03f, 7), fixedBlocks (512));
+        const bool ok = h.proc->pasteSettingsText (g.proc->getSettingsText());
+        h.run (pinkNoise (fs, 0.5, 0.03f, 8), fixedBlocks (512));
+        const double diff = heldDiff (g.proc->getEngine().getModel(), h.proc->getEngine().getModel());
+        const float cut = bandGain (h.proc->getEngine(), 3150.0);
+        check (ok && diff == 0.0 && cut <= -6.0f && h.proc->getPresetDisplayName() == g.proc->getPresetDisplayName(),
+               "a frozen curve and the user preset's name come along",
+               "held curve " + juce::String (diff, 6) + " dB from the copied one (3150 Hz " + db (cut, 2) + "); shows \""
+                   + h.proc->getPresetDisplayName() + "\"");
+        folder.deleteRecursively();
+    }
+
+    // The preset bar's menu has Copy settings and Paste settings (not run here: they use the system clipboard).
+    {
+        Rig r;
+        std::unique_ptr<juce::AudioProcessorEditor> ed (r.proc->createEditor());
+        auto* editor = dynamic_cast<AnnealEditor*> (ed.get());
+        const bool wired = editor != nullptr && editor->getContent().presets.onCopySettings != nullptr
+                           && editor->getContent().presets.onPasteSettings != nullptr && editor->getContent().presets.canPasteSettings != nullptr
+                           && editor->getContent().presets.getTooltip().contains ("Copy settings");
+        check (wired, "the preset menu offers Copy settings and Paste settings", wired ? "wired" : "NOT WIRED");
+    }
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // APVTS uses timers / message-thread objects
@@ -8291,13 +8612,13 @@ int main (int argc, char** argv)
     }
     if (argc > 1 && juce::String (argv[1]) == "fixes")   // just the newest fixes' checks
     {
-        testFixes5310();
+        testFixes5312();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
     if (argc > 1 && juce::String (argv[1]) == "new")   // just the newest item's checks
     {
-        testFreezeAverage5311();
+        testCopyPaste5312();
         std::printf ("\n%d checks, %d failed\n", checks, failures);
         return failures;
     }
@@ -8366,6 +8687,8 @@ int main (int argc, char** argv)
     testFixes5310();
     testNoteNames5310();
     testFreezeAverage5311();
+    testFixes5312();
+    testCopyPaste5312();
     benchmark();
 
     std::printf ("\n%d checks, %d failed\n", checks, failures);

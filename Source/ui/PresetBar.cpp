@@ -8,7 +8,9 @@ using namespace theme;
 PresetBar::PresetBar()
 {
     setTooltip ("Factory presets (also in your DAW's preset menu) and your own. * = changed since loading it. "
-                "Drop .annealpreset files here to add them to your presets");
+                "Drop .annealpreset files here to add them to your presets. Copy settings and Paste settings (in the "
+                "menu) give another Anneal this one's sound: every control but Match, Delta, Bypass and Listen, the "
+                "paint, the reference and a frozen curve");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
@@ -200,6 +202,13 @@ void PresetBar::showMenu()
         menu.addItem (folderId, "Open the presets folder");
     if (onCopyFolderPath != nullptr)
         menu.addItem (copyPathId, "Copy the presets folder path");
+    constexpr int copySettingsId = 100005, pasteSettingsId = 100006;   // 5.3.12
+    if (onCopySettings != nullptr || onPasteSettings != nullptr)
+        menu.addSeparator();
+    if (onCopySettings != nullptr)
+        menu.addItem (copySettingsId, "Copy settings");
+    if (onPasteSettings != nullptr)
+        menu.addItem (pasteSettingsId, "Paste settings", canPasteSettings == nullptr || canPasteSettings());
 
     juce::Component::SafePointer<PresetBar> safe (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this)
@@ -213,6 +222,8 @@ void PresetBar::showMenu()
                             else if (result == deleteId) { if (safe->onDelete) safe->onDelete (chosen); }
                             else if (result == folderId) { if (safe->onOpenFolder) safe->onOpenFolder(); }
                             else if (result == copyPathId) { if (safe->onCopyFolderPath) safe->onCopyFolderPath(); }
+                            else if (result == copySettingsId) { if (safe->onCopySettings) safe->onCopySettings(); }
+                            else if (result == pasteSettingsId) { if (safe->onPasteSettings) safe->onPasteSettings(); }
                             else if (safe->onChoose)     safe->onChoose (result - 1);
                             if (safe != nullptr)
                                 safe->refresh();

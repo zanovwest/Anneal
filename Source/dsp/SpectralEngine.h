@@ -53,6 +53,17 @@ namespace anneal
         float maxBoostDb   = noLimitDb;
     };
 
+    // 5.3.12 A frozen auto-EQ curve as a project saves it: the linked model's held curve and prominence memory
+    // and, when Mid/Side was holding, Mid's and Side's, in bands at Cam z0 + i * dz (the engine's rate).
+    struct HeldCurves
+    {
+        static constexpr int numBands = PerceptualModel::numBands;
+        bool valid = false, midSide = false, average = false;
+        float averageSeconds = 0.0f;
+        double z0 = 0.0, dz = 0.0;
+        float gain[3][numBands] {}, prom[3][numBands] {};   // [0] linked, [1] Mid, [2] Side
+    };
+
     // STFT host for the perceptual model and the harmonic synth.
     // Output is the wet signal, delayed by exactly getLatencySamples().
     class SpectralEngine
@@ -78,6 +89,11 @@ namespace anneal
         void adoptCurveFrom (const SpectralEngine& other) noexcept;
         // 5.3.11: takes over another engine's 10 s average (same sample rate), when the latency mode changes.
         void adoptAverageFrom (const SpectralEngine& other) noexcept;
+        // 5.3.12: while Freeze holds, what is held goes to `out` at the end of every frame where it changed (a
+        // hold taken, adopted or restored), for the project. restoreHold makes the models hold a saved curve
+        // (audio thread, or while processing is suspended).
+        void setHoldTarget (TripleBuffer<HeldCurves>* out) noexcept { holdOut = out; }
+        void restoreHold (const HeldCurves& held) noexcept;
 
         // Called once per host block from the audio thread; values are smoothed per frame.
         void setParameters (const EngineParams& p) noexcept { target = p; }
@@ -205,6 +221,9 @@ namespace anneal
         std::vector<double> limitMain, limitHarm;
         std::vector<float> limitGain;
         TripleBuffer<ReferenceCurve>* learnOut = nullptr;
+        TripleBuffer<HeldCurves>* holdOut = nullptr;   // 5.3.12
+        unsigned int holdPublished = 0;
+        void publishHold() noexcept;
         ReferenceCurve learnScratch;
         bool learnFresh = true, learnHeld = false;
         int learnTick = 0;

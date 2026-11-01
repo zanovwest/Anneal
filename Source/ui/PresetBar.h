@@ -26,6 +26,9 @@ namespace anneal
         std::function<void()> onOpenFolder;
         std::function<void()> onCopyFolderPath;                    // 5.2.4
         std::function<void (const juce::StringArray&)> onFilesDropped;
+        // 5.3.12: the menu's Copy settings / Paste settings (paste is greyed out unless canPasteSettings()).
+        std::function<void()> onCopySettings, onPasteSettings;
+        std::function<bool()> canPasteSettings;
 
         void refresh();   // call from a timer: repaints only when the shown text changes
         // 5.2.4: a short note in place of the name for a few seconds (what a drop did).
