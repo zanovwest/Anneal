@@ -38,7 +38,7 @@ in ─┬─ STFT ─► perceptual model (+ Match toward the reference) ─► 
 
 | Group (left → right = signal flow) | Primary | Secondary |
 |---|---|---|
-| AUTO EQ | Reveal, Smooth | Detail (5.3.6: Broad ↔ Fine, one slim row under the two rings, shown while either is on), Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row; 5.3.11 its menu: Hold now / Hold the average of 10 s), Response, Guard (transients), Tilt and its Pivot (5.3.3, shown while Tilt isn't 0) |
+| AUTO EQ | Reveal, Smooth | Detail (5.3.6: Broad ↔ Fine, one slim row under the two rings, shown while either is on), Limits (5.3.2: Max boost / Max cut, a pill on the title row), Freeze (3.0, title row), Response, Guard (transients), Tilt and its Pivot (5.3.3, shown while Tilt isn't 0) |
 | HEAT | Heat | Flavour (0.2.6: Clean / Tape / Tube / Transformer / Exciter, on the title row), Color (even↔odd), Focus (body↔air) |
 | SIDECHAIN (3.0) | Mode (Off / Make room / Unmask) | Key range (5.3.4: a pill beside the mode), Amount (5.3: a compact row); both shown while a mode is on |
 | REFERENCE (4.0; 5.3: under SIDECHAIN, same column) | Reference menu (Off / Learn key / Match, plus Load a reference file… and Clear) | Amount (5.3: a compact row, shown while on) |
@@ -160,12 +160,6 @@ value names the side it leans to); the tooltip says which way is which. The valu
 and Focus's. It shows only while Reveal or Smooth
 is on, like the Pivot under Tilt. Nothing on the display: the curve itself gets narrower or wider.
 
-**Copy and paste settings (5.3.12).** Two entries at the end of the preset menu, under a separator, so the header gains
-nothing: *Copy settings* and *Paste settings* (greyed out unless the clipboard holds Anneal settings). The preset bar's
-name gives way for a moment to "Settings copied" / "Settings pasted", as it does for a dropped preset. What travels is
-what shapes the sound (every parameter but Match, Delta, Bypass, Listen and its check; the paint, the reference, a frozen
-curve, the preset name); the listening aids belong to the instance you listen through. The tooltip says so.
-
 ## Distinctive functional feature: the ERB-scale "perception screen"
 
 The display's x-axis is the **ERB-rate (Cam) scale**, not a log-frequency axis:
@@ -217,9 +211,7 @@ fit its 94 px).
 **Sidechain, Freeze, Ceiling (3.0).** The key's spectrum is a thin violet line on the EQ lane, drawn
 only while a key is arriving, with a KEY legend under AUTO EQ. Freeze is a pill on the AUTO EQ title
 row, tinted straw when on, and the display then shows an "AUTO EQ FROZEN" tag so a held curve is never
-mistaken for a live one. 5.3.11: a click on the pill opens a small menu (Off / Hold now / Hold the average of the
-last 10 s), like HOLD's; holding the average it reads "FREEZE · AVG" (100 px wide for it) and the tag adds a faint
-"average of 10 s". The deck gains no control. The Ceiling's reduction is a short bronze bar and number under the meter's
+mistaken for a live one. The Ceiling's reduction is a short bronze bar and number under the meter's
 peak, holding its deepest value for 1.5 s so a brief catch is readable.
 
 **Zero latency (5.1).** The Latency menu gets a first entry, *Zero 0.0 ms*, with what rests in

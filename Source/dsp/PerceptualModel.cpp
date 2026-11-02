@@ -28,15 +28,11 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
     // keepCurve: a frozen curve comes through preparing again (4.0.2), as through reset(), when the
     // bands stay where they are (every rate from 40.8 kHz up). It is kept in bands, not bins.
     const double oldZ0 = z0, oldDz = dz;
-    std::vector<float> keptGain, keptProm, keptHeldGain, keptHeldProm;
-    const bool keptHolding = holding, keptHoldingAverage = holdingAverage;
-    const float keptHeldSeconds = heldAverageSeconds;
+    std::vector<float> keptGain, keptProm;
     if (keepCurve && curvePrimed)
     {
         keptGain = gain;
         keptProm = promSlow;
-        keptHeldGain = heldGain;
-        keptHeldProm = heldProm;
     }
 
     sampleRate = newSampleRate;
@@ -128,15 +124,6 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
         alloc (*v, (size_t) numBins);
     prefix.assign ((size_t) numBands + 1, 0.0);
     transientAge.assign ((size_t) numBands, idleAge);
-    heldGain.resize ((size_t) numBands);
-    heldProm.resize ((size_t) numBands);
-    // 5.3.11: the average comes through preparing again where the bands stay (every rate from 40.8 kHz up).
-    if (avgChunkMean.size() != (size_t) (averageChunks * 2 * numBands) || z0 != oldZ0 || dz != oldDz)
-    {
-        avgChunkMean.assign ((size_t) (averageChunks * 2 * numBands), 0.0f);
-        avgPartial.assign ((size_t) (2 * numBands), 0.0);
-        clearAverage();
-    }
 
     for (int b = 0; b < numBands; ++b)
     {
@@ -161,14 +148,6 @@ void PerceptualModel::prepare (double newSampleRate, int newFftSize, bool keepCu
         gain = keptGain;
         promSlow = keptProm;
         curvePrimed = true;   // the next frame turns it into this rate's per-bin gains
-        if (keptHolding && keptHeldGain.size() == (size_t) numBands)
-        {
-            heldGain = keptHeldGain;
-            heldProm = keptHeldProm;
-            holding = true;
-            holdingAverage = keptHoldingAverage;
-            heldAverageSeconds = keptHeldSeconds;
-        }
     }
 }
 
@@ -183,11 +162,9 @@ void PerceptualModel::reset (bool keepCurve)
     matchActive = false;
     std::fill (transientAge.begin(), transientAge.end(), idleAge);
     if (keepCurve && curvePrimed)
-        return;   // gain, promSlow, the held curve and the per-bin curve they produced stay as they are
+        return;   // gain, promSlow and the per-bin curve they produced stay as they are
 
     curvePrimed = false;
-    holding = holdingAverage = false;
-    heldAverageSeconds = 0.0f;
     for (auto* v : { &gain, &promSlow, &gainOut, &needOut, &autoOut })
         std::fill (v->begin(), v->end(), 0.0f);
     std::fill (binGainDb.begin(), binGainDb.end(), 0.0f);
@@ -204,107 +181,6 @@ void PerceptualModel::copyCurveFrom (const PerceptualModel& other) noexcept
     std::copy (other.gain.begin(), other.gain.end(), gain.begin());
     std::copy (other.promSlow.begin(), other.promSlow.end(), promSlow.begin());
     curvePrimed = true;
-    std::copy (other.heldGain.begin(), other.heldGain.end(), heldGain.begin());
-    std::copy (other.heldProm.begin(), other.heldProm.end(), heldProm.begin());
-    holding = other.holding;
-    holdingAverage = other.holdingAverage;
-    heldAverageSeconds = other.heldAverageSeconds;
-    ++holdSerial;
-}
-
-void PerceptualModel::restoreHold (const float* g, const float* p, double fromZ0, double fromDz,
-                                   bool average, float seconds) noexcept
-{
-    if (heldGain.size() != (size_t) numBands || g == nullptr || p == nullptr)
-        return;
-    if (std::abs (fromZ0 - z0) < 1.0e-9 && std::abs (fromDz - dz) < 1.0e-12)
-    {
-        std::copy (g, g + numBands, heldGain.begin());
-        std::copy (p, p + numBands, heldProm.begin());
-    }
-    else   // saved at a rate whose bands lie elsewhere (under 40.8 kHz): linear on Cam, flat past the ends
-        for (int b = 0; b < numBands; ++b)
-        {
-            const double x = fromDz > 0.0 ? std::clamp ((z0 + b * dz - fromZ0) / fromDz, 0.0, (double) (numBands - 1)) : 0.0;
-            const int i = std::min ((int) x, numBands - 2);
-            const float t = (float) (x - i);
-            heldGain[(size_t) b] = g[i] + t * (g[i + 1] - g[i]);
-            heldProm[(size_t) b] = p[i] + t * (p[i + 1] - p[i]);
-        }
-    std::copy (heldGain.begin(), heldGain.end(), gain.begin());
-    std::copy (heldProm.begin(), heldProm.end(), promSlow.begin());
-    curvePrimed = true;
-    holding = true;
-    holdingAverage = average;
-    heldAverageSeconds = average ? seconds : 0.0f;
-    ++holdSerial;
-}
-
-void PerceptualModel::clearAverage() noexcept
-{
-    avgFull = avgNext = avgPartialFrames = 0;
-    std::fill (avgPartial.begin(), avgPartial.end(), 0.0);
-}
-
-void PerceptualModel::copyAverageFrom (const PerceptualModel& other) noexcept
-{
-    if (other.avgChunkMean.size() != avgChunkMean.size() || other.dz != dz)
-        return;
-    std::copy (other.avgChunkMean.begin(), other.avgChunkMean.end(), avgChunkMean.begin());
-    std::copy (other.avgPartial.begin(), other.avgPartial.end(), avgPartial.begin());
-    avgFull = other.avgFull;
-    avgNext = other.avgNext;
-    avgPartialFrames = other.avgPartialFrames;
-    avgChunkLen = other.avgChunkLen;
-}
-
-void PerceptualModel::accumulateAverage (float framesPerSecond) noexcept
-{
-    const int len = std::max (1, (int) std::lround (averageChunkSeconds * framesPerSecond));
-    if (len != avgChunkLen)   // another frame rate: chunks of another length
-    {
-        clearAverage();
-        avgChunkLen = len;
-    }
-    double* sumGain = avgPartial.data();
-    double* sumProm = sumGain + numBands;
-    for (int b = 0; b < numBands; ++b)
-    {
-        sumGain[b] += gain[(size_t) b];
-        sumProm[b] += promSlow[(size_t) b];
-    }
-    ++averagedTotal;
-    if (++avgPartialFrames < avgChunkLen)
-        return;
-    float* chunk = avgChunkMean.data() + (size_t) avgNext * 2 * numBands;
-    for (int i = 0; i < 2 * numBands; ++i)
-        chunk[i] = (float) (avgPartial[(size_t) i] / avgChunkLen);
-    std::fill (avgPartial.begin(), avgPartial.end(), 0.0);
-    avgPartialFrames = 0;
-    avgNext = (avgNext + 1) % averageChunks;
-    avgFull = std::min (avgFull + 1, averageChunks);
-}
-
-bool PerceptualModel::takeAverage (float framesPerSecond) noexcept
-{
-    const int frames = getAverageFrames();
-    if (frames <= 0)
-        return false;
-    // Every frame in it weighs the same: a full chunk its length, the one being filled its frames so far.
-    for (int b = 0; b < numBands; ++b)
-    {
-        double g = avgPartial[(size_t) b], p = avgPartial[(size_t) (numBands + b)];
-        for (int c = 0; c < avgFull; ++c)
-        {
-            const float* chunk = avgChunkMean.data() + (size_t) c * 2 * numBands;
-            g += (double) chunk[b] * avgChunkLen;
-            p += (double) chunk[numBands + b] * avgChunkLen;
-        }
-        heldGain[(size_t) b] = (float) (g / frames);
-        heldProm[(size_t) b] = (float) (p / frames);
-    }
-    heldAverageSeconds = (float) (frames / std::max (1.0f, framesPerSecond));
-    return true;
 }
 
 int PerceptualModel::bandForHz (double hz) const noexcept
@@ -515,7 +391,6 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     const double zKeyHi = keyHiEdge ? std::max (keyLoEdge ? zKeyLo + 0.5 : z0, erb::hzToCam (s.scKeyHiHz)) : z0;
 
     sidePeakDb = 0.0f;
-    bool heard = false;   // 5.3.11: anything audible in this frame (the average leaves silence out)
     for (int b = 0; b < numBands; ++b)
     {
         const float d = std::clamp (prom[(size_t) b] - flatNormDb[(size_t) b], -40.0f, 40.0f);
@@ -523,7 +398,6 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float de = detailed ? std::clamp (detailProm[(size_t) b] - detailFlatDb[(size_t) b], -40.0f, 40.0f) : d;
 
         const float audible = clamp01 ((audDb[(size_t) b] - 6.0f) / 12.0f);
-        heard = heard || audible > 0.0f;
 
         const float cut    = s.smooth * std::min (maxCutDb, 0.5f * std::max (0.0f, de - 2.0f)) * audible;
         const float shadow = std::max (0.0f, -de - 2.0f);
@@ -587,31 +461,8 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
     {
         std::copy (targetSmoothed.begin(), targetSmoothed.end(), gain.begin());
         std::copy (prom.begin(), prom.end(), promSlow.begin());
-        holding = false;
     }
-    else if (holding && ! s.freeze)
-    {
-        // Released: the curve goes on from where it was held, as it always did (5.3.11: the live curve it
-        // followed meanwhile goes).
-        std::copy (heldGain.begin(), heldGain.end(), gain.begin());
-        std::copy (heldProm.begin(), heldProm.end(), promSlow.begin());
-    }
-    // Freeze: the curve (and its prominence memory) hold where they are. What is held is taken when Freeze comes
-    // on and when its mode changes: the curve as it is (the last frame's; on a first frame, that frame's) or,
-    // 5.3.11, the average of the last 10 s of music (the curve as it is when nothing was heard yet).
-    if (s.freeze && (! holding || s.freezeAverage != holdingAverage))
-    {
-        if (! (s.freezeAverage && takeAverage (fps)))
-        {
-            std::copy (gain.begin(), gain.end(), heldGain.begin());
-            std::copy (promSlow.begin(), promSlow.end(), heldProm.begin());
-            heldAverageSeconds = 0.0f;
-        }
-        holdingAverage = s.freezeAverage;
-        ++holdSerial;   // 5.3.12: the project saves what is held now
-    }
-    holding = s.freeze;
-    if (curveWasPrimed)   // the live curve follows the music, also while Freeze holds (5.3.11)
+    else if (! s.freeze)   // Freeze: the curve (and its prominence memory) hold where they are
     {
         for (int b = 0; b < numBands; ++b)
         {
@@ -624,10 +475,6 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
             promSlow[(size_t) b] += aSlow * (prom[(size_t) b] - promSlow[(size_t) b]);
         }
     }
-    if (heard)
-        accumulateAverage (fps);
-    const float* curve = holding ? heldGain.data() : gain.data();
-    const float* curveProm = holding ? heldProm.data() : promSlow.data();
 
     const double zLo = erb::hzToCam (std::max (20.0f, s.rangeLoHz));
     const double zHi = std::max (zLo + 0.5, erb::hzToCam (s.rangeHiHz));
@@ -642,7 +489,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
         const float tilt = std::clamp (s.tiltDbPerOct * (bandOct[(size_t) b] - s.tiltPivotOct), -9.0f, 9.0f);
         // Guard: attacks pass with the auto-EQ relaxed toward 0 dB (Tilt is static and stays).
         const float relax = guarded ? 1.0f - s.guard * transient[(size_t) b] : 1.0f;
-        const float g = limited ? std::clamp (curve[b], lowest, highest) : curve[b];
+        const float g = limited ? std::clamp (gain[(size_t) b], lowest, highest) : gain[(size_t) b];
         const float autoDb = guarded ? g * relax : g;
         // 5.0 Punch: attacks louder or softer in the bands they hit (up to 8 dB), like the rest of the
         // EQ inside Range and Paint. Punch 0 adds exactly 0, so the curve is unchanged.
@@ -667,7 +514,7 @@ void PerceptualModel::analyse (const float* binPower, const ModelSettings& s, fl
                 matchPeakDb = m;
         }
 
-        const float ps = curveProm[b];
+        const float ps = promSlow[(size_t) b];
         const float shadowed = clamp01 ((-ps - 1.0f) / 9.0f);
         const float dominant = clamp01 ((ps - 1.0f) / 6.0f);
         const float need = clamp01 (0.35f + 0.65f * shadowed - 0.5f * dominant);

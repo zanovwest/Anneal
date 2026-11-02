@@ -94,7 +94,6 @@ struct Scenario
     float readoutHz;
     bool feedAudio;
     std::function<void (AnnealEditorContent&)> afterEditor = {};   // 4.0: editor-only state (paint mode, a drag over the display)
-    std::function<void (AnnealAudioProcessor&)> beforeLast = {};   // 5.3.11: set after the song, before its last blocks
 };
 
 void enableSidechain (AnnealAudioProcessor& p)
@@ -193,9 +192,6 @@ int main (int argc, char* argv[])
               set (p, ids::ceiling, 2); set (p, ids::output, 6.0f); set (p, ids::heat, 60);
           }, 1200.0f, true },
         { "frozen", [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); set (p, ids::smooth, 70); }, 3150.0f, true },
-        // 5.3.11: Freeze holding the average of the song (on after it played): "FREEZE · AVG", the display's note
-        { "frozen_avg", [] (AnnealAudioProcessor& p) { set (p, ids::smooth, 70); set (p, ids::freezeMode, 1); }, 3150.0f, true,
-          {}, [] (AnnealAudioProcessor& p) { set (p, ids::freeze, 1); } },
         { "limits", [] (AnnealAudioProcessor& p)   // 5.3.2: Max boost / Max cut, the pill and the display's lines
           {
               set (p, ids::reveal, 75); set (p, ids::smooth, 80); set (p, ids::maxBoost, 2); set (p, ids::maxCut, 3);
@@ -307,8 +303,6 @@ int main (int argc, char* argv[])
                 if (proc.displayPeakHold.on)
                     content.screen.refreshNow();
             }
-            if (s.beforeLast)
-                s.beforeLast (proc);
             // Let the meters see a few blocks the way the editor timer would.
             for (int i = 0; i < 8; ++i)
             {

@@ -219,7 +219,6 @@ void PerceptionScreen::timerCallback()
         keyLoHz = f->keyLoHz;
         keyHiHz = f->keyHiHz;
         frozen = f->frozen;
-        frozenSeconds = f->frozenAverageSeconds;
         activity.matchDb = std::abs (f->matchDb) >= std::abs (activity.matchDb) ? f->matchDb
                          : activity.matchDb * std::pow (10.0f, -activityFallPerTick / 20.0f);
         activity.refSeconds = f->refSeconds;
@@ -300,7 +299,6 @@ void PerceptionScreen::refreshNow()
         keyLoHz = f->keyLoHz;
         keyHiHz = f->keyHiHz;
         frozen = f->frozen;
-        frozenSeconds = f->frozenAverageSeconds;
         std::copy (f->keyDb, f->keyDb + nb, keyDb.begin());
         activity = { f->liftDb, f->cutDb, f->heatRelDb, f->scDb, true, f->keyActive, f->matchDb, f->refSeconds, f->refValid, f->punchDb };
         attacksOn = f->attacks;
@@ -865,7 +863,7 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     // 5.3: only what you need to read the picture; the explanations live in the tooltips.
     float y = mainLane.getY() + 8.0f;
     if (frozen)
-        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw, getFrozenNote());
+        tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ FROZEN", colour::straw, {});
     else
         tag ({ mainLane.getX() + 10.0f, y }, "AUTO EQ", colour::muted, midSide ? "Mid solid / Side dashed" : "");
     if (keyActive)
@@ -875,7 +873,18 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
              zeroPunchOn ? "Heat and Listen rest" : "Heat, Punch and Listen rest");
 
     // 4.0 Reference: what it is and what it is doing, whenever it is in use or a file is loading.
-    const auto refText = refStatusText();
+    juce::String refText;
+    const auto dash = juce::String::fromUTF8 (" \xe2\x80\x94 ");
+    if (refError.isNotEmpty())
+        refText = refError;
+    else if (refAnalysing)
+        refText = "analysing the dropped file...";
+    else if (refMode == 1)
+        refText = activity.refSeconds > 0.0f && refHave
+                    ? "learning the key" + dash + juce::String (juce::roundToInt (activity.refSeconds)) + " s"
+                    : juce::String ("waiting for the sidechain key");
+    else if (refMode == 2)   // 5.3: just the reference's name once there is one
+        refText = refHave ? refName : juce::String ("drop an audio file here, or learn one from the sidechain key");
     if (refText.isNotEmpty())
         tag ({ mainLane.getX() + 10.0f, y += 16.0f }, "REF", refError.isNotEmpty() ? colour::warning : colour::teal, refText);
 
@@ -890,14 +899,6 @@ void PerceptionScreen::paintLegend (juce::Graphics& g)
     tag ({ widthLane.getX() + 10.0f, widthLane.getY() + 2.0f }, "WIDTH", colour::rose.withAlpha (0.9f),
          paintMode ? juce::String ("how much of Width acts (top = all of it)") : juce::String());
     legendBottom = y + 14.0f;
-}
-
-juce::String PerceptionScreen::getFrozenNote() const
-{
-    // 5.3.11: what Freeze holds when it is the average ("average of 10 s"); nothing for the curve as it was.
-    if (! frozen || frozenSeconds <= 0.0f)
-        return {};
-    return "average of " + juce::String (juce::jmax (1, juce::roundToInt (frozenSeconds))) + " s";
 }
 
 std::pair<juce::String, juce::String> PerceptionScreen::getListenTag() const
@@ -1295,31 +1296,13 @@ void PerceptionScreen::setReference (const ReferenceCurve& curve, const juce::St
     repaint();
 }
 
-void PerceptionScreen::setReferenceStatus (bool analysing, const juce::String& error, const juce::String& notice)
+void PerceptionScreen::setReferenceStatus (bool analysing, const juce::String& error)
 {
-    if (analysing == refAnalysing && error == refError && notice == refNotice)
+    if (analysing == refAnalysing && error == refError)
         return;
     refAnalysing = analysing;
     refError = error;
-    refNotice = notice;
     repaint();
-}
-
-juce::String PerceptionScreen::refStatusText() const
-{
-    if (refError.isNotEmpty())
-        return refError;
-    if (refAnalysing)
-        return "analysing the dropped file...";
-    if (refNotice.isNotEmpty())   // 5.3.13: "saved as ..."
-        return refNotice;
-    if (refMode == 1)
-        return activity.refSeconds > 0.0f && refHave
-                 ? "learning the key" + juce::String::fromUTF8 (" \xe2\x80\x94 ") + juce::String (juce::roundToInt (activity.refSeconds)) + " s"
-                 : juce::String ("waiting for the sidechain key");
-    if (refMode == 2)   // 5.3: just the reference's name once there is one
-        return refHave ? refName : juce::String ("drop an audio file here, or learn one from the sidechain key");
-    return {};
 }
 
 void PerceptionScreen::updateReferenceOffset (bool instant)

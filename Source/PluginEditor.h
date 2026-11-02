@@ -4,7 +4,6 @@
 #include "ui/AnnealLookAndFeel.h"
 #include "ui/Fader.h"
 #include "ui/FlavourMenu.h"
-#include "ui/FreezeMenu.h"
 #include "ui/HarmonicGraph.h"
 #include "ui/IconButton.h"
 #include "ui/KeyRangeMenu.h"
@@ -40,7 +39,6 @@ public:
 
     anneal::PerceptionScreen screen;
     anneal::PresetBar presets;
-    anneal::ReferenceMenu& getReferenceMenu() noexcept { return refMenu; }   // 5.3.13 tests
 
 private:
     void updateActivity();
@@ -59,7 +57,7 @@ private:
     anneal::ListenMenu listen;
     anneal::FlavourMenu flavour;
     // 3.0
-    anneal::FreezeMenu freeze;   // 5.3.11: a menu (Off / Hold now / Hold the average of 10 s)
+    anneal::Toggle freeze;
     anneal::RoutingMenu scMode, ceiling;
     anneal::Knob scAmount;
     anneal::IconButton undoButton, redoButton;
@@ -85,7 +83,7 @@ private:
     Status scStatus, refStatus;
     void setStatus (Status& s, const juce::String& text, bool active, int titleY);
 
-    juce::String shownMatchText, shownRefError, shownRefNotice;
+    juce::String shownMatchText, shownRefError;
     std::uint32_t shownRefSerial = ~0u, shownPaintSerial = ~0u;
     bool refLoaded = false;
     int refErrorTicks = 0;

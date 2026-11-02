@@ -69,15 +69,6 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // 5.3.12 Copy and paste settings (message thread), to give another Anneal the same sound: every parameter but
-    // the listening aids (Match, Delta, Bypass, Listen, Listen Check), the paint, the reference, a frozen curve and
-    // the preset they came from, as text for the clipboard. Pasting is one undo step (the parameters and the
-    // paint); a parameter the text lacks (copied from an older version) takes its default, as it had there; a
-    // reference comes along when there is one. False, and nothing changes, when the text isn't Anneal settings.
-    juce::String getSettingsText();
-    bool pasteSettingsText (const juce::String& text);
-    static bool isSettingsText (const juce::String& text);
-
     juce::AudioProcessorParameter* getBypassParameter() const override;
 
     juce::AudioProcessorValueTreeState apvts;
@@ -141,23 +132,11 @@ public:
 
     // A file dropped on the display (wav, aif/aiff, flac, mp3, ogg) is decoded and analysed on a
     // background thread; when it is ready it becomes the reference and Reference switches to Match.
-    // 5.3.13: a saved reference (.annealref) loads the same way, without analysing anything. A reference set,
-    // cleared or loaded with a project meanwhile wins: the analysis still running is dropped.
     static bool canLoadReferenceFile (const juce::File& file);
     void loadReferenceFile (const juce::File& file);
     bool isAnalysingReference() const noexcept { return analysing.load(); }
     juce::String getReferenceError();   // why the last dropped file was not used, or empty
     void* getLastAnalysisThread() const noexcept { return analysisThread.load(); }   // tests
-
-    // 5.3.13 Save the reference (the Reference menu's "Save the reference as..."): the curve and its name in an
-    // .annealref file (added when the chosen name lacks it), so one reference serves many projects. Empty when
-    // saved, else why not (also shown on the display). A reference learned from the key is named after the file.
-    juce::String saveReferenceFile (const juce::File& file);
-    static juce::File referenceFileFor (const juce::File& chosen);
-    juce::String suggestedReferenceFileName();   // "Final mix.annealref" for "Final mix.wav"
-    // Reads an .annealref: empty and the curve and name set, else why it can't be used (curve invalid).
-    static juce::String readReferenceFile (const juce::File& file, anneal::ReferenceCurve& curve, juce::String& name);
-    juce::String getReferenceNotice();   // "saved as ...", after a save until the next reference event
 
     // 4.0 Paint (message thread). setPaint between beginPaintStroke() and endPaintStroke() is one
     // undo step; a paint change outside a stroke isn't recorded. mergeWithPrevious: the stroke joins
@@ -169,8 +148,6 @@ public:
     std::uint32_t getPaintSerial() const noexcept { return paintSerial.load(); }
 
 private:
-    juce::ValueTree makeStateTree();   // what getStateInformation saves
-    void restoreUserPreset (const juce::String& name);   // the user preset settings came from, if its file is there
     void pushParametersToEngine() noexcept;
     void timerCallback() override;
     int requestedLatencyMode() const noexcept;
@@ -285,7 +262,6 @@ private:
     std::atomic<float>* pDetail = nullptr;     // 5.3.6
     std::atomic<float>* pHeatLimit = nullptr;  // 5.3.7
     std::atomic<float>* pListenCheck = nullptr; // 5.3.9
-    std::atomic<float>* pFreezeMode = nullptr;  // 5.3.11
 
     // 5.0 user presets
     juce::File userFolder { anneal::presets::defaultUserFolder() };
@@ -296,20 +272,12 @@ private:
     // 4.0 Reference and Paint. refLock guards the copies below, the writer side of refToAudio and
     // paintToAudio and the reader side of refLearned; the audio thread never takes it.
     void applyPaintNow (const anneal::PaintCurves& paint);   // no undo step
-    // From the loader: applied only while no other reference came since its load started (epoch: refEpoch then).
-    void referenceFailed (const juce::File& file, const juce::String& why, unsigned int epoch);
-    void referenceArrived (const anneal::ReferenceCurve& curve, const juce::String& name, unsigned int epoch);
+    void referenceFailed (const juce::File& file, const juce::String& why);
     anneal::TripleBuffer<anneal::ReferenceCurve> refToAudio, refLearned;
     anneal::TripleBuffer<anneal::PaintCurves> paintToAudio;
-    // 5.3.12: the frozen curve. The engine in use publishes what it holds; heldSaved (refLock) is the newest, for
-    // the project; a project's goes to the audio thread through holdToAudio.
-    void pollHeldCurve();
-    void restoreHeldCurve (const juce::ValueTree& frozenTree);   // after the parameters are set
-    anneal::TripleBuffer<anneal::HeldCurves> holdFromAudio, holdToAudio;
-    anneal::HeldCurves heldSaved;
     juce::CriticalSection refLock;
     anneal::ReferenceCurve refCurve;
-    juce::String refName, refError, refNotice;
+    juce::String refName, refError;
     anneal::PaintCurves paint, strokeStart;
     bool strokeOpen = false, lastStepWasStroke = false;
     unsigned int refEpoch = 0;

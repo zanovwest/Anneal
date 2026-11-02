@@ -209,16 +209,6 @@ int parseListenCheck (const juce::String& text)
     return checkStereo;   // "stereo", "off", "as is"
 }
 
-int parseFreezeMode (const juce::String& text)
-{
-    const auto l = text.toLowerCase().trim();
-    if (l.contains ("av") || l.contains ("mean") || l.contains ("10") || l.contains ("last"))
-        return freezeAverage;
-    if (l.containsAnyOf ("0123456789"))
-        return juce::jlimit (0, 1, l.getIntValue());
-    return freezeNow;   // "now", "hold now", "moment"
-}
-
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -517,15 +507,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
         {
             return parseListenCheck (t);
-        })));
-
-    // 5.3.11 Freeze mode: what Freeze holds, the curve as it is now or the average of the last 10 s of music. Now,
-    // what Freeze always held, is the default and what older projects load with.
-    layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { ids::freezeMode, 1 }, "Freeze Mode",
-        juce::StringArray { "Now", "Average 10 s" }, freezeNow,
-        juce::AudioParameterChoiceAttributes().withValueFromStringFunction ([] (const juce::String& t)
-        {
-            return parseFreezeMode (t);
         })));
 
     return layout;

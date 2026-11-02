@@ -39,7 +39,6 @@ namespace anneal
         int flavour        = flavourClean;   // Flavour enum (HarmonicSynth.h); switches per frame like listen
         float heatLimitDb  = heatLimitOffDb; // 5.3.7: the harmonics at most this far under the music per band (0 = off)
         bool freeze        = false;          // hold the auto-EQ curve
-        bool freezeAverage = false;          // 5.3.11: hold the average of the last 10 s instead (false = as before)
         int scMode         = 0;              // sidechain: 0 off, 1 make room, 2 unmask
         float scAmount     = 0.5f;
         float scKeyLoHz    = keyFullLoHz;    // 5.3.4: the part of the key that counts (the ends = the whole key)
@@ -51,17 +50,6 @@ namespace anneal
         float monoHz       = 0.0f;           // 5.0: mono below this, Hz (under 20 = off)
         float maxCutDb     = noLimitDb;      // 5.3.2: how far the auto EQ may cut / lift (noLimitDb = no limit)
         float maxBoostDb   = noLimitDb;
-    };
-
-    // 5.3.12 A frozen auto-EQ curve as a project saves it: the linked model's held curve and prominence memory
-    // and, when Mid/Side was holding, Mid's and Side's, in bands at Cam z0 + i * dz (the engine's rate).
-    struct HeldCurves
-    {
-        static constexpr int numBands = PerceptualModel::numBands;
-        bool valid = false, midSide = false, average = false;
-        float averageSeconds = 0.0f;
-        double z0 = 0.0, dz = 0.0;
-        float gain[3][numBands] {}, prom[3][numBands] {};   // [0] linked, [1] Mid, [2] Side
     };
 
     // STFT host for the perceptual model and the harmonic synth.
@@ -87,13 +75,6 @@ namespace anneal
         // Takes over another engine's auto-EQ curve (same sample rate), e.g. a frozen curve when
         // the latency mode changes.
         void adoptCurveFrom (const SpectralEngine& other) noexcept;
-        // 5.3.11: takes over another engine's 10 s average (same sample rate), when the latency mode changes.
-        void adoptAverageFrom (const SpectralEngine& other) noexcept;
-        // 5.3.12: while Freeze holds, what is held goes to `out` at the end of every frame where it changed (a
-        // hold taken, adopted or restored), for the project. restoreHold makes the models hold a saved curve
-        // (audio thread, or while processing is suspended).
-        void setHoldTarget (TripleBuffer<HeldCurves>* out) noexcept { holdOut = out; }
-        void restoreHold (const HeldCurves& held) noexcept;
 
         // Called once per host block from the audio thread; values are smoothed per frame.
         void setParameters (const EngineParams& p) noexcept { target = p; }
@@ -121,7 +102,6 @@ namespace anneal
         float getLastHeatGuard() const noexcept { return lastHeatGuard; }   // 1 = harmonics written in full
 
         const PerceptualModel& getModel() const noexcept { return model; }
-        const PerceptualModel& getMidSideModel (int c) const noexcept { return msModel[c & 1]; }   // tests: 0 Mid, 1 Side
         TripleBuffer<DisplayFrame>& getDisplay() noexcept { return *displayOut; }
         // Several engines (one per latency mode) can publish into one shared display buffer.
         void setDisplayTarget (TripleBuffer<DisplayFrame>* shared) noexcept { displayOut = shared != nullptr ? shared : &display; }
@@ -221,9 +201,6 @@ namespace anneal
         std::vector<double> limitMain, limitHarm;
         std::vector<float> limitGain;
         TripleBuffer<ReferenceCurve>* learnOut = nullptr;
-        TripleBuffer<HeldCurves>* holdOut = nullptr;   // 5.3.12
-        unsigned int holdPublished = 0;
-        void publishHold() noexcept;
         ReferenceCurve learnScratch;
         bool learnFresh = true, learnHeld = false;
         int learnTick = 0;

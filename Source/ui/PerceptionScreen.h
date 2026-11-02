@@ -61,9 +61,7 @@ namespace anneal
         // 4.0 Reference. The curve is the processor's (level-normalised, on the fixed grid); it is
         // drawn while Reference is Learn key or Match, at the level of the output spectrum.
         void setReference (const ReferenceCurve& curve, const juce::String& name);
-        // notice (5.3.13): good news, e.g. "saved as Final mix.annealref", shown in teal where an error would be.
-        void setReferenceStatus (bool analysing, const juce::String& error, const juce::String& notice = {});
-        juce::String getReferenceStatusText() const { return refStatusText(); }   // what the REF line says (tests)
+        void setReferenceStatus (bool analysing, const juce::String& error);
         std::function<bool (const juce::File&)> canLoadFile;
         std::function<void (const juce::File&)> onFileDropped;
         bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -121,8 +119,6 @@ namespace anneal
         // 5.3.9: the pill at the top right of the EQ lane naming what you hear (a Listen solo, the Listen check):
         // its title and note, both empty while you hear the full result in stereo (also for the tests).
         std::pair<juce::String, juce::String> getListenTag() const;
-        // 5.3.11: beside "AUTO EQ FROZEN": "average of 10 s" while Freeze holds the average, else empty.
-        juce::String getFrozenNote() const;
 
     private:
         enum class Handle { none, lo, hi };
@@ -173,7 +169,6 @@ namespace anneal
         bool attacksOn = false;
         bool zeroLatency = false;                      // 5.1
         bool keyActive = false, frozen = false;
-        float frozenSeconds = 0.0f;                    // 5.3.11: the held average's length (0: the curve as it was)
         void updateViews();
         float z0 = 0.0f, dz = 0.0f;
         bool haveFrame = false;
@@ -202,8 +197,7 @@ namespace anneal
         // 4.0 Reference
         std::array<float, ReferenceCurve::numPoints> refDb {};
         bool refHave = false, refAnalysing = false, dropHover = false;
-        juce::String refName, refError, refNotice;
-        juce::String refStatusText() const;
+        juce::String refName, refError;
         float refOffset = 0.0f;   // dB: where the normalised reference sits on the spectrum scale
         bool refOffsetPrimed = false;
 

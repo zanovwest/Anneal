@@ -71,7 +71,8 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
                   "In Mid/Side mode, add Heat to both components, the centre (Mid), or the sides (Side)."),
       listen (p.apvts, ids::listen, ids::listenCheck),
       flavour (p.apvts, ids::flavour, ids::heatLimit),
-      freeze (p.apvts, ids::freeze, ids::freezeMode),
+      freeze (p.apvts, ids::freeze, "FREEZE", colour::straw,
+              "Freeze: hold the auto-EQ curve where it is; Heat keeps following the music"),
       scMode (p.apvts, ids::scMode, "", { "Off", "Make room", "Unmask" },
               "Sidechain: Make room ducks this track where the key track needs space; Unmask lifts this track where the key "
               "masks it. Route a track to Anneal's sidechain input in your DAW"),
@@ -119,8 +120,6 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
     screen.canLoadFile = [] (const juce::File& f) { return AnnealAudioProcessor::canLoadReferenceFile (f); };
     screen.onFileDropped = [&p] (const juce::File& f) { p.loadReferenceFile (f); };
     refMenu.onLoadFile = [&p] (const juce::File& f) { p.loadReferenceFile (f); };
-    refMenu.onSaveFile = [&p] (const juce::File& f) { p.saveReferenceFile (f); };   // 5.3.13: the display says how it went
-    refMenu.suggestedSaveName = [&p] { return p.suggestedReferenceFileName(); };
     refMenu.onClear = [&p] { p.clearReference(); };
     refMenu.hasReference = [this] { return refLoaded; };
 
@@ -193,18 +192,6 @@ AnnealEditorContent::AnnealEditorContent (AnnealAudioProcessor& p)
             note = names.isEmpty() ? errors[0] : note + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (errors.size()) + " not added";
         presets.showMessage (note);
     };
-    // 5.3.12: copy this instance's settings to the clipboard as text; paste them into another one (one undo step).
-    presets.onCopySettings = [this]
-    {
-        juce::SystemClipboard::copyTextToClipboard (processor.getSettingsText());
-        presets.showMessage ("Settings copied");
-    };
-    presets.canPasteSettings = [] { return AnnealAudioProcessor::isSettingsText (juce::SystemClipboard::getTextFromClipboard()); };
-    presets.onPasteSettings = [this]
-    {
-        const bool pasted = processor.pasteSettingsText (juce::SystemClipboard::getTextFromClipboard());
-        presets.showMessage (pasted ? "Settings pasted" : "No Anneal settings to paste");
-    };
     presets.refresh();
     harmonics.refresh();
     updateActivity();
@@ -235,7 +222,7 @@ void AnnealEditorContent::resized()
     // and the M/S routing on the group's title row. 5.3.3: Response and Guard first, then Tilt with its
     // Pivot under it, at the foot of the stack, so the Pivot comes and goes without moving anything.
     limits.setBounds (108, routingY, 138, 26);
-    freeze.setBounds (252, routingY, 100, 26);   // 5.3.11: room for "FREEZE · AVG"
+    freeze.setBounds (252, routingY, 84, 26);
     eqTarget.setBounds (360, routingY, 114, 26);
     reveal.setBounds (26, 442, primaryW, primaryH);
     smooth.setBounds (172, 442, primaryW, primaryH);
@@ -484,15 +471,12 @@ void AnnealEditorContent::tick (float dt)
         screen.setPaint (processor.getPaint());
     }
     const auto error = processor.getReferenceError();
-    const auto notice = processor.getReferenceNotice();   // 5.3.13: "saved as ...", for 6 s like an error
-    if (error != shownRefError || notice != shownRefNotice)
+    if (error != shownRefError)
     {
         shownRefError = error;
-        shownRefNotice = notice;
         refErrorTicks = 0;
     }
-    const bool fresh = refErrorTicks++ < 180;
-    screen.setReferenceStatus (processor.isAnalysingReference(), fresh ? error : juce::String(), fresh ? notice : juce::String());
+    screen.setReferenceStatus (processor.isAnalysingReference(), refErrorTicks++ < 180 ? error : juce::String());
     updateActivity();
 
     const bool stereo = processor.getMainBusNumInputChannels() > 1;

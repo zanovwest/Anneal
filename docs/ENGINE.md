@@ -140,19 +140,6 @@ those bands are interpolated rather than independent measurements.
     Broad 8 to Normal) the prominence is the usual one and the extra pass doesn't run; at Normal the smoothing
     is the usual one too: bit-identical to 5.3.5. The engine glides Detail like the others (40 ms) and lands it
     exactly within 0.0001. Cost while the window differs: one more place / context / dB pass per model per frame.
-15. **Freeze the average** (5.3.11; parameter `freezeMode`, Now / Average 10 s). Freeze holds a copy of the
-    time-smoothed curve and its prominence memory (`heldGain` / `heldProm`, used wherever `gain` / `promSlow`
-    were); the live pair keeps following the music meanwhile, unheard, and releasing copies the held pair back
-    first, so the curve goes on from where it was held exactly as before. Every frame in which something is
-    audible (any band's audibility above 0, step 9's gate) adds the live pair to a running mean: 20 chunks of
-    half a second (150 frames at 300 a second; their means in a ring) plus the chunk being filled, so the average
-    is of the last 10 to 10.5 s of music, every frame weighing the same; silence is left out, so stopping the
-    song doesn't pull it toward 0 dB. What is held is taken when Freeze comes on and when its mode changes: Now
-    the live pair of the last frame (a curve's first frame: that frame's), Average the running mean (the live
-    pair if nothing was heard yet). The mean is a measurement: it survives `reset()` and preparing at the same
-    bands, moves to the new engine with a latency-mode change (`adoptAverageFrom`; the frozen curve too, as
-    before), and starts over in the Mid/Side models when Mid/Side goes off. Cost: 2048 adds a frame, and a
-    1024 × 20 sum when Freeze takes the average.
 
 ### Reference match (4.0)
 

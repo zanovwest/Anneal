@@ -18,13 +18,13 @@ Order set by the user on 2026-10-13: Transient guard (done in 0.2.2), Mid/Side (
 modes (0.2.5), Saturation flavours (0.2.6), then Sidechain, Freeze, Ceiling and Undo, which became
 the 3.0 update. (The icon was done by hand that day, outside the hourly runs.)
 
-Items 28-30 were added by the 5.3.12 run (Next up was empty); 28 was done there, 29 in 5.3.13.
+Added by the 5.3.9 run (Next up was empty after item 24; item 25 was done in 5.3.9, item 26 in 5.3.10); reorder or
+drop freely:
 
-- **30. Sustain** (SHAPE): the body right after an attack, softer or longer (−100 … +100 %, up to 8 dB like Punch,
-  in the bands an attack just hit, fading over ~150 ms), a compact rose row under Punch. 0 (the default, and older
-  projects) bit-identical; factory presets leave it at 0. At zero latency through the time-domain shaper, or resting
-  there with the display saying so. Test: a pluck's tail +/− dB with the attack itself unchanged, steady sounds
-  untouched, Low / Precise / Mid/Side, texts and older projects.
+27. **Freeze the average**: the FREEZE pill opens a small menu, *Hold now* (as today) or *Hold the average of
+    the last 10 s*, so the static EQ comes from a whole passage instead of the last moment. Off and Hold now
+    as before (bit-identical), older projects unchanged. Tests: the held curve is the mean of the live curves
+    over the window, Hold now is unchanged, Mid/Side and Zero latency follow.
 
 ## Waiting on the user
 
@@ -60,27 +60,6 @@ The user said no to these on 2026-10-13. Don't add them.
 
 ## Done
 
-- 5.3.13 (2026-11-01, every-minute update): **Save the reference** (item 29): the Reference menu's *Save the reference
-  as…* writes the reference (learned from the key or analysed from a file) to an `.annealref` file (~6 kB: the project's
-  own Reference data and its name; one learned from the key takes the file's name), which loads like an audio file,
-  dropped on the display or through *Load a reference file…*, without analysing anything, and switches to Match. Broken
-  or foreign files are refused with the reason on the display; "saved as …" shows after a save. Fixed: a project opened
-  (or the reference cleared or set) while a dropped file was still being analysed got that file and Match once the
-  analysis finished; the newest choice wins now and the analysis stops. A reference or frozen curve cut short in a
-  project (JUCE's base64 fills the gap with zeros) is refused instead of loading with 0 dB where it ran out.
-- 5.3.12 (2026-11-01, every-minute update): **Copy and paste settings** (item 28, added by this run with 29 and 30):
-  *Copy settings* / *Paste settings* at the end of the preset menu give another Anneal this one's sound as text on the
-  clipboard: every parameter but the listening aids (Match, Delta, Bypass, Listen, Listen Check), the paint, the
-  reference, a frozen curve and the preset name. One undo step; an instance pasted into plays exactly what one loading
-  the copied project plays; anything else on the clipboard is refused (Paste greyed out). Fixed: a frozen curve wasn't
-  saved with the project, so a frozen project reopened holding whatever it heard first (0 dB where it cut 9 dB); the
-  state carries it now (stateVersion 3, an optional "Frozen" child).
-- 5.3.11 (2026-11-01, every-minute update): **Freeze the average** (item 27): the FREEZE pill opens a menu (Off /
-  Hold now / Hold the average of the last 10 s); the average is of the live curve over the last 10 s of music
-  (silence left out, 20 half-second chunks), held exactly, in every mode, Mid/Side and Zero latency, and it comes
-  through a host stop, preparing again and a latency change. While frozen the other choice takes over at once;
-  releasing goes on from the held curve as before. Host parameter "Freeze Mode" (Now / Average 10 s); Now, the
-  default and what older projects open with, holds exactly what Freeze always held. No bugs found.
 - 5.3.10 (2026-11-01, every-minute update): **Note names** (item 26): the hover read-out names the nearest note
   ("3.15 kHz · G7 +8 ct", A4 = 440 Hz, sharps, cents to the nearest note), and every frequency field takes a note
   as well as hertz (`E1`, `A#4`, `Bb2`, `C-1`, `G7 -14 ct`): Mono bass and the Pivot on the deck, and the host's

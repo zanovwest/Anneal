@@ -15,11 +15,10 @@ public:
     explicit ReferenceLoader (AnnealAudioProcessor& p) : juce::Thread ("Anneal reference"), owner (p) {}
     ~ReferenceLoader() override { stopThread (10000); }
 
-    void load (const juce::File& f, unsigned int epoch)
+    void load (const juce::File& f)
     {
         stopThread (10000);   // a newer drop replaces one still being analysed
         file = f;
-        startEpoch = epoch;
         owner.analysing = true;
         startThread();
     }
@@ -43,24 +42,12 @@ private:
 
     void analyse()
     {
-        // 5.3.13: a saved reference is read, not analysed.
-        if (file.hasFileExtension ("annealref"))
-        {
-            anneal::ReferenceCurve curve;
-            juce::String name;
-            if (const auto why = readReferenceFile (file, curve, name); why.isNotEmpty())
-                owner.referenceFailed (file, why, startEpoch);
-            else
-                owner.referenceArrived (curve, name, startEpoch);
-            return;
-        }
-
         juce::AudioFormatManager formats;
         registerFormats (formats);
         std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
         if (reader == nullptr || reader->sampleRate <= 0.0 || reader->numChannels < 1)
         {
-            owner.referenceFailed (file, "can't read this file", startEpoch);
+            owner.referenceFailed (file, "can't read this file");
             return;
         }
 
@@ -83,15 +70,15 @@ private:
             return;
         if (! curve.valid)
         {
-            owner.referenceFailed (file, "it is silent", startEpoch);
+            owner.referenceFailed (file, "it is silent");
             return;
         }
-        owner.referenceArrived (curve, file.getFileName(), startEpoch);
+        owner.setReference (curve, file.getFileName(), true);
+        owner.autoMatchPending = true;
     }
 
     AnnealAudioProcessor& owner;
     juce::File file;
-    unsigned int startEpoch = 0;
 };
 
 //==============================================================================
@@ -100,13 +87,6 @@ private:
 namespace
 {
     const juce::Identifier referenceTag ("Reference"), paintTag ("Paint");
-
-    // 5.3.13: JUCE's base64 ("<bytes>.<text>") fills a text cut short with zeros; true only when all `bytes` are there.
-    bool fromBase64Exactly (const juce::String& encoded, size_t bytes, juce::MemoryBlock& data)
-    {
-        return encoded.fromFirstOccurrenceOf (".", false, false).length() >= (int) ((bytes * 8 + 5) / 6)
-            && data.fromBase64Encoding (encoded) && data.getSize() == bytes;
-    }
 
     juce::ValueTree referenceToTree (const anneal::ReferenceCurve& curve, const juce::String& name)
     {
@@ -129,7 +109,8 @@ namespace
         name.clear();
         juce::MemoryBlock data;
         if (! t.isValid() || (int) t.getProperty ("points", 0) != anneal::ReferenceCurve::numPoints
-            || ! fromBase64Exactly (t.getProperty ("db").toString(), sizeof (float) * (size_t) anneal::ReferenceCurve::numPoints, data))
+            || ! data.fromBase64Encoding (t.getProperty ("db").toString())
+            || data.getSize() != sizeof (float) * (size_t) anneal::ReferenceCurve::numPoints)
             return curve;
         juce::MemoryInputStream in (data, false);
         for (auto& v : curve.db)
@@ -158,57 +139,6 @@ namespace
         t.setProperty ("heat", text (p.heat), nullptr);
         t.setProperty ("width", text (p.width), nullptr);   // 5.2.2
         return t;
-    }
-
-    // 5.3.12: the frozen curve, as little-endian floats in base64: the linked model's gain (dB) and prominence
-    // memory, then Mid's and Side's when Mid/Side was holding, in bands at Cam z0 + i * dz.
-    const juce::Identifier frozenTag ("Frozen");
-
-    juce::ValueTree heldToTree (const anneal::HeldCurves& h)
-    {
-        juce::MemoryOutputStream out;
-        for (int m = 0; m < (h.midSide ? 3 : 1); ++m)
-            for (const float* src : { h.gain[m], h.prom[m] })
-                for (int b = 0; b < anneal::HeldCurves::numBands; ++b)
-                    out.writeFloat (src[b]);
-        juce::ValueTree t (frozenTag);
-        t.setProperty ("bands", anneal::HeldCurves::numBands, nullptr);
-        t.setProperty ("midSide", h.midSide, nullptr);
-        t.setProperty ("average", h.average, nullptr);
-        t.setProperty ("seconds", h.averageSeconds, nullptr);
-        t.setProperty ("z0", h.z0, nullptr);
-        t.setProperty ("dz", h.dz, nullptr);
-        t.setProperty ("curves", out.getMemoryBlock().toBase64Encoding(), nullptr);
-        return t;
-    }
-
-    // False (and h not valid) for anything missing, malformed or of another size.
-    bool heldFromTree (const juce::ValueTree& t, anneal::HeldCurves& h)
-    {
-        constexpr int nb = anneal::HeldCurves::numBands;
-        h.valid = false;
-        juce::MemoryBlock data;
-        if (! t.isValid() || (int) t.getProperty ("bands", 0) != nb)
-            return false;
-        const bool midSide = (bool) t.getProperty ("midSide", false);
-        const int models = midSide ? 3 : 1;
-        const double z0 = t.getProperty ("z0", 0.0), dz = t.getProperty ("dz", 0.0);
-        if (! fromBase64Exactly (t.getProperty ("curves").toString(), sizeof (float) * (size_t) (2 * nb * models), data)
-            || ! std::isfinite (z0) || ! (dz > 0.0 && dz < 1.0))
-            return false;
-        juce::MemoryInputStream in (data, false);
-        for (int m = 0; m < models; ++m)
-            for (float* dst : { h.gain[m], h.prom[m] })
-                for (int b = 0; b < nb; ++b)
-                    if (dst[b] = in.readFloat(); ! std::isfinite (dst[b]) || std::abs (dst[b]) > 200.0f)
-                        return false;
-        h.midSide = midSide;
-        h.average = (bool) t.getProperty ("average", false);
-        h.averageSeconds = juce::jlimit (0.0f, 60.0f, (float) (double) t.getProperty ("seconds", 0.0));
-        h.z0 = z0;
-        h.dz = dz;
-        h.valid = true;
-        return true;
     }
 
     // No paint (all 100 %) for anything missing; a malformed list leaves that curve at 100 %.
@@ -291,7 +221,6 @@ AnnealAudioProcessor::AnnealAudioProcessor()
     pDetail     = apvts.getRawParameterValue (ids::detail);
     pHeatLimit  = apvts.getRawParameterValue (ids::heatLimit);
     pListenCheck = apvts.getRawParameterValue (ids::listenCheck);
-    pFreezeMode = apvts.getRawParameterValue (ids::freezeMode);
     for (auto* prm : getParameters())
         prm->addListener (this);
 
@@ -301,7 +230,6 @@ AnnealAudioProcessor::AnnealAudioProcessor()
         engines[(size_t) m] = std::make_unique<anneal::SpectralEngine>();
         engines[(size_t) m]->setDisplayTarget (&display);
         engines[(size_t) m]->setLearnTarget (&refLearned);
-        engines[(size_t) m]->setHoldTarget (&holdFromAudio);   // 5.3.12
         engines[(size_t) m]->prepare (48000.0, 2, m);
     }
     loader = std::make_unique<ReferenceLoader> (*this);
@@ -346,7 +274,6 @@ void AnnealAudioProcessor::timerCallback()
 {
     applyLatencyModeIfChanged();
     pollLearnedReference();
-    pollHeldCurve();
 
     // A dropped file was analysed: matching it is what dropping it asked for (one undo step).
     if (autoMatchPending.exchange (false))
@@ -382,8 +309,6 @@ void AnnealAudioProcessor::applyLatencyModeIfChanged()
     getEngine().reset (pFreeze->load() > 0.5f && previous == mode);
     if (pFreeze->load() > 0.5f && previous != mode)   // a frozen curve stays what it is in the new mode
         getEngine().adoptCurveFrom (*engines[(size_t) previous]);
-    if (previous != mode)   // 5.3.11: so does the average of the last 10 s (the new mode's own is stale)
-        getEngine().adoptAverageFrom (*engines[(size_t) previous]);
     pollLearnedReference();       // a reference learned in the previous mode's engine comes along
     {
         const juce::ScopedLock sl (refLock);
@@ -552,7 +477,6 @@ void AnnealAudioProcessor::pushParametersToEngine() noexcept
     p.flavour = juce::jlimit (0, anneal::HarmonicSynth::numFlavours - 1, juce::roundToInt (pFlavour->load()));
     p.heatLimitDb = pHeatLimit->load();
     p.freeze = pFreeze->load() > 0.5f;
-    p.freezeAverage = juce::roundToInt (pFreezeMode->load()) == anneal::freezeAverage;
     p.punch = pPunch->load() / 100.0f;
     p.width = pWidth->load() / 100.0f;
     p.monoHz = pMonoBass->load() >= anneal::monoBassMinHz ? pMonoBass->load() : 0.0f;
@@ -607,8 +531,6 @@ void AnnealAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (const auto* pc = paintToAudio.read())
         for (auto& e : engines)
             e->setPaint (*pc);
-    if (const auto* h = holdToAudio.read())   // 5.3.12: a frozen curve from a project
-        getEngine().restoreHold (*h);
 
     // Sidechain key (3.0): the second input bus, when the host has it enabled.
     const float* key[2] = { nullptr, nullptr };
@@ -958,7 +880,7 @@ void AnnealAudioProcessor::endUndoGroup()
 
 void AnnealAudioProcessor::commitPending()
 {
-    if (! pending.after.empty() || pending.paintChange)   // 5.3.12: a paste can change the paint alone
+    if (! pending.after.empty())
         pushUndoStep (std::move (pending));
     pending = {};
 }
@@ -1029,22 +951,9 @@ void AnnealAudioProcessor::setReference (const anneal::ReferenceCurve& curve, co
     refCurve.holdLearning = holdLearning;
     refName = curve.valid ? name : juce::String();
     refError.clear();
-    refNotice.clear();
     refToAudio.beginWrite() = refCurve;
     refToAudio.endWrite();
     ++refSerial;
-    // 5.3.13: a file still being analysed would only be dropped now (see referenceArrived); stop it early.
-    if (loader != nullptr && juce::Thread::getCurrentThreadId() != analysisThread.load())
-        loader->signalThreadShouldExit();
-}
-
-void AnnealAudioProcessor::referenceArrived (const anneal::ReferenceCurve& curve, const juce::String& name, unsigned int epoch)
-{
-    const juce::ScopedLock sl (refLock);
-    if (epoch != refEpoch)   // a project, a paste or Clear came meanwhile: that is the newer choice
-        return;
-    setReference (curve, name, true);
-    autoMatchPending = true;
 }
 
 void AnnealAudioProcessor::pollLearnedReference()
@@ -1061,110 +970,28 @@ void AnnealAudioProcessor::pollLearnedReference()
 
 bool AnnealAudioProcessor::canLoadReferenceFile (const juce::File& file)
 {
-    return file.existsAsFile() && file.hasFileExtension ("wav;wave;aif;aiff;aifc;flac;mp3;ogg;annealref");
+    return file.existsAsFile() && file.hasFileExtension ("wav;wave;aif;aiff;aifc;flac;mp3;ogg");
 }
 
 void AnnealAudioProcessor::loadReferenceFile (const juce::File& file)
 {
-    unsigned int epoch = 0;
     {
         const juce::ScopedLock sl (refLock);
         refError.clear();
-        refNotice.clear();
-        epoch = refEpoch;
     }
-    loader->load (file, epoch);
+    loader->load (file);
 }
 
-void AnnealAudioProcessor::referenceFailed (const juce::File& file, const juce::String& why, unsigned int epoch)
+void AnnealAudioProcessor::referenceFailed (const juce::File& file, const juce::String& why)
 {
     const juce::ScopedLock sl (refLock);
-    if (epoch == refEpoch)
-        refError = file.getFileName() + ": " + why;
+    refError = file.getFileName() + ": " + why;
 }
 
 juce::String AnnealAudioProcessor::getReferenceError()
 {
     const juce::ScopedLock sl (refLock);
     return refError;
-}
-
-//==============================================================================
-// 5.3.13 Save the reference: <AnnealReference format="1"> holding the project's own Reference child, so a saved
-// reference and a project's are the same data (1024 floats, bit for bit, and the name).
-namespace
-{
-    const juce::Identifier referenceFileTag ("AnnealReference");
-    constexpr int referenceFileFormat = 1;
-    constexpr juce::int64 maxReferenceFile = 1 << 20;   // one is about 6 kB
-    const char* const learnedName = "sidechain key";
-}
-
-juce::File AnnealAudioProcessor::referenceFileFor (const juce::File& chosen)
-{
-    return chosen.hasFileExtension ("annealref") ? chosen : chosen.getSiblingFile (chosen.getFileName() + ".annealref");
-}
-
-juce::String AnnealAudioProcessor::suggestedReferenceFileName()
-{
-    const auto ref = getReference();
-    auto stem = ref.name == learnedName ? juce::String ("Sidechain key") : ref.name;
-    if (juce::StringArray::fromTokens ("wav wave aif aiff aifc flac mp3 ogg annealref", false)
-            .contains (stem.fromLastOccurrenceOf (".", false, false), true))
-        stem = stem.upToLastOccurrenceOf (".", false, false);
-    stem = juce::File::createLegalFileName (stem.trim());
-    return (stem.isEmpty() ? juce::String ("Reference") : stem) + ".annealref";
-}
-
-juce::String AnnealAudioProcessor::readReferenceFile (const juce::File& file, anneal::ReferenceCurve& curve, juce::String& name)
-{
-    curve = {};
-    name.clear();
-    juce::FileInputStream in (file);
-    if (! in.openedOk())
-        return "can't read this file";
-    if (in.getTotalLength() > maxReferenceFile)
-        return "it isn't an Anneal reference";
-    const auto xml = juce::parseXML (in.readEntireStreamAsString());
-    if (xml == nullptr || ! xml->hasTagName (referenceFileTag.toString()) || xml->getIntAttribute ("format", 0) < 1)
-        return "it isn't an Anneal reference";
-    if (xml->getIntAttribute ("format") > referenceFileFormat)
-        return "it was saved by a newer Anneal";
-    curve = referenceFromTree (juce::ValueTree::fromXml (*xml).getChildWithName (referenceTag), name);
-    if (! curve.valid)
-        return "the reference in it is damaged";
-    if (name.isEmpty())
-        name = file.getFileNameWithoutExtension();
-    return {};
-}
-
-juce::String AnnealAudioProcessor::saveReferenceFile (const juce::File& chosen)
-{
-    const auto ref = getReference();
-    const auto file = referenceFileFor (chosen);
-    juce::String why;
-    if (! ref.curve.valid)
-        why = "there is no reference to save";
-    else
-    {
-        // Elsewhere a learned key isn't that track's key any more: it takes the file's name.
-        juce::ValueTree root (referenceFileTag);
-        root.setProperty ("format", referenceFileFormat, nullptr);
-        root.appendChild (referenceToTree (ref.curve, ref.name == learnedName ? file.getFileNameWithoutExtension() : ref.name), nullptr);
-        const auto xml = root.createXml();
-        if (xml == nullptr || ! xml->writeTo (file))
-            why = "can't write this file";
-    }
-    const juce::ScopedLock sl (refLock);
-    refError = why.isEmpty() ? juce::String() : file.getFileName() + ": " + why;
-    refNotice = why.isEmpty() ? "saved as " + file.getFileName() : juce::String();
-    return why;
-}
-
-juce::String AnnealAudioProcessor::getReferenceNotice()
-{
-    const juce::ScopedLock sl (refLock);
-    return refNotice;
 }
 
 //==============================================================================
@@ -1245,157 +1072,7 @@ juce::String AnnealAudioProcessor::getPresetDisplayName()
     return "Custom";
 }
 
-void AnnealAudioProcessor::pollHeldCurve()
-{
-    const juce::ScopedLock sl (refLock);
-    if (const auto* h = holdFromAudio.read())
-        heldSaved = *h;
-    if (pFreeze->load() <= 0.5f)   // released: the next Freeze holds a new curve
-        heldSaved.valid = false;
-}
-
-void AnnealAudioProcessor::restoreHeldCurve (const juce::ValueTree& frozenTree)
-{
-    const juce::ScopedLock sl (refLock);
-    holdFromAudio.read();   // what the engine held before this project is stale now
-    if (pFreeze->load() > 0.5f && heldFromTree (frozenTree, heldSaved))
-    {
-        holdToAudio.beginWrite() = heldSaved;
-        holdToAudio.endWrite();
-    }
-    else
-        heldSaved.valid = false;
-}
-
-void AnnealAudioProcessor::restoreUserPreset (const juce::String& name)
-{
-    userChosen = false;
-    if (name.isEmpty())
-        return;
-    auto values = anneal::presets::currentValues (apvts);
-    if (anneal::presets::readUser (userFolder, name, values))
-    {
-        userName = anneal::presets::sanitiseName (name);
-        userValues = values;
-        userChosen = true;
-    }
-}
-
-//==============================================================================
-// 5.3.12 Copy and paste settings
-
-namespace
-{
-    const juce::Identifier settingsTag ("AnnealSettings");
-    constexpr int maxSettingsText = 4 << 20;   // a reference and a frozen Mid/Side curve are ~40 kB
-
-    // Listening aids: how you listen, not what Anneal does to the sound (factory presets leave them too).
-    bool isListeningAid (const juce::String& id)
-    {
-        return id == anneal::ids::match || id == anneal::ids::delta || id == anneal::ids::bypass
-            || id == anneal::ids::listen || id == anneal::ids::listenCheck;
-    }
-
-    std::unique_ptr<juce::XmlElement> parseSettings (const juce::String& text)
-    {
-        const auto trimmed = text.trimStart();
-        if (trimmed.length() > maxSettingsText || ! trimmed.startsWithChar ('<'))
-            return {};
-        auto xml = juce::parseXML (trimmed);
-        if (xml == nullptr || ! xml->hasTagName (settingsTag.toString()))
-            return {};
-        // "settings": how many it holds, so a copy cut short (half the text pasted) is refused.
-        int count = 0;
-        for (auto* child : xml->getChildWithTagNameIterator ("PARAM"))
-            count += child != nullptr ? 1 : 0;
-        return count > 0 && count == xml->getIntAttribute ("settings", -1) ? std::move (xml) : nullptr;
-    }
-}
-
-juce::String AnnealAudioProcessor::getSettingsText()
-{
-    const auto state = makeStateTree();
-    juce::ValueTree t (settingsTag);
-    t.setProperty ("stateVersion", anneal::ids::stateVersion, nullptr);
-    for (const char* name : { "preset", "userPreset" })
-        if (state.hasProperty (name))
-            t.setProperty (name, state.getProperty (name), nullptr);
-    int count = 0;
-    for (const auto& child : state)
-        if (! (child.hasType ("PARAM") && isListeningAid (child.getProperty ("id").toString())))
-        {
-            t.appendChild (child.createCopy(), nullptr);
-            count += child.hasType ("PARAM") ? 1 : 0;
-        }
-    t.setProperty ("settings", count, nullptr);
-    const auto xml = t.createXml();
-    return xml != nullptr ? xml->toString() : juce::String();
-}
-
-bool AnnealAudioProcessor::isSettingsText (const juce::String& text)
-{
-    return parseSettings (text) != nullptr;
-}
-
-bool AnnealAudioProcessor::pasteSettingsText (const juce::String& text)
-{
-    const auto xml = parseSettings (text);
-    if (xml == nullptr)
-        return false;
-    const auto t = juce::ValueTree::fromXml (*xml);
-
-    beginUndoGroup();   // the parameters and the paint: one undo step
-    for (auto* prm : getParameters())
-        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (prm))
-        {
-            const auto id = ranged->getParameterID();
-            if (isListeningAid (id))
-                continue;
-            const auto child = t.getChildWithProperty ("id", id);
-            const float value = child.isValid() && child.hasProperty ("value")
-                                  ? ranged->convertTo0to1 ((float) (double) child.getProperty ("value"))
-                                  : ranged->getDefaultValue();
-            if (std::abs (value - ranged->getValue()) > 1.0e-7f)
-            {
-                ranged->beginChangeGesture();
-                ranged->setValueNotifyingHost (value);
-                ranged->endChangeGesture();
-            }
-        }
-    const auto before = getPaint();
-    const auto after = paintFromTree (t.getChildWithName (paintTag));
-    if (after != before)
-    {
-        pending.paintChange = true;
-        pending.paintBefore = before;
-        pending.paintAfter = after;
-        applyPaintNow (after);
-    }
-    endUndoGroup();
-
-    const int preset = t.getProperty ("preset", -1);
-    presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
-    currentPreset = presetChosen ? preset : 0;
-    restoreUserPreset (t.getProperty ("userPreset", juce::String()).toString());
-    {
-        juce::String name;
-        if (const auto curve = referenceFromTree (t.getChildWithName (referenceTag), name); curve.valid)
-            setReference (curve, name);
-    }
-    if (const auto frozenTree = t.getChildWithName (frozenTag); frozenTree.isValid())
-        restoreHeldCurve (frozenTree);
-    if (juce::MessageManager::existsAndIsCurrentThread())
-        applyLatencyModeIfChanged();
-    return true;
-}
-
 void AnnealAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
-{
-    if (auto xml = makeStateTree().createXml())
-        copyXmlToBinary (*xml, destData);
-}
-
-juce::ValueTree AnnealAudioProcessor::makeStateTree()
 {
     auto state = apvts.copyState();
     state.setProperty ("stateVersion", anneal::ids::stateVersion, nullptr);
@@ -1415,13 +1092,8 @@ juce::ValueTree AnnealAudioProcessor::makeStateTree()
         if (! paint.isDefault())
             state.appendChild (paintToTree (paint), nullptr);
     }
-    pollHeldCurve();
-    {
-        const juce::ScopedLock sl (refLock);
-        if (pFreeze->load() > 0.5f && heldSaved.valid)   // 5.3.12: a frozen project reopens holding its curve
-            state.appendChild (heldToTree (heldSaved), nullptr);
-    }
-    return state;
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
 }
 
 void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -1435,10 +1107,8 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             // 4.0: the reference and the paint live in the processor, not in the APVTS tree.
             const auto refTree = tree.getChildWithName (referenceTag);
             const auto paintTree = tree.getChildWithName (paintTag);
-            const auto frozenTree = tree.getChildWithName (frozenTag);   // 5.3.12
             tree.removeChild (refTree, nullptr);
             tree.removeChild (paintTree, nullptr);
-            tree.removeChild (frozenTree, nullptr);
             // Check before replaceState: the APVTS fills missing parameters into the same tree.
             const bool hasLatency = tree.getChildWithProperty ("id", anneal::ids::latency).isValid();
             const bool hasGuard = tree.getChildWithProperty ("id", anneal::ids::guard).isValid();
@@ -1466,7 +1136,6 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
             const bool hasDetail = tree.getChildWithProperty ("id", anneal::ids::detail).isValid();
             const bool hasHeatLimit = tree.getChildWithProperty ("id", anneal::ids::heatLimit).isValid();
             const bool hasListenCheck = tree.getChildWithProperty ("id", anneal::ids::listenCheck).isValid();
-            const bool hasFreezeMode = tree.getChildWithProperty ("id", anneal::ids::freezeMode).isValid();
             const juce::String user = tree.getProperty ("userPreset", juce::String()).toString();
             const int preset = tree.getProperty ("preset", -1);
             presetChosen = juce::isPositiveAndBelow (preset, anneal::presets::count());
@@ -1588,24 +1257,24 @@ void AnnealAudioProcessor::setStateInformation (const void* data, int sizeInByte
                 if (auto* cp = apvts.getParameter (anneal::ids::listenCheck))
                     cp->setValueNotifyingHost (cp->getDefaultValue());
 
-            // Projects saved before 5.3.11: Freeze holds the curve as it is (Now), as it did then, whatever this
-            // instance had.
-            if (! hasFreezeMode)
-                if (auto* fp = apvts.getParameter (anneal::ids::freezeMode))
-                    fp->setValueNotifyingHost (fp->getDefaultValue());
-
             // 5.0: the user preset the project was last set from, if its file is still there.
-            restoreUserPreset (user);
+            userChosen = false;
+            if (user.isNotEmpty())
+            {
+                auto values = anneal::presets::currentValues (apvts);
+                if (anneal::presets::readUser (userFolder, user, values))
+                {
+                    userName = anneal::presets::sanitiseName (user);
+                    userValues = values;
+                    userChosen = true;
+                }
+            }
             {
                 juce::String name;
                 const auto curve = referenceFromTree (refTree, name);
                 setReference (curve, name);
             }
             applyPaintNow (paintFromTree (paintTree));
-            // 5.3.12: a frozen project holds the curve it was saved with. Projects from before keep what this
-            // instance holds, as they did (a fresh instance holds the first frame it hears).
-            if (frozenTree.isValid())
-                restoreHeldCurve (frozenTree);
 
             // A loaded project starts a fresh undo history.
             undoStack.clear();
